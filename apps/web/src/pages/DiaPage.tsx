@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search } from 'lucide-react'
 import type { ActiveSession, Area, Deliverable, Project, Quest, Routine, Task } from '../types'
@@ -15,6 +16,7 @@ import { DateRangeFilter } from '../components/DateRangeFilter'
 import { DayPeriodsEditModal } from '../components/DayPeriodsEditModal'
 import { PlannedItemRow } from '../components/PlannedItemRow'
 import { Card } from '../components/ui/Primitives'
+import { modalHairline, modalHeader } from './finance/components/styleHelpers'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -138,6 +140,14 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   const [allTasks, setAllTasks] = useState<Task[]>([])
   const [doneRoutineIds, setDoneRoutineIds] = useState<Set<string>>(new Set())
   const [delivsByProject, setDelivsByProject] = useState<Record<string, Deliverable[]>>({})
+  // Flags de "fonte-de-done já carregou pelo menos uma vez". Sem isso, no
+  // mount inicial os 4 fetches (quests/routines/allTasks/doneRoutineIds)
+  // chegam fora de ordem e a migração de turno encerrado roda com Set vazio
+  // → trata items DONE como pendentes → joga eles pro próximo turno.
+  // Bug user-visible: rotinas/tasks/quests finalizadas migrando.
+  const [routinesLoaded, setRoutinesLoaded] = useState(false)
+  const [doneRoutineIdsLoaded, setDoneRoutineIdsLoaded] = useState(false)
+  const [allTasksLoaded, setAllTasksLoaded] = useState(false)
 
   const todayIsoForTasks = (() => {
     const d = new Date()
@@ -147,15 +157,24 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
     weekday: 'long', day: 'numeric', month: 'long',
   })
 
-  function refreshAllTasks() { fetchTasks().then(setAllTasks).catch(err => reportApiError('DiaPage', err)) }
+  function refreshAllTasks() {
+    fetchTasks()
+      .then(list => { setAllTasks(list); setAllTasksLoaded(true) })
+      .catch(err => reportApiError('DiaPage', err))
+  }
   function refreshDoneRoutines() {
     fetchRoutinesForDate(todayIsoForTasks)
-      .then(list => setDoneRoutineIds(new Set(list.filter(r => r.done).map(r => r.id))))
+      .then(list => {
+        setDoneRoutineIds(new Set(list.filter(r => r.done).map(r => r.id)))
+        setDoneRoutineIdsLoaded(true)
+      })
       .catch(err => reportApiError('refreshDoneRoutines', err))
   }
 
   useEffect(() => {
-    fetchAllRoutines().then(setRoutines).catch(err => reportApiError('DiaPage', err))
+    fetchAllRoutines()
+      .then(list => { setRoutines(list); setRoutinesLoaded(true) })
+      .catch(err => reportApiError('DiaPage', err))
   }, [])
   // Recarrega tasks quando a sessão ativa muda — finalização via banner
   // marca a task como done no backend, mas o estado local não atualiza sem
@@ -466,18 +485,22 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   // Se NENHUM turno seguinte estiver aberto (ex: já é noite), a atividade
   // fica onde está — coerente com o reset natural do dayPlan no novo dia.
   useEffect(() => {
+    // GATE: não migra até todas as fontes de "done" terem carregado pelo
+    // menos uma vez. Sem isso, mount inicial roda com Sets/arrays vazios
+    // (default state), itemIsDone retorna false pra tudo, e items DONE
+    // são jogados pro próximo turno. Bug user-visible.
+    if (!routinesLoaded || !doneRoutineIdsLoaded || !allTasksLoaded) return
+
     const periodRangesMin = periodRangesMinFrom(dayPeriods)
     const order: Array<'morning' | 'afternoon' | 'evening'> = ['morning', 'afternoon', 'evening']
 
     const itemIsActive = (id: string): boolean =>
       !!activeSession && activeSession.id === id && activeSession.is_active
 
-    // Resolução do item via 3 stores. Quando o efeito roda na primeira
-    // renderização (antes dos fetches resolverem), TODAS as listas estão
-    // vazias e itemExists é `false` pra tudo — usamos isso pra ser
-    // conservador: item desconhecido = não migra (não sabemos se está done).
-    // Quando os dados chegam, o efeito re-roda e migra corretamente só
-    // os pendentes.
+    // Resolução do item via 3 stores. Após o gate acima, sabemos que todos
+    // foram fetchados pelo menos uma vez — então findItem não retornar
+    // significa "item não existe mais" (deletado, cancelado), e migrar
+    // ele não faz sentido. Conservador: stays.
     const findItem = (id: string) => {
       const q = quests.find(x => x.id === id); if (q) return { kind: 'quest' as const, q }
       const t = allTasks.find(x => x.id === id); if (t) return { kind: 'task' as const, t }
@@ -547,7 +570,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
     // Confiamos em: (a) tick de nowMin a cada minuto, (b) mudanças nas arrays
     // de dados — qualquer um cobre o caso. itemIsActive usa o closure atual de
     // activeSession, que é refrescado em todo render mesmo sem estar nos deps.
-  }, [nowMin, dayPeriods, quests, allTasks, routines, doneRoutineIds])
+  }, [nowMin, dayPeriods, quests, allTasks, routines, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded])
 
   const productiveMinRemaining = (() => {
     let blockRanges: BlockRange[] = []
@@ -589,10 +612,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div style={{
-      padding: '32px 24px', maxWidth: 1000, margin: '0 auto',
-      color: 'var(--color-text-primary)',
-    }}>
+    <div style={{ color: 'var(--color-text-primary)' }}>
     <Card padding="none" style={{
       animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
     }}>
@@ -819,15 +839,23 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
         ))}
       </div>
 
-      {editingPeriods && (
+      {/* Portal: o `<Card>` ancestral aplica `hq-fade-up` que injeta
+          `transform: translateY(0)` no estilo. Qualquer elemento com
+          transform != none vira containing block pra `position: fixed` —
+          isso fazia o overlay/drawer/modal serem ancorados ao Card, não
+          ao viewport (drawer aparecia "muito pra baixo" e cortado, modal
+          deslocado). Renderizar via createPortal pro document.body sai
+          fora dessa cadeia de containing blocks. */}
+      {editingPeriods && createPortal(
         <DayPeriodsEditModal
           value={dayPeriods}
           onClose={() => setEditingPeriods(false)}
           onSave={setDayPeriods}
-        />
+        />,
+        document.body,
       )}
 
-      {showPlanner && (
+      {showPlanner && createPortal(
         <PlannerDrawer
           filteredItems={filteredItems}
           dayPlan={dayPlan}
@@ -850,8 +878,10 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
           delivsByProject={delivsByProject}
           dayPeriods={dayPeriods}
           doneRoutineIds={doneRoutineIds}
+          nowMin={nowMin}
           onClose={() => setShowPlanner(false)}
-        />
+        />,
+        document.body,
       )}
       </div>
     </Card>
@@ -932,7 +962,13 @@ function PeriodSection({
   const periodItems = dayPlan[period]
     .map(id => allItems.find(it => it.id === id))
     .filter((it): it is any => !!it)
-  const usedMin = periodItems.reduce((s, item) => s + itemDurationMin(item), 0)
+  // `usedMin` representa "trabalho que ainda preciso fazer nessa janela" —
+  // items já feitos não consomem capacidade futura. Sem o filter abaixo,
+  // 5 items done de 30min cada inflavam o deficit em -2h30m mesmo com a
+  // manhã limpa de pendências.
+  const usedMin = periodItems
+    .filter(it => !(it.status === 'done' || it.done === true))
+    .reduce((s, item) => s + itemDurationMin(item), 0)
   const remainingMin = availableMin - usedMin
   const isExceeded = remainingMin < 0
   // Atividades no período sem estimativa preenchida — o cálculo de "livre"
@@ -1061,6 +1097,7 @@ function PlannerDrawer({
   areas, projects, quests, routines, allTasks, doneRoutineIds,
   delivsByProject,
   dayPeriods,
+  nowMin,
   onClose,
 }: {
   filteredItems: any[]
@@ -1084,6 +1121,9 @@ function PlannerDrawer({
   doneRoutineIds: Set<string>
   delivsByProject: Record<string, Deliverable[]>
   dayPeriods: DayPeriods
+  /** Minutos desde meia-noite local. Usado pra calcular janela viva
+   *  do período (mesma matemática da PeriodSection no Dia). */
+  nowMin: number
   onClose: () => void
 }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -1128,56 +1168,112 @@ function PlannerDrawer({
 
   return (
     <>
+      {/* Overlay com blur sutil — backdrop-filter dá a sensação glass do
+          fundo "borrado" enquanto o drawer está aberto. */}
       <div
         onClick={onClose}
         style={{
           position: 'fixed', inset: 0,
-          background: 'rgba(0, 0, 0, 0.55)',
+          background: 'rgba(8, 8, 10, 0.62)',
+          backdropFilter: 'blur(6px) saturate(120%)',
+          WebkitBackdropFilter: 'blur(6px) saturate(120%)',
           zIndex: 998,
-          animation: 'dia-fade-in 0.2s ease-out',
+          animation: 'dia-fade-in 0.22s ease-out',
         }}
       />
 
+      {/* Shell do drawer: glass-elevated + cantos superiores arredondados +
+          shadow forte + hairline oxblood no topo (carteira pattern). */}
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
-        background: 'var(--color-bg-secondary)',
-        borderTop: '1px solid var(--color-border)',
+        background: 'var(--glass-bg-elevated)',
+        backdropFilter: 'var(--glass-blur-strong)',
+        WebkitBackdropFilter: 'var(--glass-blur-strong)',
+        borderTop: '1px solid var(--color-border-strong)',
+        borderTopLeftRadius: 'var(--radius-lg)',
+        borderTopRightRadius: 'var(--radius-lg)',
         zIndex: 999, height: '92vh', maxHeight: '92vh',
         display: 'flex', flexDirection: 'column',
-        animation: 'dia-slide-up 0.25s ease-out',
-        boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.5)',
+        animation: 'dia-slide-up 0.32s var(--ease-emphasis)',
+        boxShadow: 'var(--shadow-lg)',
+        overflow: 'hidden',
       }}>
+        {/* Hairline oxblood no topo — assinatura visual do design system. */}
+        <div style={modalHairline} />
 
-        {/* Header */}
-        <div style={{
-          padding: '20px 32px', borderBottom: '1px solid var(--color-divider)',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          gap: 24,
-        }}>
-          <div>
+        {/* Header HERO: padding generoso (32px lateral, 28/24 vertical) +
+            grain sobre o radial oxblood. Eyebrow oxblood-light pra virar
+            assinatura, não label cinza esquecida. Headline com max-width
+            pra controlar quebra de linha em vez de wrap selvagem.
+
+            Bug histórico: padding usava var(--space-7) que não existe no
+            design system (escala é 1,2,3,4,5,6,8,10) — virava 0 lateral. */}
+        <div
+          className="hq-grain"
+          style={{
+            ...modalHeader(),
+            padding: '28px 32px 24px',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            gap: 'var(--space-6)',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ minWidth: 0, flex: '1 1 auto' }}>
             <div style={{
-              fontSize: 10, color: 'var(--color-text-tertiary)',
-              letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-              marginBottom: 2,
+              fontSize: 'var(--text-sm)',
+              color: 'var(--color-accent-light)',
+              letterSpacing: '0.28em',
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              marginBottom: 'var(--space-4)',
+              lineHeight: 1,
+              display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
             }}>
+              {/* Glifo discreto antes do eyebrow pra dar peso visual */}
+              <span style={{
+                width: 14, height: 1,
+                background: 'var(--color-accent-light)',
+                opacity: 0.7,
+                display: 'inline-block',
+              }} />
               Planejar
             </div>
-            <div style={{ fontSize: 16, color: 'var(--color-text-primary)', fontWeight: 600 }}>
+            <div style={{
+              fontSize: 'var(--text-xl)',
+              color: 'var(--color-text-primary)',
+              fontWeight: 700,
+              letterSpacing: '-0.02em',
+              lineHeight: 1.2,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
               Distribuir itens pelos períodos do dia
             </div>
           </div>
 
-          {/* Busca textual — bate em título da quest/task/routine, projeto pai
-              e entregável pai. Case/accent insensitive. Esvazia ao fechar o
-              drawer (state é local a esta instância). */}
-          <div style={{
-            flex: '0 1 320px', minWidth: 180,
-            display: 'flex', alignItems: 'center', gap: 8,
-            background: 'var(--color-bg-tertiary)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 4, padding: '6px 10px',
-            transition: 'border-color 0.15s',
-          }}>
+          {/* Busca: glass sutil. Ring oxblood ao focus pra feedback claro. */}
+          <div
+            style={{
+              flex: '0 1 340px', minWidth: 200,
+              display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+              background: 'var(--glass-bg)',
+              backdropFilter: 'var(--glass-blur)',
+              WebkitBackdropFilter: 'var(--glass-blur)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: '7px 12px',
+              transition: 'border-color var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
+            }}
+            onFocusCapture={e => {
+              e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
+              e.currentTarget.style.boxShadow = '0 0 0 2px rgba(159, 18, 57, 0.18)'
+            }}
+            onBlurCapture={e => {
+              e.currentTarget.style.borderColor = 'var(--color-border)'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
             <Search size={13} strokeWidth={1.8} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
             <input
               type="text"
@@ -1190,7 +1286,8 @@ function PlannerDrawer({
               placeholder="buscar quest, projeto ou entregável…"
               style={{
                 flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                color: 'var(--color-text-primary)', fontSize: 12,
+                color: 'var(--color-text-primary)', fontSize: 'var(--text-sm)',
+                fontFamily: 'inherit',
               }}
             />
             {searchQuery && (
@@ -1201,7 +1298,7 @@ function PlannerDrawer({
                   background: 'none', border: 'none', cursor: 'pointer',
                   color: 'var(--color-text-muted)', padding: 2,
                   display: 'inline-flex', alignItems: 'center',
-                  transition: 'color 0.15s',
+                  transition: 'color var(--motion-fast) var(--ease-smooth)',
                 }}
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-accent-light)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
@@ -1213,24 +1310,47 @@ function PlannerDrawer({
 
           <button
             onClick={onClose}
+            aria-label="Fechar drawer"
             style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--color-text-tertiary)', padding: 6,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'color 0.15s',
+              background: 'var(--glass-bg)',
+              backdropFilter: 'var(--glass-blur)',
+              WebkitBackdropFilter: 'var(--glass-blur)',
+              border: '1px solid var(--color-border)',
+              cursor: 'pointer',
+              color: 'var(--color-text-tertiary)',
+              width: 32, height: 32, borderRadius: 'var(--radius-md)',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'all var(--motion-fast) var(--ease-smooth)',
+              flexShrink: 0,
             }}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-text-primary)')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-tertiary)')}
+            onMouseEnter={e => {
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+              e.currentTarget.style.borderColor = 'var(--color-border-chrome)'
+              e.currentTarget.style.background = 'var(--glass-bg-hover)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.color = 'var(--color-text-tertiary)'
+              e.currentTarget.style.borderColor = 'var(--color-border)'
+              e.currentTarget.style.background = 'var(--glass-bg)'
+            }}
           >
-            <X size={18} strokeWidth={1.8} />
+            <X size={15} strokeWidth={1.8} />
           </button>
         </div>
 
-        {/* Filtros */}
+        {/* Filtros: padding lateral 32px (mesmo do header) + vertical 18px,
+            gap horizontal+vertical de 24px pra acomodar wrap em viewport
+            menor sem virar uma "linha apertada".
+
+            Bug histórico: var(--space-7) não existia → eixo X virava 0. */}
         <div style={{
-          padding: '14px 32px', borderBottom: '1px solid var(--color-divider)',
-          display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
-          background: 'var(--color-bg-primary)',
+          padding: '18px 32px',
+          borderBottom: '1px solid var(--color-divider)',
+          display: 'flex', alignItems: 'center',
+          columnGap: 'var(--space-6)',
+          rowGap: 'var(--space-3)',
+          flexWrap: 'wrap',
+          flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 9, color: 'var(--color-text-muted)', letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 700 }}>
@@ -1344,7 +1464,8 @@ function PlannerDrawer({
           overflow: 'hidden',
         }}>
 
-          {/* Disponíveis */}
+          {/* Disponíveis: drop aqui = remover do plano. Highlight verde sutil
+              quando arrastando de algum período pra dar feedback. */}
           <div
             onDragOver={e => e.preventDefault()}
             onDrop={() => {
@@ -1358,17 +1479,25 @@ function PlannerDrawer({
             }}
             style={{
               borderRight: '1px solid var(--color-divider)',
-              overflowY: 'auto', padding: '18px 24px',
-              background: draggedFromPeriod ? 'rgba(90, 122, 106, 0.06)' : 'transparent',
-              transition: 'background 0.15s',
+              overflowY: 'auto',
+              padding: 'var(--space-5) var(--space-6)',
+              background: draggedFromPeriod ? 'rgba(90, 122, 106, 0.08)' : 'transparent',
+              transition: 'background var(--motion-fast) var(--ease-smooth)',
             }}
           >
             <div style={{
-              fontSize: 10, color: 'var(--color-text-tertiary)',
-              letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-              marginBottom: 14,
+              fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)',
+              letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 600,
+              marginBottom: 'var(--space-4)',
+              display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)',
             }}>
-              Disponíveis ({availableItems.length})
+              <span>Disponíveis</span>
+              <span style={{
+                color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)',
+                fontWeight: 400, letterSpacing: 0,
+              }}>
+                {availableItems.length}
+              </span>
             </div>
             {availableItems.length > 0 ? (
               <AvailableList
@@ -1391,10 +1520,13 @@ function PlannerDrawer({
             )}
           </div>
 
-          {/* Períodos */}
+          {/* Períodos: cada período é um sub-card glass com seu próprio
+              hairline interno e medidor de capacidade. Gap entre cards
+              maior pra dar respiro entre seções. */}
           <div style={{
-            overflowY: 'auto', padding: '18px 24px',
-            display: 'flex', flexDirection: 'column', gap: 14,
+            overflowY: 'auto',
+            padding: 'var(--space-5) var(--space-6)',
+            display: 'flex', flexDirection: 'column', gap: 'var(--space-4)',
           }}>
             {(['morning', 'afternoon', 'evening'] as const).map(period => {
               const META = {
@@ -1413,12 +1545,14 @@ function PlannerDrawer({
                 .map(id => allItemsPool.find(it => it.id === id))
                 .filter((it): it is any => !!it)
 
-              // Capacidade do período = janela (start→end) menos overlap com
-              // blocos improdutivos do usuário. Mesma matemática da PeriodSection
-              // fora do drawer — usuário vê o mesmo número nos dois lugares.
+              // Janela "ainda viva" do período: começa em max(startMin, nowMin)
+              // (ignora tempo já passado dentro do período corrente). Mesma
+              // matemática da PeriodSection fora do drawer pra os dois lugares
+              // mostrarem o MESMO número.
               const periodRangesMin = periodRangesMinFrom(dayPeriods)
               const [startMin, endMin] = periodRangesMin[period]
-              const totalPeriodMin = endMin - startMin
+              const effStart = Math.max(startMin, nowMin)
+              const effectiveWindowMin = Math.max(0, endMin - effStart)
               let unproductiveMin = 0
               try {
                 const saved = localStorage.getItem('hq-unproductive-blocks')
@@ -1427,17 +1561,23 @@ function PlannerDrawer({
                   unproductiveMin = ranges.reduce((sum, r) => {
                     const blockStartMin = r.start * 60
                     const blockEndMin = r.end * 60
-                    const overlapStart = Math.max(blockStartMin, startMin)
+                    const overlapStart = Math.max(blockStartMin, effStart)
                     const overlapEnd = Math.min(blockEndMin, endMin)
                     return sum + Math.max(0, overlapEnd - overlapStart)
                   }, 0)
                 }
               } catch {}
-              const availableMin = Math.max(0, totalPeriodMin - unproductiveMin)
-              const usedMin = periodItems.reduce((s, it) => s + itemDurationMin(it), 0)
+              const availableMin = Math.max(0, effectiveWindowMin - unproductiveMin)
+              // Items done não consomem capacidade futura.
+              const usedMin = periodItems
+                .filter(it => !(it.status === 'done' || it.done === true))
+                .reduce((s, it) => s + itemDurationMin(it), 0)
               const remainingMin = availableMin - usedMin
               const isExceeded = remainingMin < 0
-              const metricColor = isExceeded ? 'var(--color-accent-primary)' : 'var(--color-success)'
+              const isPeriodOver = nowMin >= endMin
+              const metricColor = isPeriodOver
+                ? 'var(--color-text-muted)'
+                : isExceeded ? 'var(--color-accent-primary)' : 'var(--color-success)'
 
               return (
                 <div
@@ -1458,52 +1598,64 @@ function PlannerDrawer({
                     })
                   }}
                   style={{
+                    background: 'var(--glass-bg)',
+                    backdropFilter: 'var(--glass-blur)',
+                    WebkitBackdropFilter: 'var(--glass-blur)',
                     border: draggedItem && !dayPlan[period].includes(draggedItem.id)
                       ? '1px dashed var(--color-accent-primary)'
                       : isExceeded
                         ? '1px solid var(--color-accent-primary)'
                         : '1px solid var(--color-border)',
-                    borderRadius: 3, padding: '12px 14px',
-                    transition: 'border-color 0.15s',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-4) var(--space-5)',
+                    transition: 'border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth)',
                     display: 'flex', flexDirection: 'column', flexShrink: 0,
-                    background: 'var(--color-bg-secondary)',
+                    boxShadow: isExceeded
+                      ? '0 0 0 1px rgba(159, 18, 57, 0.15), 0 4px 12px rgba(159, 18, 57, 0.08)'
+                      : 'none',
                   }}
                 >
                   <div style={{
-                    display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10,
+                    display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+                    marginBottom: 'var(--space-4)',
                   }}>
-                    <META.Icon size={11} strokeWidth={1.8} style={{ color: 'var(--color-text-tertiary)' }} />
+                    <META.Icon size={12} strokeWidth={1.8} style={{ color: 'var(--color-text-secondary)' }} />
                     <div style={{
-                      fontSize: 10, color: 'var(--color-text-tertiary)',
-                      letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 600,
+                      fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)',
+                      letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 600,
                     }}>
                       {META.label}
                     </div>
                     <div style={{
-                      fontSize: 9, color: 'var(--color-text-muted)',
-                      fontFamily: 'var(--font-mono)',
+                      fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)',
+                      fontFamily: 'var(--font-mono)', letterSpacing: 0,
                     }}>
                       {minutesToHHMM(startMin)}–{minutesToHHMM(endMin)}
                     </div>
                     <div style={{ flex: 1 }} />
                     <div
-                      title={`${fmtHM(usedMin)} usado de ${fmtHM(availableMin)} disponível`}
+                      title={isPeriodOver
+                        ? `período encerrado · ${fmtHM(usedMin)} ainda pendente`
+                        : `${fmtHM(usedMin)} usado de ${fmtHM(availableMin)} disponível`}
                       style={{
-                        fontSize: 10, color: metricColor,
+                        fontSize: 'var(--text-xs)', color: metricColor,
                         fontFamily: 'var(--font-mono)', fontWeight: 600,
+                        fontVariantNumeric: 'tabular-nums',
                       }}
                     >
-                      {isExceeded
-                        ? `−${fmtHM(Math.abs(remainingMin))}`
-                        : `+${fmtHM(remainingMin)} livre`}
+                      {isPeriodOver
+                        ? 'encerrado'
+                        : isExceeded
+                          ? `−${fmtHM(Math.abs(remainingMin))}`
+                          : `+${fmtHM(remainingMin)} livre`}
                     </div>
                   </div>
 
                   {periodItems.length > 0 ? (
                     <div style={{
-                      display: 'flex', flexDirection: 'column', gap: 4,
-                      maxHeight: 180, overflowY: 'auto',
-                      paddingRight: 2,
+                      display: 'flex', flexDirection: 'column', gap: 'var(--space-2)',
+                      maxHeight: 220, overflowY: 'auto',
+                      paddingRight: 'var(--space-1)',
                     }}>
                       {periodItems.map(item => {
                         const itemDone = itemIsDone(item)
@@ -1537,17 +1689,25 @@ function PlannerDrawer({
                             })
                           }}
                           style={{
-                            background: 'var(--color-bg-tertiary)',
+                            background: 'var(--color-bg-primary)',
                             border: '1px solid var(--color-border)',
-                            borderRadius: 2, padding: '6px 8px',
+                            borderRadius: 'var(--radius-sm)',
+                            padding: '10px 14px',
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            gap: 6, cursor: 'grab',
-                            fontSize: 11, color: 'var(--color-text-secondary)',
-                            transition: 'opacity 0.15s, border-color 0.15s',
+                            gap: 'var(--space-3)', cursor: 'grab',
+                            fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)',
+                            lineHeight: 1.4,
+                            transition: 'background var(--motion-fast) var(--ease-smooth), border-color var(--motion-fast) var(--ease-smooth), opacity var(--motion-fast) var(--ease-smooth)',
                             opacity: itemDone ? 0.5 : 1,
                           }}
-                          onMouseEnter={e => (e.currentTarget.style.opacity = itemDone ? '0.65' : '0.85')}
-                          onMouseLeave={e => (e.currentTarget.style.opacity = itemDone ? '0.5' : '1')}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.background = 'var(--glass-bg-hover)'
+                            e.currentTarget.style.borderColor = 'var(--color-border-strong)'
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.background = 'var(--color-bg-primary)'
+                            e.currentTarget.style.borderColor = 'var(--color-border)'
+                          }}
                         >
                           <span style={{
                             flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -1587,28 +1747,46 @@ function PlannerDrawer({
           </div>
         </div>
 
-        {/* Footer */}
+        {/* Footer: hairline oxblood (echo do topo) + actions com glass. */}
         <div style={{
-          padding: '14px 32px', borderTop: '1px solid var(--color-divider)',
-          display: 'flex', justifyContent: 'flex-end', gap: 10,
-          background: 'var(--color-bg-primary)',
-        }}>
+          height: 1,
+          background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
+          opacity: 0.35,
+        }} />
+        <div
+          className="hq-grain"
+          style={{
+            padding: '20px 32px',
+            display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)',
+            flexShrink: 0,
+            background: `
+              radial-gradient(ellipse 80% 100% at 100% 100%, rgba(159, 18, 57, 0.04), transparent 60%),
+              linear-gradient(0deg, rgba(236, 232, 227, 0.015), transparent)
+            `,
+          }}
+        >
           <button
             onClick={onClose}
             style={{
-              background: 'none', border: '1px solid var(--color-border)',
+              background: 'var(--glass-bg)',
+              backdropFilter: 'var(--glass-blur)',
+              WebkitBackdropFilter: 'var(--glass-blur)',
+              border: '1px solid var(--color-border)',
               color: 'var(--color-text-tertiary)', cursor: 'pointer',
-              padding: '8px 18px', fontSize: 10, fontWeight: 600,
-              letterSpacing: '0.1em', textTransform: 'uppercase',
-              borderRadius: 3, transition: 'all 0.15s',
+              padding: '9px 20px', fontSize: 'var(--text-xs)', fontWeight: 600,
+              letterSpacing: '0.12em', textTransform: 'uppercase',
+              borderRadius: 'var(--radius-md)',
+              transition: 'all var(--motion-fast) var(--ease-smooth)',
             }}
             onMouseEnter={e => {
               e.currentTarget.style.color = 'var(--color-text-primary)'
-              e.currentTarget.style.borderColor = 'var(--color-text-tertiary)'
+              e.currentTarget.style.borderColor = 'var(--color-border-chrome)'
+              e.currentTarget.style.background = 'var(--glass-bg-hover)'
             }}
             onMouseLeave={e => {
               e.currentTarget.style.color = 'var(--color-text-tertiary)'
               e.currentTarget.style.borderColor = 'var(--color-border)'
+              e.currentTarget.style.background = 'var(--glass-bg)'
             }}
           >
             Fechar
@@ -1616,14 +1794,27 @@ function PlannerDrawer({
           <button
             onClick={onClose}
             style={{
-              background: 'var(--color-accent-primary)', border: 'none',
+              background: 'var(--color-accent-primary)',
+              border: '1px solid var(--color-accent-primary)',
               color: 'var(--color-bg-primary)', cursor: 'pointer',
-              padding: '8px 18px', fontSize: 10, fontWeight: 700,
-              letterSpacing: '0.1em', textTransform: 'uppercase',
-              borderRadius: 3, transition: 'background 0.15s',
+              padding: '9px 22px', fontSize: 'var(--text-xs)', fontWeight: 700,
+              letterSpacing: '0.12em', textTransform: 'uppercase',
+              borderRadius: 'var(--radius-md)',
+              boxShadow: '0 4px 12px rgba(159, 18, 57, 0.25)',
+              transition: 'all var(--motion-fast) var(--ease-smooth)',
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-secondary)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-accent-primary)')}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'var(--color-accent-secondary)'
+              e.currentTarget.style.borderColor = 'var(--color-accent-secondary)'
+              e.currentTarget.style.boxShadow = '0 6px 16px rgba(159, 18, 57, 0.35)'
+              e.currentTarget.style.transform = 'translateY(-1px)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'var(--color-accent-primary)'
+              e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(159, 18, 57, 0.25)'
+              e.currentTarget.style.transform = 'translateY(0)'
+            }}
           >
             Concluir
           </button>

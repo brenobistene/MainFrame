@@ -193,6 +193,81 @@ export function formatDate(iso: string): string {
   return `${d}/${m}`
 }
 
+/**
+ * Filtro de digitação pra inputs monetários: aceita só dígitos, ponto e
+ * vírgula. Aplicar no onChange (`setX(sanitizeMoneyInput(e.target.value))`)
+ * pra impedir letras / caracteres especiais de entrarem no input desde a
+ * digitação. NÃO formata — só rejeita lixo. O parseBRL no submit cuida do
+ * formato BR.
+ */
+export function sanitizeMoneyInput(s: string): string {
+  return s.replace(/[^\d.,]/g, '')
+}
+
+/**
+ * Parser BR-aware de valor monetário. Substitui o antigo
+ * `parseFloat(s.replace(',', '.'))` que tratava qualquer "." como decimal.
+ *
+ * Regras (na ordem):
+ *  - Tem `,` E `.`: pontos são milhares, última vírgula é decimal.
+ *      "1.234,56"  → 1234.56
+ *      "1.234.567,89" → 1234567.89
+ *  - Só vírgula: vírgula é decimal.
+ *      "1,45" → 1.45
+ *      "1234,5" → 1234.5
+ *  - Só ponto:
+ *      • exatamente 2 dígitos depois → decimal (compat com input US copiado).
+ *          "1.45" → 1.45
+ *      • 3+ dígitos depois OU múltiplos pontos → milhares.
+ *          "1.452"  → 1452
+ *          "1.234.567" → 1234567
+ *      • outros casos (1 dígito, 4+ sem outro ponto) → decimal puro
+ *        (parseFloat normal). "1.4" → 1.4, "1.4567" → 1.4567
+ *  - Sem separador: parseFloat direto.
+ *
+ * Retorna `null` se vazio ou inválido (NaN). Caller decide se rejeita 0.
+ */
+export function parseBRL(input: string | null | undefined): number | null {
+  if (input == null) return null
+  const s = String(input).trim().replace(/\s+/g, '')
+  if (!s) return null
+  // Tira sinal de moeda comum se o user colou
+  const cleaned = s.replace(/^R\$/i, '').trim()
+  if (!cleaned) return null
+
+  const hasComma = cleaned.includes(',')
+  const dotMatches = cleaned.match(/\./g)
+  const dotCount = dotMatches ? dotMatches.length : 0
+
+  let normalized: string
+  if (hasComma && dotCount > 0) {
+    // BR completo: pontos = milhares, última vírgula = decimal
+    normalized = cleaned.replace(/\./g, '').replace(',', '.')
+  } else if (hasComma) {
+    // Só vírgula = decimal
+    normalized = cleaned.replace(',', '.')
+  } else if (dotCount === 0) {
+    normalized = cleaned
+  } else if (dotCount === 1) {
+    // 1 ponto: 2 dígitos depois → decimal US; 3+ dígitos → milhares.
+    const afterDot = cleaned.split('.')[1] ?? ''
+    if (afterDot.length === 2) {
+      normalized = cleaned // "1.45" = 1.45
+    } else if (afterDot.length === 3) {
+      normalized = cleaned.replace('.', '') // "1.452" = 1452
+    } else {
+      normalized = cleaned // "1.4" = 1.4, "1.4567" = 1.4567
+    }
+  } else {
+    // 2+ pontos: milhares (ex: "1.234.567")
+    normalized = cleaned.replace(/\./g, '')
+  }
+
+  const n = parseFloat(normalized)
+  return isNaN(n) ? null : n
+}
+
+
 // ─── Card styles compartilhados ─────────────────────────────────────────
 //
 // Originalmente locais ao VisaoGeralPage; subiram pra cá quando a página

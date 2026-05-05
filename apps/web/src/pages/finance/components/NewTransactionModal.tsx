@@ -3,6 +3,7 @@ import { createFinTransaction, reportApiError } from '../../../api'
 import type { FinAccount, FinCategory } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton, modalOverlay,
+  parseBRL, sanitizeMoneyInput,
   modalShell, modalHairline, modalHeader, modalBody,
 } from './styleHelpers'
 
@@ -43,8 +44,8 @@ export function NewTransactionModal({
     if (!descricao.trim() || !contaId) {
       alert('Preencha descrição e selecione uma conta.'); return
     }
-    const valorNum = parseFloat(valor.replace(',', '.'))
-    if (isNaN(valorNum) || valorNum === 0) { alert('Valor inválido.'); return }
+    const valorNum = parseBRL(valor)
+    if (valorNum == null || valorNum === 0) { alert('Valor inválido.'); return }
     setBusy(true)
     try {
       await createFinTransaction({
@@ -89,7 +90,7 @@ export function NewTransactionModal({
             <input
               autoFocus
               type="text" inputMode="decimal" placeholder="valor"
-              value={valor} onChange={e => setValor(e.target.value)}
+              value={valor} onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
               style={{ ...inputStyle(), textAlign: 'right', fontFamily: 'var(--font-mono)' }}
             />
           </div>

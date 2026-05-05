@@ -108,8 +108,16 @@ export default function App() {
     } catch {}
   }
 
+  // Sequence number contra race condition. Múltiplos refreshes em paralelo
+  // (mount + onSessionUpdate + polling 15s + visibility + route change) podiam
+  // chegar fora de ordem — uma response stale sobrescrevia o estado correto.
+  // Cada chamada incrementa o seq; só aplica a response se ainda for a mais
+  // recente.
+  const refreshSeqRef = useRef(0)
   function refreshActiveSession() {
+    const seq = ++refreshSeqRef.current
     fetchActiveSession(focusedEntityRef.current).then(resp => {
+      if (seq !== refreshSeqRef.current) return // response obsoleta
       setActiveSession(resp)
       if (resp) saveFocusedEntity({ type: resp.type, id: resp.id })
       else saveFocusedEntity(null)
@@ -217,11 +225,14 @@ export default function App() {
       bannerClosedSecForRef.current = key
       setBannerClosedSec(0)
     }
+    // Pra rotinas, escopa a soma à DATA da sessão ativa — sem isso,
+    // fetchRoutineSessions traz histórico inteiro e "+45m" no banner vira
+    // o total da rotina ao longo do tempo, não do dia.
     const loader = type === 'quest'
       ? fetchSessions(id)
       : type === 'task'
         ? fetchTaskSessions(id)
-        : fetchRoutineSessions(id)
+        : fetchRoutineSessions(id, activeSession.routine_date ?? undefined)
     let cancelled = false
     loader
       .then(list => {
@@ -234,14 +245,20 @@ export default function App() {
       })
       .catch(() => { if (!cancelled) setBannerClosedSec(0) })
     return () => { cancelled = true }
-  }, [activeSession?.type, activeSession?.id, sessionUpdateTrigger])
+  }, [activeSession?.type, activeSession?.id, activeSession?.routine_date, sessionUpdateTrigger])
 
-  // Timer for banner elapsed time
+  // Timer for banner elapsed time. Deps específicas (NÃO o objeto inteiro)
+  // pra evitar recriar setInterval em todo poll de 15s — fetchActiveSession
+  // sempre retorna nova referência e o objeto inteiro como dep faria o
+  // timer "saltar" 1 frame em cada refresh.
   useEffect(() => {
     if (!activeSession) return
+    const startedAt = activeSession.started_at
+    const endedAt = activeSession.ended_at
+    const isActive = activeSession.is_active
 
     const updateTimer = () => {
-      const start = parseIsoAsUtc(activeSession.started_at).getTime()
+      const start = parseIsoAsUtc(startedAt).getTime()
       let elapsed = 0
 
       if (isNaN(start)) {
@@ -249,10 +266,10 @@ export default function App() {
         return
       }
 
-      if (activeSession.is_active) {
+      if (isActive) {
         elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000))
-      } else if (activeSession.ended_at) {
-        const end = parseIsoAsUtc(activeSession.ended_at).getTime()
+      } else if (endedAt) {
+        const end = parseIsoAsUtc(endedAt).getTime()
         if (!isNaN(end)) elapsed = Math.max(0, Math.floor((end - start) / 1000))
       }
 
@@ -260,15 +277,18 @@ export default function App() {
     }
 
     updateTimer()
-    // Only update timer if session is active, otherwise keep the frozen time
-    if (activeSession.is_active) {
+    // Só tica se a sessão está ativa; pausada mostra tempo congelado.
+    if (isActive) {
       bannerTimerRef.current = setInterval(updateTimer, 100)
     }
 
     return () => {
-      if (bannerTimerRef.current) clearInterval(bannerTimerRef.current)
+      if (bannerTimerRef.current) {
+        clearInterval(bannerTimerRef.current)
+        bannerTimerRef.current = null
+      }
     }
-  }, [activeSession])
+  }, [activeSession?.started_at, activeSession?.ended_at, activeSession?.is_active])
 
   // Persist sidebar state
   useEffect(() => {
@@ -647,10 +667,14 @@ export default function App() {
               className="hq-icon-btn"
               onClick={() => {
                 if (!activeSession) return
-                const { type, id, is_active } = activeSession
+                const { type, id, is_active, routine_date } = activeSession
+                // Pra rotinas: passa a data da sessão ativa pro backend não
+                // confundir cross-midnight. Endpoints já são tolerantes a
+                // ausência mas explicitar é mais seguro.
+                const target = type === 'routine' ? routine_date ?? undefined : undefined
                 const call = is_active
-                  ? (type === 'quest' ? pauseSession(id) : type === 'task' ? pauseTaskSession(id) : pauseRoutineSession(id))
-                  : (type === 'quest' ? resumeSession(id) : type === 'task' ? resumeTaskSession(id) : resumeRoutineSession(id))
+                  ? (type === 'quest' ? pauseSession(id) : type === 'task' ? pauseTaskSession(id) : pauseRoutineSession(id, target))
+                  : (type === 'quest' ? resumeSession(id) : type === 'task' ? resumeTaskSession(id) : resumeRoutineSession(id, target))
                 call.then(() => onSessionUpdate()).catch(err => reportApiError('App', err))
               }}
               title={activeSession.is_active ? `Pausar ${activeSession.type}` : `Retomar ${activeSession.type}`}
@@ -670,11 +694,17 @@ export default function App() {
               className="hq-icon-btn hq-icon-btn--accent"
               onClick={() => {
                 if (!activeSession) return
-                const { type, id, is_active } = activeSession
+                const { type, id, is_active, routine_date } = activeSession
 
                 const finalizeQuest = () => {
                   patchQuest(id, { status: 'done' }).catch(err => reportApiError('App', err))
                   setQuests(qs => qs.map(q => q.id === id ? { ...q, status: 'done' } : q))
+                  setActiveSession(null)
+                  saveFocusedEntity(null)
+                  onSessionUpdate()
+                }
+
+                const clearBanner = () => {
                   setActiveSession(null)
                   saveFocusedEntity(null)
                   onSessionUpdate()
@@ -687,15 +717,11 @@ export default function App() {
                     finalizeQuest()
                   }
                 } else if (type === 'task') {
-                  stopTaskSession(id).then(() => {
-                    setActiveSession(null)
-                    onSessionUpdate()
-                  }).catch(err => reportApiError('App', err))
+                  stopTaskSession(id).then(clearBanner).catch(err => reportApiError('App', err))
                 } else if (type === 'routine') {
-                  stopRoutineSession(id).then(() => {
-                    setActiveSession(null)
-                    onSessionUpdate()
-                  }).catch(err => reportApiError('App', err))
+                  // Passa target=routine_date pra fechar a sessão correta
+                  // (cross-midnight) e gravar o log no dia certo.
+                  stopRoutineSession(id, routine_date ?? undefined).then(clearBanner).catch(err => reportApiError('App', err))
                 }
               }}
               title={`Finalizar ${activeSession.type}`}

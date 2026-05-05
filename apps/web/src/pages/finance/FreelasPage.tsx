@@ -254,7 +254,7 @@ function RateCard({ label, value, accent, footer }: {
       }}>
         {label}
       </div>
-      <div style={{
+      <div className="hq-money" style={{
         fontSize: 24, fontWeight: 700, marginTop: 6,
         color: value != null ? accent : 'var(--color-text-muted)',
         fontFamily: 'var(--font-mono)',
@@ -279,7 +279,7 @@ function SubStat({ label, value, color }: { label: string; value: string; color:
       }}>
         {label}
       </div>
-      <div style={{
+      <div className="hq-money" style={{
         fontSize: 13, fontWeight: 700, color,
         fontFamily: 'var(--font-mono)',
       }}>
@@ -306,7 +306,7 @@ function PipelineRecebimentos({ itens, mes }: {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)' }}>
           <div style={cardLabel}>Recebimentos previstos · {mesLabel}</div>
           {itens.length > 0 && (
-            <div style={{
+            <div className="hq-money" style={{
               fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--color-success)',
               fontFamily: 'var(--font-mono)',
               fontVariantNumeric: 'tabular-nums',
@@ -371,7 +371,7 @@ function PipelineRecebimentos({ itens, mes }: {
               }}>
                 {parcela.data_prevista ?? 'sem data'}
               </span>
-              <span style={{
+              <span className="hq-money" style={{
                 fontSize: 13, fontWeight: 600, textAlign: 'right',
                 fontFamily: 'var(--font-mono)',
                 color: 'var(--color-success)',
@@ -520,7 +520,7 @@ function ProjectCard({ projeto: p, hourlyStats }: {
           }}>
             R$/h estimado
           </div>
-          <div style={{
+          <div className="hq-money" style={{
             fontSize: 14, fontWeight: 700,
             color: p.hourly_estimado != null ? 'var(--color-accent-light)' : 'var(--color-text-muted)',
             fontFamily: 'var(--font-mono)',
@@ -535,7 +535,7 @@ function ProjectCard({ projeto: p, hourlyStats }: {
           }}>
             R$/h real
           </div>
-          <div style={{
+          <div className="hq-money" style={{
             fontSize: 14, fontWeight: 700,
             color: p.hourly_real != null ? 'var(--color-success)' : 'var(--color-text-muted)',
             fontFamily: 'var(--font-mono)',
@@ -571,7 +571,7 @@ function ProjectCard({ projeto: p, hourlyStats }: {
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
             marginBottom: 6,
           }}>
-            <span style={{
+            <span className="hq-money" style={{
               fontSize: 11, fontWeight: 600,
               fontFamily: 'var(--font-mono)',
               color: 'var(--color-success)',
@@ -581,7 +581,7 @@ function ProjectCard({ projeto: p, hourlyStats }: {
             <span style={{
               fontSize: 10, color: 'var(--color-text-muted)',
             }}>
-              de {formatBRL(p.valor_acordado)} ({progresso.toFixed(0)}%)
+              de <span className="hq-money">{formatBRL(p.valor_acordado)}</span> ({progresso.toFixed(0)}%)
             </span>
           </div>
           <div style={{

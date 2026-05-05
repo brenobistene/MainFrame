@@ -28,15 +28,15 @@ def get_active_session(
         # efeito que zera activeSession quando vê q.status=='done'.
         # Filtramos por status da entidade na query global também.
         row = conn.execute(
-            """SELECT 'quest' AS type, qs.quest_id AS id, q.title, q.area_slug, qs.started_at, qs.ended_at, qs.id AS sid
+            """SELECT 'quest' AS type, qs.quest_id AS id, q.title, q.area_slug, qs.started_at, qs.ended_at, qs.id AS sid, NULL AS routine_date
                FROM quest_sessions qs JOIN quests q ON qs.quest_id = q.id
                WHERE qs.ended_at IS NULL AND q.status NOT IN ('done','cancelled')
                UNION ALL
-               SELECT 'task' AS type, ts.task_id AS id, t.title, NULL AS area_slug, ts.started_at, ts.ended_at, ts.id AS sid
+               SELECT 'task' AS type, ts.task_id AS id, t.title, NULL AS area_slug, ts.started_at, ts.ended_at, ts.id AS sid, NULL AS routine_date
                FROM task_sessions ts JOIN tasks t ON ts.task_id = t.id
                WHERE ts.ended_at IS NULL AND t.done = 0
                UNION ALL
-               SELECT 'routine' AS type, rs.routine_id AS id, r.title, NULL AS area_slug, rs.started_at, rs.ended_at, rs.id AS sid
+               SELECT 'routine' AS type, rs.routine_id AS id, r.title, NULL AS area_slug, rs.started_at, rs.ended_at, rs.id AS sid, rs.date AS routine_date
                FROM routine_sessions rs
                  JOIN routines r ON rs.routine_id = r.id
                  LEFT JOIN routine_logs rl
@@ -48,7 +48,7 @@ def get_active_session(
         if not row and focused_type and focused_id:
             if focused_type == "quest":
                 row = conn.execute(
-                    """SELECT 'quest' AS type, qs.quest_id AS id, q.title, q.area_slug, qs.started_at, qs.ended_at, qs.id AS sid
+                    """SELECT 'quest' AS type, qs.quest_id AS id, q.title, q.area_slug, qs.started_at, qs.ended_at, qs.id AS sid, NULL AS routine_date
                        FROM quest_sessions qs JOIN quests q ON qs.quest_id = q.id
                        WHERE qs.quest_id = ? AND q.status != 'done'
                        ORDER BY qs.id DESC LIMIT 1""",
@@ -56,7 +56,7 @@ def get_active_session(
                 ).fetchone()
             elif focused_type == "task":
                 row = conn.execute(
-                    """SELECT 'task' AS type, ts.task_id AS id, t.title, NULL AS area_slug, ts.started_at, ts.ended_at, ts.id AS sid
+                    """SELECT 'task' AS type, ts.task_id AS id, t.title, NULL AS area_slug, ts.started_at, ts.ended_at, ts.id AS sid, NULL AS routine_date
                        FROM task_sessions ts JOIN tasks t ON ts.task_id = t.id
                        WHERE ts.task_id = ? AND t.done = 0
                        ORDER BY ts.id DESC LIMIT 1""",
@@ -64,7 +64,7 @@ def get_active_session(
                 ).fetchone()
             elif focused_type == "routine":
                 row = conn.execute(
-                    """SELECT 'routine' AS type, rs.routine_id AS id, r.title, NULL AS area_slug, rs.started_at, rs.ended_at, rs.id AS sid
+                    """SELECT 'routine' AS type, rs.routine_id AS id, r.title, NULL AS area_slug, rs.started_at, rs.ended_at, rs.id AS sid, rs.date AS routine_date
                        FROM routine_sessions rs
                          JOIN routines r ON rs.routine_id = r.id
                          LEFT JOIN routine_logs rl
@@ -106,4 +106,5 @@ def get_active_session(
         "parent_title": parent_title,
         "deliverable_title": deliverable_title,
         "quest_id": row["id"] if row["type"] == "quest" else None,
+        "routine_date": row["routine_date"] if row["type"] == "routine" else None,
     }

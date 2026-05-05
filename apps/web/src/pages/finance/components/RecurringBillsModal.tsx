@@ -25,7 +25,7 @@ import type {
 import { useHubFinance } from '../HubFinanceContext'
 import {
   sectionLabel, fieldLabel, hintText, inputStyle, primaryButton, ghostButton,
-  modalOverlay, formatBRL, ICON_SIZE, ICON_STROKE,
+  modalOverlay, formatBRL, parseBRL, sanitizeMoneyInput, ICON_SIZE, ICON_STROKE,
   modalShell, modalHairline, modalHeader, modalBody,
 } from './styleHelpers'
 import { EmptyState, IconButton } from '../../../components/ui/Primitives'
@@ -533,8 +533,8 @@ function RecurringBillFormModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!descricao.trim()) { alert('Descrição é obrigatória.'); return }
-    const valorNum = parseFloat(valorEstimado.replace(',', '.'))
-    if (isNaN(valorNum) || valorNum <= 0) { alert('Valor inválido.'); return }
+    const valorNum = parseBRL(valorEstimado)
+    if (valorNum == null || valorNum <= 0) { alert('Valor inválido.'); return }
 
     let diaNum: number | null = null
     if (diaVencimento.trim()) {
@@ -667,7 +667,7 @@ function RecurringBillFormModal({
                 inputMode="decimal"
                 placeholder="ex: 250,00"
                 value={valorEstimado}
-                onChange={e => setValorEstimado(e.target.value)}
+                onChange={e => setValorEstimado(sanitizeMoneyInput(e.target.value))}
                 style={{
                   ...inputStyle(), width: '100%', boxSizing: 'border-box',
                   fontFamily: 'var(--font-mono)',
@@ -803,8 +803,8 @@ function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
       alert('Descrição e conta são obrigatórias.')
       return
     }
-    const valorNum = parseFloat(valor.replace(',', '.'))
-    if (isNaN(valorNum) || valorNum <= 0) {
+    const valorNum = parseBRL(valor)
+    if (valorNum == null || valorNum <= 0) {
       alert('Valor inválido.')
       return
     }
@@ -883,7 +883,7 @@ function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
                 type="text"
                 inputMode="decimal"
                 value={valor}
-                onChange={e => setValor(e.target.value)}
+                onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
                 style={{
                   ...inputStyle(), width: '100%', boxSizing: 'border-box',
                   fontFamily: 'var(--font-mono)',

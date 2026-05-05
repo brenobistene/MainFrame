@@ -52,6 +52,12 @@ interface HubFinanceContextValue {
   refreshGlobal: () => void
   /** Refetch só dados do mês atualmente selecionado. */
   refreshForMonth: () => void
+
+  /** Modo privacidade: quando true, valores monetários (qualquer span com
+   *  className `hq-money`) ficam borrados via CSS. Persistido em localStorage
+   *  pra sobreviver reload. Toggle vive na tab bar do HubFinanceLayout. */
+  privateMode: boolean
+  togglePrivate: () => void
 }
 
 const HubFinanceContext = createContext<HubFinanceContextValue | null>(null)
@@ -81,6 +87,24 @@ export function HubFinanceProvider({ children }: { children: React.ReactNode }) 
     const now = new Date()
     return { year: now.getFullYear(), month: now.getMonth() + 1 }
   })
+
+  // Private mode: ON por padrão (usuário pediu pra Hub Finance abrir sempre
+  // com os valores escondidos). Persiste em localStorage — se usuário
+  // desligar manualmente, fica desligado até religar.
+  const [privateMode, setPrivateMode] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('hq-finance-private')
+      // null (primeira vez) → ON. '0' explícito (usuário desligou) → OFF.
+      return v === null ? true : v === '1'
+    } catch { return true }
+  })
+  function togglePrivate() {
+    setPrivateMode(prev => {
+      const next = !prev
+      try { localStorage.setItem('hq-finance-private', next ? '1' : '0') } catch {}
+      return next
+    })
+  }
 
   function refreshGlobal() {
     Promise.all([
@@ -136,6 +160,7 @@ export function HubFinanceProvider({ children }: { children: React.ReactNode }) 
     selectedMonth, setSelectedMonth,
     loading,
     refreshAll, refreshGlobal, refreshForMonth,
+    privateMode, togglePrivate,
   }
 
   return <HubFinanceContext.Provider value={value}>{children}</HubFinanceContext.Provider>

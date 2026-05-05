@@ -7,6 +7,7 @@ import type { FinAccountType } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton,
   modalOverlay, modalShell, modalHairline, modalHeader, modalBody,
+  parseBRL, sanitizeMoneyInput,
 } from './styleHelpers'
 
 export function AccountModal({ onClose, onCreated }: {
@@ -45,8 +46,8 @@ export function AccountModal({ onClose, onCreated }: {
     if (!nome.trim()) return
     let cotacaoNum: number | null = null
     if (moeda !== 'BRL' && cotacao.trim()) {
-      const parsed = parseFloat(cotacao.replace(',', '.'))
-      if (isNaN(parsed) || parsed <= 0) {
+      const parsed = parseBRL(cotacao)
+      if (parsed == null || parsed <= 0) {
         alert('Cotação inválida — deixe em branco se preferir definir depois.')
         return
       }
@@ -102,7 +103,7 @@ export function AccountModal({ onClose, onCreated }: {
                   type="text" inputMode="decimal"
                   placeholder="ex: 5,20 — em branco = não soma no saldo total"
                   value={cotacao}
-                  onChange={e => setCotacao(e.target.value)}
+                  onChange={e => setCotacao(sanitizeMoneyInput(e.target.value))}
                   style={{ ...inputStyle(), flex: 1, fontFamily: 'var(--font-mono)' }}
                 />
                 <button

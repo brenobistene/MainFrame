@@ -7,7 +7,7 @@ import {
 import type { FinAccount, FinDebt, FinCategory } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton,
-  modalOverlay, formatBRL,
+  modalOverlay, formatBRL, parseBRL, sanitizeMoneyInput,
   modalShell, modalHairline, modalHeader, modalBody,
 } from './styleHelpers'
 import { DebtParcelasModal } from './DebtParcelasModal'
@@ -289,8 +289,7 @@ function DebtFormModal({ debt, categories, onClose, onSaved, onDeleted }: {
   )
 
   function parseNum(s: string): number | null {
-    const n = parseFloat(s.replace(',', '.'))
-    return isNaN(n) ? null : n
+    return parseBRL(s)
   }
 
   async function submit(e: React.FormEvent) {
@@ -380,7 +379,7 @@ function DebtFormModal({ debt, categories, onClose, onSaved, onDeleted }: {
               <label style={fieldLabel()}>Valor total original</label>
               <input
                 type="text" inputMode="decimal" placeholder="ex: 24000,00"
-                value={valorTotal} onChange={e => setValorTotal(e.target.value)}
+                value={valorTotal} onChange={e => setValorTotal(sanitizeMoneyInput(e.target.value))}
                 style={{ ...inputStyle(), fontFamily: 'var(--font-mono)' }}
               />
             </div>
@@ -388,7 +387,7 @@ function DebtFormModal({ debt, categories, onClose, onSaved, onDeleted }: {
               <label style={fieldLabel()}>Parcela mensal (opcional)</label>
               <input
                 type="text" inputMode="decimal" placeholder="ex: 800,00"
-                value={parcelaMensal} onChange={e => setParcelaMensal(e.target.value)}
+                value={parcelaMensal} onChange={e => setParcelaMensal(sanitizeMoneyInput(e.target.value))}
                 style={{ ...inputStyle(), fontFamily: 'var(--font-mono)' }}
               />
             </div>

@@ -65,12 +65,21 @@ export function DateRangeFilter({ value, onChange }: {
       </button>
       {open && (
         <div
-          className="hq-glass-elevated hq-animate-fade-up"
+          className="hq-animate-fade-up"
           style={{
+            // Surface opaca pra legibilidade (4.5:1 garantido). O hq-glass-elevated
+            // tem bg rgba(0.045) — sobre um shell que já é glass (ex: PlannerDrawer)
+            // o popover fica fantasma. Aqui usamos var(--color-bg-secondary) sólido
+            // + borda chrome + shadow, mantendo o look "elevated" sem perder texto.
             position: 'absolute', top: '100%', left: 0, marginTop: 6,
             padding: 'var(--space-1) 0',
             zIndex: 100, minWidth: 200,
+            background: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border-strong)',
+            borderRadius: 'var(--radius-md)',
             boxShadow: 'var(--shadow-lg)',
+            // Hairline oxblood sutil no topo — assinatura do design system.
+            backgroundImage: 'linear-gradient(180deg, rgba(159, 18, 57, 0.06), transparent 32px)',
           }}
         >
           {presets.map(p => (
@@ -84,15 +93,22 @@ export function DateRangeFilter({ value, onChange }: {
               }}
               style={{
                 background: 'transparent', border: 'none', cursor: 'pointer',
-                color: p === value.preset ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                fontSize: 11, padding: '7px 12px',
+                color: p === value.preset ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                fontSize: 12, padding: '9px 14px',
                 width: '100%', textAlign: 'left',
                 fontFamily: 'inherit',
-                display: 'flex', alignItems: 'center', gap: 8,
-                transition: 'background 0.1s',
+                display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+                fontWeight: p === value.preset ? 600 : 400,
+                transition: 'background var(--motion-fast) var(--ease-smooth), color var(--motion-fast) var(--ease-smooth)',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--glass-bg-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'var(--glass-bg-hover)'
+                e.currentTarget.style.color = 'var(--color-text-primary)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.color = p === value.preset ? 'var(--color-text-primary)' : 'var(--color-text-secondary)'
+              }}
             >
               <span style={{ width: 12, display: 'inline-flex', justifyContent: 'center' }}>
                 {p === value.preset && <Check size={10} strokeWidth={2.5} />}

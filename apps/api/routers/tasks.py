@@ -181,18 +181,27 @@ def task_start_session(task_id: str):
 
 @router.post("/api/tasks/{task_id}/sessions/pause", response_model=TaskSessionOut)
 def task_pause_session(task_id: str):
+    """Pausa a sessão aberta da task. Idempotente: sem ativa, retorna a
+    última sessão (200) em vez de 404. Mesma motivação dos endpoints de
+    quest/routine — evita o banner explodir com state ligeiramente stale."""
     now = utcnow_iso_z()
     with get_conn() as conn:
         session = conn.execute(
             "SELECT * FROM task_sessions WHERE task_id = ? AND ended_at IS NULL ORDER BY session_num DESC LIMIT 1",
             (task_id,),
         ).fetchone()
-        if not session:
-            raise HTTPException(404, detail="No active session")
-        conn.execute("UPDATE task_sessions SET ended_at = ? WHERE id = ?", (now, session["id"]))
-        conn.commit()
-        row = conn.execute("SELECT * FROM task_sessions WHERE id = ?", (session["id"],)).fetchone()
-    return dict(row)
+        if session:
+            conn.execute("UPDATE task_sessions SET ended_at = ? WHERE id = ?", (now, session["id"]))
+            conn.commit()
+            row = conn.execute("SELECT * FROM task_sessions WHERE id = ?", (session["id"],)).fetchone()
+            return dict(row)
+        last = conn.execute(
+            "SELECT * FROM task_sessions WHERE task_id = ? ORDER BY session_num DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if last:
+            return dict(last)
+        raise HTTPException(404, detail="Task has no sessions")
 
 
 @router.post("/api/tasks/{task_id}/sessions/resume", response_model=TaskSessionOut, status_code=201)

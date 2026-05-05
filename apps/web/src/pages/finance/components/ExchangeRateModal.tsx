@@ -11,7 +11,7 @@ import type { FinAccount } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton, modalOverlay,
   modalShell, modalHairline, modalHeader, modalBody,
-  formatMoney,
+  formatMoney, parseBRL, sanitizeMoneyInput,
 } from './styleHelpers'
 
 export function ExchangeRateModal({ account, onClose, onSaved }: {
@@ -42,8 +42,8 @@ export function ExchangeRateModal({ account, onClose, onSaved }: {
     e.preventDefault()
     let cotacaoNum: number | null = null
     if (cotacao.trim()) {
-      const parsed = parseFloat(cotacao.replace(',', '.'))
-      if (isNaN(parsed) || parsed <= 0) {
+      const parsed = parseBRL(cotacao)
+      if (parsed == null || parsed <= 0) {
         alert('Cotação inválida — use número positivo ou deixe em branco pra remover.')
         return
       }
@@ -61,8 +61,8 @@ export function ExchangeRateModal({ account, onClose, onSaved }: {
   }
 
   const previewBRL = (() => {
-    const parsed = parseFloat(cotacao.replace(',', '.'))
-    if (isNaN(parsed) || parsed <= 0) return null
+    const parsed = parseBRL(cotacao)
+    if (parsed == null || parsed <= 0) return null
     return account.saldo * parsed
   })()
 
@@ -111,7 +111,7 @@ export function ExchangeRateModal({ account, onClose, onSaved }: {
                 type="text" inputMode="decimal"
                 placeholder="ex: 5,20"
                 value={cotacao}
-                onChange={e => setCotacao(e.target.value)}
+                onChange={e => setCotacao(sanitizeMoneyInput(e.target.value))}
                 style={{ ...inputStyle(), flex: 1, fontFamily: 'var(--font-mono)' }}
               />
               <button

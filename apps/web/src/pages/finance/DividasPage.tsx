@@ -121,7 +121,7 @@ export function DividasPage() {
                 }}>
                   Total devedor
                 </div>
-                <div style={{
+                <div className="hq-money" style={{
                   fontSize: 22, fontWeight: 700,
                   color: 'var(--color-text-primary)',
                   fontFamily: 'var(--font-mono)',
@@ -131,7 +131,7 @@ export function DividasPage() {
                 <div style={{
                   fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2,
                 }}>
-                  de {formatBRL(totalOriginal)} ({progressoGlobal.toFixed(0)}% pago)
+                  de <span className="hq-money">{formatBRL(totalOriginal)}</span> ({progressoGlobal.toFixed(0)}% pago)
                 </div>
               </div>
 
@@ -180,7 +180,7 @@ export function DividasPage() {
                         : `${d.progresso_pct.toFixed(0)}% pago`}
                     </div>
                   </div>
-                  <span style={{
+                  <span className="hq-money" style={{
                     fontSize: 'var(--text-sm)', fontWeight: 600,
                     fontFamily: 'var(--font-mono)',
                     color: 'var(--color-text-primary)',

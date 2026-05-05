@@ -420,31 +420,64 @@ def routine_start_session(routine_id: str, target: Optional[str] = None):
 
 @router.post("/api/routines/{routine_id}/sessions/pause", response_model=RoutineSessionOut)
 def routine_pause_session(routine_id: str, target: Optional[str] = None):
+    """Fecha a sessão aberta da rotina, independente da data.
+
+    O `target` (legado) é ignorado — operamos sempre na sessão aberta mais
+    recente da rotina. Resolve o bug cross-midnight: usuário inicia 23:55,
+    pausa, volta no dia seguinte. Antes o backend procurava sessão de hoje
+    e errava 404, deixando a sessão de ontem órfã.
+
+    Idempotente: se não há sessão aberta, retorna a última sessão da
+    rotina (status 200) em vez de 404. Banner pode chamar com state
+    levemente stale sem explodir.
+    """
     now = utcnow_iso_z()
-    date_str = target or _today_sp_iso()
     with get_conn() as conn:
         session = conn.execute(
-            "SELECT * FROM routine_sessions WHERE routine_id = ? AND date = ? AND ended_at IS NULL ORDER BY session_num DESC LIMIT 1",
-            (routine_id, date_str),
+            "SELECT * FROM routine_sessions WHERE routine_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (routine_id,),
         ).fetchone()
-        if not session:
-            raise HTTPException(404, detail="No active session")
-        conn.execute("UPDATE routine_sessions SET ended_at = ? WHERE id = ?", (now, session["id"]))
-        conn.commit()
-        row = conn.execute("SELECT * FROM routine_sessions WHERE id = ?", (session["id"],)).fetchone()
-    return dict(row)
+        if session:
+            conn.execute("UPDATE routine_sessions SET ended_at = ? WHERE id = ?", (now, session["id"]))
+            conn.commit()
+            row = conn.execute("SELECT * FROM routine_sessions WHERE id = ?", (session["id"],)).fetchone()
+            return dict(row)
+        # Idempotente: sem sessão ativa, devolve a última sessão da rotina.
+        last = conn.execute(
+            "SELECT * FROM routine_sessions WHERE routine_id = ? ORDER BY id DESC LIMIT 1",
+            (routine_id,),
+        ).fetchone()
+        if last:
+            return dict(last)
+        raise HTTPException(404, detail="Routine has no sessions")
 
 
 @router.post("/api/routines/{routine_id}/sessions/resume", response_model=RoutineSessionOut, status_code=201)
 def routine_resume_session(routine_id: str, target: Optional[str] = None):
+    """Cria nova sessão pra retomar uma rotina pausada.
+
+    Se `target` for fornecido, usa essa data (preserva o caso DiaPage que
+    explicita o dia que está sendo planejado). Caso contrário, usa a data
+    da sessão pausada mais recente — assim o usuário que pausou ontem e
+    retomou hoje continua na sessão de ontem ao invés de fragmentar em
+    duas datas. Fallback final: hoje.
+    """
     now = utcnow_iso_z()
-    date_str = target or _today_sp_iso()
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM routines WHERE id = ?", (routine_id,)).fetchone():
             raise HTTPException(404, detail="Routine not found")
         active = find_active_session(conn, exclude_type="routine", exclude_id=routine_id)
         if active:
             raise HTTPException(409, detail=active["title"])
+
+        if target:
+            date_str = target
+        else:
+            last_paused = conn.execute(
+                "SELECT date FROM routine_sessions WHERE routine_id = ? ORDER BY id DESC LIMIT 1",
+                (routine_id,),
+            ).fetchone()
+            date_str = last_paused["date"] if last_paused else _today_sp_iso()
 
         last = conn.execute(
             "SELECT MAX(session_num) AS num FROM routine_sessions WHERE routine_id = ? AND date = ?",
@@ -465,16 +498,34 @@ def routine_resume_session(routine_id: str, target: Optional[str] = None):
 
 @router.post("/api/routines/{routine_id}/sessions/stop")
 def routine_stop_session(routine_id: str, target: Optional[str] = None):
-    """Fecha qualquer sessão ativa da rotina+data e marca como feita naquele dia."""
+    """Finaliza a rotina: fecha sessão aberta (qualquer data) + insere log.
+
+    Estratégia robusta cross-midnight:
+    - Se há sessão aberta da rotina (qualquer data), fecha-a e usa a DATA
+      DA SESSÃO pra criar o log (em vez de "hoje"). Resolve o caso de
+      iniciar 23:55, pausar, finalizar no dia seguinte — o log fica no
+      dia em que a rotina foi efetivamente trabalhada.
+    - Se passou `target` explicitamente, prevalece (DiaPage planejando
+      uma data específica).
+    - Se não há sessão aberta nem target, log vai pro dia atual.
+    """
     now = utcnow_iso_z()
-    date_str = target or _today_sp_iso()
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM routines WHERE id = ?", (routine_id,)).fetchone():
             raise HTTPException(404, detail="Routine not found")
+
         session = conn.execute(
-            "SELECT id FROM routine_sessions WHERE routine_id = ? AND date = ? AND ended_at IS NULL ORDER BY session_num DESC LIMIT 1",
-            (routine_id, date_str),
+            "SELECT id, date FROM routine_sessions WHERE routine_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (routine_id,),
         ).fetchone()
+
+        if target:
+            date_str = target
+        elif session:
+            date_str = session["date"]
+        else:
+            date_str = _today_sp_iso()
+
         if session:
             conn.execute("UPDATE routine_sessions SET ended_at = ? WHERE id = ?", (now, session["id"]))
         conn.execute(

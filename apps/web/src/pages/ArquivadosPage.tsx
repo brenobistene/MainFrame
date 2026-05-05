@@ -7,7 +7,7 @@ import { Card } from '../components/ui/Primitives'
  */
 export function ArquivadosView({ archivedIdeas, onDelete }: { archivedIdeas: Array<{ id: string; title: string; created_at: string }>; onDelete: (id: string) => void }) {
   return (
-    <div style={{ padding: '32px 24px', maxWidth: 1000, margin: '0 auto', color: 'var(--color-text-primary)' }}>
+    <div style={{ color: 'var(--color-text-primary)' }}>
     <Card padding="none" style={{
       animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
     }}>

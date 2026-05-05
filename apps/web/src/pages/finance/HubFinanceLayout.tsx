@@ -10,7 +10,7 @@
  */
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Settings, Upload } from 'lucide-react'
+import { Settings, Upload, Eye, EyeOff } from 'lucide-react'
 import { HubFinanceProvider, useHubFinance } from './HubFinanceContext'
 import { ImportCsvModal } from './components/ImportCsvModal'
 import { RulesModal } from './components/RulesModal'
@@ -35,14 +35,17 @@ export function HubFinanceLayout() {
 }
 
 function LayoutInner() {
-  const { accounts, categories, refreshAll } = useHubFinance()
+  const { accounts, categories, refreshAll, privateMode, togglePrivate } = useHubFinance()
   const [showImportModal, setShowImportModal] = useState(false)
   const [showRulesModal, setShowRulesModal] = useState(false)
 
   const hasAccounts = accounts.length > 0
 
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
+    <div
+      data-finance-private={privateMode || undefined}
+      style={{ color: 'var(--color-text-primary)' }}
+    >
       {/* Tab bar sticky — gruda no topo do <main> (já offsetado pelo banner de sessão) */}
       <div style={{
         position: 'sticky',
@@ -52,8 +55,6 @@ function LayoutInner() {
         borderBottom: '1px solid var(--color-divider)',
       }}>
         <div style={{
-          maxWidth: 1200,
-          margin: '0 auto',
           padding: '0 24px',
           display: 'flex',
           alignItems: 'center',
@@ -83,33 +84,54 @@ function LayoutInner() {
             </NavLink>
           ))}
           <div style={{ flex: 1 }} />
-          {hasAccounts && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                onClick={() => setShowRulesModal(true)}
-                title="Gerenciar regras de auto-categorização"
-                style={ghostButton()}
-              >
-                <Settings size={11} strokeWidth={2} style={{ marginRight: 4 }} />
-                regras
-              </button>
-              <button
-                onClick={() => setShowImportModal(true)}
-                title="Importar CSV de extrato Nubank"
-                style={ghostButton()}
-              >
-                <Upload size={11} strokeWidth={2} style={{ marginRight: 4 }} />
-                importar
-              </button>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* Toggle privacidade — texto + ícone pra ser óbvio.
+                Vira oxblood quando ativo. */}
+            <button
+              onClick={togglePrivate}
+              aria-pressed={privateMode}
+              title={privateMode ? 'Clique pra mostrar os valores' : 'Esconder valores (modo privacidade)'}
+              style={{
+                ...ghostButton(),
+                ...(privateMode ? {
+                  background: 'rgba(159, 18, 57, 0.14)',
+                  border: '1px solid var(--color-accent-primary)',
+                  color: 'var(--color-accent-light)',
+                } : {}),
+              }}
+            >
+              {privateMode
+                ? <EyeOff size={11} strokeWidth={2} style={{ marginRight: 4 }} />
+                : <Eye size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
+              {privateMode ? 'mostrar' : 'ocultar'}
+            </button>
+
+            {hasAccounts && (
+              <>
+                <button
+                  onClick={() => setShowRulesModal(true)}
+                  title="Gerenciar regras de auto-categorização"
+                  style={ghostButton()}
+                >
+                  <Settings size={11} strokeWidth={2} style={{ marginRight: 4 }} />
+                  regras
+                </button>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  title="Importar CSV de extrato Nubank"
+                  style={ghostButton()}
+                >
+                  <Upload size={11} strokeWidth={2} style={{ marginRight: 4 }} />
+                  importar
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Conteúdo da sub-rota */}
       <div style={{
-        maxWidth: 1200,
-        margin: '0 auto',
         padding: '24px',
       }}>
         <Outlet />

@@ -152,7 +152,7 @@ function TopBar({ summary, selectedMonth, onMonthChange }: {
               }}>
                 Saldo geral
               </span>
-              <span style={{
+              <span className="hq-money" style={{
                 fontSize: 'var(--text-2xl)', fontWeight: 700,
                 fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
                 letterSpacing: '-0.02em',
@@ -508,14 +508,14 @@ function CardOutrasTransacoes({ transactions, commitments, onSeeAll }: {
           fontVariantNumeric: 'tabular-nums',
         }}>
           <span style={{ color: 'var(--color-text-tertiary)' }}>
-            <span style={{ color: 'var(--color-accent-light)', fontWeight: 700 }}>
+            <span className="hq-money" style={{ color: 'var(--color-accent-light)', fontWeight: 700 }}>
               {formatBRL(totalAvulsoDespesa)}
             </span>
             <span style={{ marginLeft: 4 }}>gastos avulsos</span>
           </span>
           {totalAvulsoReceita > 0 && (
             <span style={{ color: 'var(--color-text-tertiary)' }}>
-              <span style={{ color: 'var(--color-success-light)', fontWeight: 700 }}>
+              <span className="hq-money" style={{ color: 'var(--color-success-light)', fontWeight: 700 }}>
                 {formatBRL(totalAvulsoReceita)}
               </span>
               <span style={{ marginLeft: 4 }}>entradas avulsas</span>
@@ -559,7 +559,7 @@ function CardOutrasTransacoes({ transactions, commitments, onSeeAll }: {
                     {tx.data.split('-').reverse().slice(0, 2).join('/')}
                   </div>
                 </div>
-                <span style={{
+                <span className="hq-money" style={{
                   fontSize: 'var(--text-sm)', fontWeight: 600,
                   fontFamily: 'var(--font-mono)',
                   fontVariantNumeric: 'tabular-nums',
@@ -613,7 +613,7 @@ function PlanRealRow({ label, value, color }: { label: string; value: number; co
       }}>
         {label}
       </span>
-      <span style={{
+      <span className="hq-money" style={{
         fontSize: 14, fontWeight: 700,
         color,
         fontFamily: 'var(--font-mono)',
@@ -708,7 +708,7 @@ function CompromissoRow({ item, onClick, index = 0 }: {
           <div style={listRowSub}>{subText}</div>
         </div>
       </div>
-      <span style={{
+      <span className="hq-money" style={{
         fontSize: 13, fontWeight: 600,
         fontFamily: 'var(--font-mono)',
         fontVariantNumeric: 'tabular-nums',

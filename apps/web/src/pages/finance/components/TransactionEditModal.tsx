@@ -8,7 +8,7 @@ import type {
 } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton, modalOverlay,
-  formatBRL, formatDate,
+  formatBRL, formatDate, parseBRL, sanitizeMoneyInput,
   modalShell, modalHairline, modalHeader, modalBody,
 } from './styleHelpers'
 
@@ -75,8 +75,8 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!descricao.trim()) { alert('Descrição é obrigatória.'); return }
-    const valorNum = parseFloat(valor.replace(',', '.'))
-    if (isNaN(valorNum) || valorNum === 0) { alert('Valor inválido.'); return }
+    const valorNum = parseBRL(valor)
+    if (valorNum == null || valorNum === 0) { alert('Valor inválido.'); return }
     setBusy(true)
     try {
       await updateFinTransaction(tx.id, {
@@ -140,7 +140,7 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
             </select>
             <input
               type="text" inputMode="decimal" placeholder="valor"
-              value={valor} onChange={e => setValor(e.target.value)}
+              value={valor} onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
               style={{ ...inputStyle(), textAlign: 'right', fontFamily: 'var(--font-mono)' }}
             />
           </div>

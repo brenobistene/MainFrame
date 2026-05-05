@@ -216,6 +216,10 @@ export interface ActiveSession {
   deliverable_title?: string | null
   /** @deprecated use `id` + `type`. Kept for back-compat with older UI code. */
   quest_id?: string | null
+  /** Para `type='routine'`: data (YYYY-MM-DD) da sessão ativa.
+   *  Usada pelo banner pra escopear o "+tempo acumulado" ao dia certo
+   *  e pra passar `target` correto em finalizações cross-midnight. */
+  routine_date?: string | null
 }
 
 export interface MicroTask {

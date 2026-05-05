@@ -37,3 +37,7 @@ class ActiveSessionOut(BaseModel):
     deliverable_title: Optional[str] = None
     # Back-compat: old UI might read quest_id
     quest_id: Optional[str] = None
+    # Pra rotinas: data (YYYY-MM-DD) da sessão ativa. Usada pelo frontend
+    # pra escopear bannerClosedSec ao dia certo (e não somar histórico todo)
+    # e pra passar `target` correto em finalizações cross-midnight.
+    routine_date: Optional[str] = None

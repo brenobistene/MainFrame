@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Repeat, Clock, Flag, Trash2, Check } from 'lucide-react'
 import type { Routine } from '../types'
 import { PrioritySelect } from './PrioritySelect'
 import { parseTimeToMinutes, minutesToHmm } from '../utils/datetime'
@@ -7,6 +8,11 @@ import { parseTimeToMinutes, minutesToHmm } from '../utils/datetime'
  * Form for creating/editing a Routine. Title + recurrence (diária / dias úteis
  * / semanal / mensal) + day pickers + optional time window or estimated
  * duration. The parent owns `formData` state and decides when to save.
+ *
+ * Layout: mini-modal inline — hairline oxblood top, header grainy com input
+ * de título grande, body com seções (Recorrência, Quando, Prioridade)
+ * separadas por dividers sutis, footer grainy com ações (destructive à
+ * esquerda, primary+cancel à direita).
  */
 export function RoutineEditor({
   routine,
@@ -59,333 +65,461 @@ export function RoutineEditor({
   }
 
   const selectedDays = formData.days_of_week ? formData.days_of_week.split(',').map(Number) : []
+  const recurrence = formData.recurrence ?? 'daily'
+  const titleEmpty = !(formData.title ?? '').trim()
+  const timeMismatch = (formData.start_time && !formData.end_time) || (!formData.start_time && formData.end_time)
+
+  const RECURRENCES: { key: NonNullable<Routine['recurrence']>; label: string }[] = [
+    { key: 'daily',    label: 'Diária' },
+    { key: 'weekdays', label: 'Dias úteis' },
+    { key: 'weekly',   label: 'Semanal' },
+    { key: 'monthly',  label: 'Mensal' },
+  ]
 
   return (
-    <div className="hq-animate-fade-up" style={{ padding: '12px 0', borderBottom: '1px solid var(--color-border)', marginBottom: 12 }}>
-      <input
-        type="text"
-        autoComplete="off"
-        placeholder="Título da rotina"
-        value={formData.title || ''}
-        onChange={e => setFormData({ ...formData, title: e.target.value })}
-        onFocus={e => {
-          e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
-          e.currentTarget.style.boxShadow = '0 0 0 2px rgba(139, 46, 46, 0.2)'
-        }}
-        onBlur={e => {
-          e.currentTarget.style.borderColor = 'var(--color-border)'
-          e.currentTarget.style.boxShadow = 'none'
-        }}
-        style={{
-          width: '100%', background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)',
-          padding: '8px 10px', fontSize: 13, marginBottom: 12, borderRadius: 3, boxSizing: 'border-box',
-          outline: 'none', fontFamily: "'Satoshi', sans-serif", fontWeight: 500,
-          transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
-        }}
-      />
+    <div
+      className="hq-animate-fade-up"
+      style={{
+        background: 'var(--color-bg-primary)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+        boxShadow: 'var(--shadow-lg)',
+        marginBottom: 'var(--space-4)',
+      }}
+    >
+      {/* Hairline oxblood — assinatura visual do design system */}
+      <div style={{
+        height: 1,
+        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
+        opacity: 0.5,
+      }} />
 
-      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700 }}>
-          Prioridade
+      {/* Header compacto: eyebrow + título input em linha */}
+      <div
+        className="hq-grain"
+        style={{
+          padding: '14px 18px 12px',
+          background: `
+            radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.05), transparent 60%)
+          `,
+          borderBottom: '1px solid var(--color-divider)',
+        }}
+      >
+        <div style={{
+          fontSize: 9,
+          color: 'var(--color-accent-light)',
+          letterSpacing: '0.24em',
+          textTransform: 'uppercase',
+          fontWeight: 700,
+          marginBottom: 6,
+          lineHeight: 1,
+        }}>
+          {routine ? 'Editar' : 'Nova rotina'}
         </div>
-        <PrioritySelect
-          value={formData.priority || 'critical'}
-          onChange={v => setFormData({ ...formData, priority: v })}
+
+        <input
+          type="text"
+          autoComplete="off"
+          autoFocus
+          aria-label="Título da rotina"
+          placeholder="Nome da rotina"
+          value={formData.title || ''}
+          onChange={e => setFormData({ ...formData, title: e.target.value })}
+          onFocus={e => { e.currentTarget.style.borderBottomColor = 'var(--color-accent-primary)' }}
+          onBlur={e => { e.currentTarget.style.borderBottomColor = 'transparent' }}
+          style={{
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            borderBottom: '1px solid transparent',
+            color: 'var(--color-text-primary)',
+            padding: '2px 0 4px',
+            fontSize: 'var(--text-md)',
+            fontWeight: 600,
+            letterSpacing: '-0.01em',
+            boxSizing: 'border-box',
+            outline: 'none',
+            fontFamily: 'inherit',
+            transition: 'border-color var(--motion-fast) var(--ease-smooth)',
+          }}
         />
       </div>
 
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          Recorrência
-        </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {(['daily', 'weekdays', 'weekly', 'monthly'] as const).map(rec => (
-            <button
-              key={rec}
-              onClick={() => setFormData({ ...formData, recurrence: rec, days_of_week: null, day_of_month: null })}
-              style={{
-                background: formData.recurrence === rec ? 'var(--color-accent-primary)' : 'transparent',
-                border: `1px solid ${formData.recurrence === rec ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
-                color: formData.recurrence === rec ? 'var(--color-bg-primary)' : 'var(--color-text-secondary)',
-                cursor: 'pointer', padding: '6px 12px', fontSize: 11, borderRadius: 3,
-                transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)', textTransform: 'capitalize',
-                fontWeight: formData.recurrence === rec ? 600 : 500,
-              }}
-              onMouseEnter={e => {
-                if (formData.recurrence !== rec) {
-                  e.currentTarget.style.borderColor = 'var(--color-accent-light)'
-                  e.currentTarget.style.color = 'var(--color-accent-light)'
-                }
-              }}
-              onMouseLeave={e => {
-                if (formData.recurrence !== rec) {
-                  e.currentTarget.style.borderColor = 'var(--color-border)'
-                  e.currentTarget.style.color = 'var(--color-text-secondary)'
-                }
-              }}
-            >
-              {rec === 'daily' ? 'Diária' : rec === 'weekdays' ? 'Dias úteis' : rec === 'weekly' ? 'Semanal' : 'Mensal'}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Body compacto */}
+      <div style={{
+        padding: '14px 18px',
+        display: 'flex', flexDirection: 'column', gap: 'var(--space-4)',
+      }}>
 
-      {formData.recurrence === 'weekly' && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            Dias da semana
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {Array.from({ length: 7 }, (_, i) => i).map(pythonDay => (
-              <button
-                key={pythonDay}
-                onClick={() => toggleDay(pythonDay)}
-                style={{
-                  width: 36, height: 36, borderRadius: '50%',
-                  background: selectedDays.includes(pythonDay) ? 'var(--color-accent-primary)' : 'transparent',
-                  border: `1px solid ${selectedDays.includes(pythonDay) ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
-                  color: selectedDays.includes(pythonDay) ? 'var(--color-bg-primary)' : 'var(--color-text-secondary)',
-                  cursor: 'pointer', fontSize: 11, fontWeight: 600,
-                  transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)', padding: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-                onMouseEnter={e => {
-                  if (!selectedDays.includes(pythonDay)) {
-                    e.currentTarget.style.borderColor = 'var(--color-accent-light)'
-                    e.currentTarget.style.color = 'var(--color-accent-light)'
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (!selectedDays.includes(pythonDay)) {
+        {/* ─── Recorrência ─── */}
+        <Section icon={<Repeat size={11} strokeWidth={2} />} label="Recorrência">
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {RECURRENCES.map(rec => {
+              const active = recurrence === rec.key
+              return (
+                <button
+                  key={rec.key}
+                  onClick={() => setFormData({ ...formData, recurrence: rec.key, days_of_week: null, day_of_month: null })}
+                  style={{
+                    background: active ? 'var(--color-accent-primary)' : 'transparent',
+                    border: `1px solid ${active ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
+                    color: active ? 'var(--color-bg-primary)' : 'var(--color-text-secondary)',
+                    cursor: 'pointer',
+                    padding: '5px 10px',
+                    fontSize: 11,
+                    borderRadius: 'var(--radius-sm)',
+                    fontWeight: active ? 600 : 500,
+                    transition: 'all var(--motion-fast) var(--ease-smooth)',
+                  }}
+                  onMouseEnter={e => {
+                    if (active) return
+                    e.currentTarget.style.borderColor = 'var(--color-border-chrome)'
+                    e.currentTarget.style.color = 'var(--color-text-primary)'
+                  }}
+                  onMouseLeave={e => {
+                    if (active) return
                     e.currentTarget.style.borderColor = 'var(--color-border)'
                     e.currentTarget.style.color = 'var(--color-text-secondary)'
-                  }
-                }}
-              >
-                {dayLabels[pythonDayToDom(pythonDay)]}
-              </button>
-            ))}
+                  }}
+                >
+                  {rec.label}
+                </button>
+              )
+            })}
           </div>
-        </div>
-      )}
 
-      {formData.recurrence === 'monthly' && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            Dia do mês
+          {recurrence === 'weekly' && (
+            <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {Array.from({ length: 7 }, (_, i) => i).map(pythonDay => {
+                const sel = selectedDays.includes(pythonDay)
+                return (
+                  <button
+                    key={pythonDay}
+                    onClick={() => toggleDay(pythonDay)}
+                    aria-pressed={sel}
+                    style={{
+                      minWidth: 32, height: 26,
+                      padding: '0 6px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: sel ? 'var(--color-accent-primary)' : 'transparent',
+                      border: `1px solid ${sel ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
+                      color: sel ? 'var(--color-bg-primary)' : 'var(--color-text-secondary)',
+                      cursor: 'pointer',
+                      fontSize: 10,
+                      fontWeight: sel ? 600 : 500,
+                      fontFamily: 'var(--font-mono)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'all var(--motion-fast) var(--ease-smooth)',
+                    }}
+                    onMouseEnter={e => {
+                      if (sel) return
+                      e.currentTarget.style.borderColor = 'var(--color-border-chrome)'
+                      e.currentTarget.style.color = 'var(--color-text-primary)'
+                    }}
+                    onMouseLeave={e => {
+                      if (sel) return
+                      e.currentTarget.style.borderColor = 'var(--color-border)'
+                      e.currentTarget.style.color = 'var(--color-text-secondary)'
+                    }}
+                  >
+                    {dayLabels[pythonDayToDom(pythonDay)]}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {recurrence === 'monthly' && (
+            <div style={{
+              marginTop: 8,
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 11, color: 'var(--color-text-secondary)',
+            }}>
+              <span>Todo dia</span>
+              <input
+                type="number"
+                autoComplete="off"
+                min="1" max="31"
+                placeholder="15"
+                aria-label="Dia do mês"
+                value={formData.day_of_month || ''}
+                onChange={e => setFormData({ ...formData, day_of_month: e.target.value ? parseInt(e.target.value) : null })}
+                onFocus={e => { e.currentTarget.style.borderColor = 'var(--color-accent-primary)' }}
+                onBlur={e => { e.currentTarget.style.borderColor = 'var(--color-border)' }}
+                style={{
+                  width: 44, height: 26,
+                  background: 'var(--color-bg-secondary)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  padding: '0 6px',
+                  fontSize: 11, borderRadius: 'var(--radius-sm)',
+                  outline: 'none',
+                  fontFamily: 'var(--font-mono)', fontWeight: 600,
+                  textAlign: 'center',
+                  fontVariantNumeric: 'tabular-nums',
+                  transition: 'border-color var(--motion-fast) var(--ease-smooth)',
+                }}
+              />
+              <span>do mês</span>
+            </div>
+          )}
+        </Section>
+
+        {/* ─── Quando ─── */}
+        <Section icon={<Clock size={11} strokeWidth={2} />} label="Quando">
+          <div style={{
+            display: 'inline-flex',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-sm)',
+            padding: 2,
+            background: 'transparent',
+          }}>
+            {([
+              { key: 'fixed' as const,    label: 'Horário' },
+              { key: 'duration' as const, label: 'Duração' },
+            ]).map(m => {
+              const active = mode === m.key
+              return (
+                <button
+                  key={m.key}
+                  onClick={() => switchMode(m.key)}
+                  style={{
+                    background: active ? 'var(--color-bg-secondary)' : 'transparent',
+                    border: 'none',
+                    color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                    cursor: 'pointer',
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    borderRadius: 2,
+                    fontWeight: active ? 600 : 500,
+                    transition: 'all var(--motion-fast) var(--ease-smooth)',
+                  }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.color = 'var(--color-text-primary)' }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.color = 'var(--color-text-tertiary)' }}
+                >
+                  {m.label}
+                </button>
+              )
+            })}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>Todo dia</span>
+
+          {mode === 'fixed' && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <TimeInput
+                  value={formData.start_time || ''}
+                  onChange={v => setFormData({ ...formData, start_time: v || null })}
+                  ariaLabel="Horário de início"
+                />
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>—</span>
+                <TimeInput
+                  value={formData.end_time || ''}
+                  onChange={v => setFormData({ ...formData, end_time: v || null })}
+                  ariaLabel="Horário de fim"
+                />
+              </div>
+              {timeMismatch && (
+                <div role="alert" style={{
+                  fontSize: 10, color: 'var(--color-error)', marginTop: 4,
+                }}>
+                  Preencha início e fim.
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === 'duration' && (
             <input
-              type="number"
+              type="text"
               autoComplete="off"
-              min="1"
-              max="31"
-              placeholder="15"
-              value={formData.day_of_month || ''}
-              onChange={e => setFormData({ ...formData, day_of_month: e.target.value ? parseInt(e.target.value) : null })}
-              onFocus={e => {
-                e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
-                e.currentTarget.style.boxShadow = '0 0 0 2px rgba(139, 46, 46, 0.2)'
+              placeholder="ex: 1:30 ou 90"
+              aria-label="Duração estimada"
+              title="Aceita '1:30' ou minutos puros como '90'"
+              value={estimatedInput}
+              onChange={e => {
+                setEstimatedInput(e.target.value)
+                const parsed = parseTimeToMinutes(e.target.value)
+                setFormData({ ...formData, estimated_minutes: parsed ?? null })
               }}
-              onBlur={e => {
-                e.currentTarget.style.borderColor = 'var(--color-border)'
-                e.currentTarget.style.boxShadow = 'none'
-              }}
+              onFocus={e => { e.currentTarget.style.borderColor = 'var(--color-accent-primary)' }}
+              onBlur={e => { e.currentTarget.style.borderColor = 'var(--color-border)' }}
               style={{
-                width: 50, background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)',
-                padding: '4px 6px', fontSize: 12, borderRadius: 3, outline: 'none',
-                fontFamily: 'var(--font-mono)', fontWeight: 600,
-                transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
+                width: 140, height: 26, marginTop: 8,
+                background: 'var(--color-bg-secondary)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-primary)',
+                padding: '0 8px',
+                fontSize: 11, borderRadius: 'var(--radius-sm)',
+                outline: 'none', boxSizing: 'border-box',
+                fontFamily: 'var(--font-mono)', fontWeight: 500,
+                fontVariantNumeric: 'tabular-nums',
+                transition: 'border-color var(--motion-fast) var(--ease-smooth)',
               }}
             />
-            <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>do mês</span>
-          </div>
-        </div>
-      )}
+          )}
+        </Section>
 
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ fontSize: 10, color: 'var(--color-text-secondary)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          Quando acontece
-        </label>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-          {([
-            { key: 'fixed' as const, label: 'Horário fixo' },
-            { key: 'duration' as const, label: 'Duração estimada' },
-          ]).map(m => (
-            <button
-              key={m.key}
-              onClick={() => switchMode(m.key)}
-              style={{
-                background: mode === m.key ? 'var(--color-accent-primary)' : 'transparent',
-                border: `1px solid ${mode === m.key ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
-                color: mode === m.key ? 'var(--color-bg-primary)' : 'var(--color-text-secondary)',
-                cursor: 'pointer', padding: '6px 12px', fontSize: 11, borderRadius: 3,
-                transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
-                fontWeight: mode === m.key ? 600 : 500,
-              }}
-              onMouseEnter={e => {
-                if (mode !== m.key) {
-                  e.currentTarget.style.borderColor = 'var(--color-accent-light)'
-                  e.currentTarget.style.color = 'var(--color-accent-light)'
-                }
-              }}
-              onMouseLeave={e => {
-                if (mode !== m.key) {
-                  e.currentTarget.style.borderColor = 'var(--color-border)'
-                  e.currentTarget.style.color = 'var(--color-text-secondary)'
-                }
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        {mode === 'fixed' && (
-              <>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    type="time"
-                    value={formData.start_time || ''}
-                    onChange={e => setFormData({ ...formData, start_time: e.target.value || null })}
-                    placeholder="Início"
-                    onFocus={e => {
-                      e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
-                      e.currentTarget.style.boxShadow = '0 0 0 2px rgba(139, 46, 46, 0.2)'
-                    }}
-                    onBlur={e => {
-                      e.currentTarget.style.borderColor = 'var(--color-border)'
-                      e.currentTarget.style.boxShadow = 'none'
-                    }}
-                    style={{
-                      flex: 1, background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)',
-                      padding: '6px 8px', fontSize: 12, borderRadius: 3, outline: 'none',
-                      fontFamily: 'var(--font-mono)', fontWeight: 500,
-                      transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
-                    }}
-                  />
-                  <span style={{ color: 'var(--color-text-secondary)' }}>–</span>
-                  <input
-                    type="time"
-                    value={formData.end_time || ''}
-                    onChange={e => setFormData({ ...formData, end_time: e.target.value || null })}
-                    placeholder="Fim"
-                    onFocus={e => {
-                      e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
-                      e.currentTarget.style.boxShadow = '0 0 0 2px rgba(139, 46, 46, 0.2)'
-                    }}
-                    onBlur={e => {
-                      e.currentTarget.style.borderColor = 'var(--color-border)'
-                      e.currentTarget.style.boxShadow = 'none'
-                    }}
-                    style={{
-                      flex: 1, background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)',
-                      padding: '6px 8px', fontSize: 12, borderRadius: 3, outline: 'none',
-                      fontFamily: 'var(--font-mono)', fontWeight: 500,
-                      transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
-                    }}
-                  />
-                </div>
-                {((formData.start_time && !formData.end_time) || (!formData.start_time && formData.end_time)) && (
-                  <div style={{ fontSize: 10, color: 'var(--color-error)', marginTop: 4 }}>
-                    ⚠ Preencha ambos os horários
-                  </div>
-                )}
-              </>
-            )}
-
-            {mode === 'duration' && (
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder="h:mm (ex: 1:30) ou minutos"
-                title="Aceita '1:30' ou '90' (minutos)"
-                value={estimatedInput}
-                onChange={e => {
-                  setEstimatedInput(e.target.value)
-                  const parsed = parseTimeToMinutes(e.target.value)
-                  setFormData({ ...formData, estimated_minutes: parsed ?? null })
-                }}
-                onFocus={e => {
-                  e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
-                  e.currentTarget.style.boxShadow = '0 0 0 2px rgba(139, 46, 46, 0.2)'
-                }}
-                onBlur={e => {
-                  e.currentTarget.style.borderColor = 'var(--color-border)'
-                  e.currentTarget.style.boxShadow = 'none'
-                }}
-                style={{
-                  width: '100%', background: 'var(--color-bg-tertiary)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)',
-                  padding: '6px 8px', fontSize: 12, borderRadius: 3, outline: 'none', boxSizing: 'border-box',
-                  fontFamily: 'var(--font-mono)', fontWeight: 500,
-                  transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
-                }}
+        {/* ─── Prioridade — inline compacta ─── */}
+        <Section icon={<Flag size={11} strokeWidth={2} />} label="Prioridade">
+          <PrioritySelect
+            value={formData.priority || 'critical'}
+            onChange={v => setFormData({ ...formData, priority: v })}
           />
-        )}
+        </Section>
       </div>
 
-      <div style={{ display: 'flex', gap: 10 }}>
-        <button
-          onClick={onSave}
-          style={{
-            flex: 1, background: 'var(--color-accent-primary)', border: '1px solid var(--color-accent-primary)', color: 'var(--color-bg-primary)',
-            cursor: 'pointer', padding: '10px 12px', fontSize: 12, borderRadius: 3,
-            transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)', fontWeight: 600, letterSpacing: '0.05em',
-            textTransform: 'uppercase',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.background = 'var(--color-accent-secondary)'
-            e.currentTarget.style.borderColor = 'var(--color-accent-secondary)'
-            e.currentTarget.style.transform = 'translateY(-1px)'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.background = 'var(--color-accent-primary)'
-            e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
-            e.currentTarget.style.transform = 'translateY(0)'
-          }}
-        >
-          Salvar
-        </button>
-        {routine && (
+      {/* Footer compacto */}
+      <div style={{
+        borderTop: '1px solid var(--color-divider)',
+        padding: '10px 18px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 6,
+      }}>
+        {routine ? (
           <button
             onClick={onDelete}
+            aria-label="Excluir rotina"
             style={{
-              background: 'transparent', border: '1px solid var(--color-error)', color: 'var(--color-error)',
-              cursor: 'pointer', padding: '10px 12px', fontSize: 12, borderRadius: 3,
-              transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)', fontWeight: 500,
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--color-text-muted)',
+              cursor: 'pointer',
+              padding: '4px 6px',
+              fontSize: 10, fontWeight: 500,
+              letterSpacing: '0.08em', textTransform: 'uppercase',
+              borderRadius: 'var(--radius-sm)',
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              transition: 'color var(--motion-fast) var(--ease-smooth)',
             }}
-            onMouseEnter={e => {
-              e.currentTarget.style.background = 'rgba(139, 46, 46, 0.15)'
-              e.currentTarget.style.borderColor = 'var(--color-accent-light)'
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.background = 'transparent'
-              e.currentTarget.style.borderColor = 'var(--color-error)'
-            }}
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-error)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)' }}
           >
+            <Trash2 size={10} strokeWidth={1.8} />
             Excluir
           </button>
-        )}
-        <button
-          onClick={onCancel}
-          style={{
-            background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)',
-            cursor: 'pointer', padding: '10px 12px', fontSize: 12, borderRadius: 3,
-            transition: 'all 0.2s cubic-bezier(0.3, 0, 0.7, 1)',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.color = 'var(--color-text-primary)'
-            e.currentTarget.style.borderColor = 'var(--color-accent-light)'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.color = 'var(--color-text-secondary)'
-            e.currentTarget.style.borderColor = 'var(--color-border)'
-          }}
-        >
-          Cancelar
-        </button>
+        ) : <div />}
+
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+              cursor: 'pointer',
+              padding: '5px 12px',
+              fontSize: 10, fontWeight: 600,
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              borderRadius: 'var(--radius-sm)',
+              transition: 'all var(--motion-fast) var(--ease-smooth)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.color = 'var(--color-text-primary)'
+              e.currentTarget.style.borderColor = 'var(--color-border-chrome)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.color = 'var(--color-text-tertiary)'
+              e.currentTarget.style.borderColor = 'var(--color-border)'
+            }}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onSave}
+            disabled={titleEmpty}
+            aria-disabled={titleEmpty}
+            title={titleEmpty ? 'Dê um título antes de salvar' : undefined}
+            style={{
+              background: titleEmpty ? 'var(--color-bg-tertiary)' : 'var(--color-accent-primary)',
+              border: `1px solid ${titleEmpty ? 'var(--color-border)' : 'var(--color-accent-primary)'}`,
+              color: titleEmpty ? 'var(--color-text-muted)' : 'var(--color-bg-primary)',
+              cursor: titleEmpty ? 'not-allowed' : 'pointer',
+              padding: '5px 14px',
+              fontSize: 10, fontWeight: 700,
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              borderRadius: 'var(--radius-sm)',
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              transition: 'all var(--motion-fast) var(--ease-smooth)',
+              opacity: titleEmpty ? 0.6 : 1,
+            }}
+            onMouseEnter={e => {
+              if (titleEmpty) return
+              e.currentTarget.style.background = 'var(--color-accent-secondary)'
+              e.currentTarget.style.borderColor = 'var(--color-accent-secondary)'
+            }}
+            onMouseLeave={e => {
+              if (titleEmpty) return
+              e.currentTarget.style.background = 'var(--color-accent-primary)'
+              e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
+            }}
+          >
+            <Check size={10} strokeWidth={2.2} />
+            Salvar
+          </button>
+        </div>
       </div>
     </div>
+  )
+}
+
+// ─── Internal ────────────────────────────────────────────────────────────
+
+function Section({ icon, label, children }: {
+  icon: React.ReactNode
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        marginBottom: 8,
+      }}>
+        <span style={{ color: 'var(--color-text-muted)', display: 'inline-flex' }}>
+          {icon}
+        </span>
+        <span style={{
+          fontSize: 9,
+          color: 'var(--color-text-tertiary)',
+          letterSpacing: '0.16em',
+          textTransform: 'uppercase',
+          fontWeight: 600,
+        }}>
+          {label}
+        </span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function TimeInput({ value, onChange, ariaLabel }: {
+  value: string
+  onChange: (v: string) => void
+  ariaLabel: string
+}) {
+  return (
+    <input
+      type="time"
+      aria-label={ariaLabel}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      onFocus={e => { e.currentTarget.style.borderColor = 'var(--color-accent-primary)' }}
+      onBlur={e => { e.currentTarget.style.borderColor = 'var(--color-border)' }}
+      style={{
+        width: 84, height: 26,
+        background: 'var(--color-bg-secondary)',
+        border: '1px solid var(--color-border)',
+        color: 'var(--color-text-primary)',
+        padding: '0 6px',
+        fontSize: 11, borderRadius: 'var(--radius-sm)',
+        outline: 'none',
+        fontFamily: 'var(--font-mono)', fontWeight: 500,
+        fontVariantNumeric: 'tabular-nums',
+        colorScheme: 'dark',
+        transition: 'border-color var(--motion-fast) var(--ease-smooth)',
+      } as React.CSSProperties}
+    />
   )
 }

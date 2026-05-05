@@ -160,7 +160,7 @@ function CardRecorrenciasFixas({ tipo, bills, status, onManage }: {
             e.currentTarget.style.color = 'var(--color-text-tertiary)'
             e.currentTarget.style.borderColor = 'var(--color-border)'
           }}>
-            gerenciar →
+            gerenciar / nova →
           </button>
         </div>
       </div>
@@ -174,8 +174,8 @@ function CardRecorrenciasFixas({ tipo, bills, status, onManage }: {
           fontSize: 11, fontStyle: 'italic',
         }}>
           {isReceita
-            ? 'nenhuma receita fixa cadastrada. cadastre salário, mesada ou contratos via "gerenciar".'
-            : 'nenhuma conta fixa cadastrada. cadastre luz, água, internet, aluguel ou streaming via "gerenciar".'}
+            ? 'nenhuma receita fixa cadastrada. clique em "gerenciar / nova" pra cadastrar salário, mesada ou contratos.'
+            : 'nenhuma conta fixa cadastrada. clique em "gerenciar / nova" pra cadastrar luz, água, internet, aluguel ou streaming.'}
         </div>
       ) : (
         <>
@@ -190,7 +190,7 @@ function CardRecorrenciasFixas({ tipo, bills, status, onManage }: {
               }}>
                 {labelEstimado}
               </div>
-              <div style={{
+              <div className="hq-money" style={{
                 fontSize: 18, fontWeight: 700,
                 color: 'var(--color-text-primary)',
                 fontFamily: 'var(--font-mono)',
@@ -206,7 +206,7 @@ function CardRecorrenciasFixas({ tipo, bills, status, onManage }: {
               }}>
                 {labelDone}
               </div>
-              <div style={{
+              <div className="hq-money" style={{
                 fontSize: 18, fontWeight: 700,
                 color: completedColor,
                 fontFamily: 'var(--font-mono)',
@@ -222,7 +222,7 @@ function CardRecorrenciasFixas({ tipo, bills, status, onManage }: {
               }}>
                 {labelPendente}
               </div>
-              <div style={{
+              <div className="hq-money" style={{
                 fontSize: 18, fontWeight: 700,
                 color: atrasadas > 0 ? 'var(--color-error)' : 'var(--color-text-primary)',
                 fontFamily: 'var(--font-mono)',
@@ -328,7 +328,7 @@ function CardRecorrenciasFixas({ tipo, bills, status, onManage }: {
                         </div>
                       </div>
                     </div>
-                    <span style={{
+                    <span className="hq-money" style={{
                       fontSize: 'var(--text-sm)', fontWeight: 600,
                       fontFamily: 'var(--font-mono)',
                       fontVariantNumeric: 'tabular-nums',

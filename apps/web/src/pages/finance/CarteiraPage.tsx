@@ -76,7 +76,7 @@ export function CarteiraPage() {
             <Wallet size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
             Saldo geral
           </div>
-          <div style={{
+          <div className="hq-money" style={{
             fontSize: 'var(--text-4xl)',
             fontWeight: 700,
             fontFamily: 'var(--font-mono)',
@@ -115,7 +115,7 @@ export function CarteiraPage() {
                   }}
                 >
                   <span style={{ color: 'var(--color-accent-light)', fontWeight: 600 }}>{moeda}</span>
-                  {formatMoney(nativo, moeda)}
+                  <span className="hq-money">{formatMoney(nativo, moeda)}</span>
                   <span style={{ color: 'var(--color-text-muted)' }}>· {rate.toFixed(2)}</span>
                 </span>
               ))}
@@ -249,11 +249,11 @@ export function CarteiraPage() {
                         color: a.saldo < 0
                           ? 'var(--color-error)'
                           : 'var(--color-text-primary)',
-                      }}>
+                      }} className="hq-money">
                         {formatMoney(a.saldo, a.moeda)}
                       </span>
                       {brlEquiv !== null && (
-                        <span style={{
+                        <span className="hq-money" style={{
                           fontSize: 'var(--text-xs)',
                           fontFamily: 'var(--font-mono)',
                           fontVariantNumeric: 'tabular-nums',

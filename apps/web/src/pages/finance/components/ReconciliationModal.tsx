@@ -14,7 +14,7 @@ import type { FinAccount } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton, modalOverlay,
   modalShell, modalHairline, modalHeader, modalBody,
-  formatMoney,
+  formatMoney, parseBRL, sanitizeMoneyInput,
 } from './styleHelpers'
 
 const TOL = 0.01  // tolerância pra arredondamento
@@ -31,12 +31,7 @@ export function ReconciliationModal({ account, onClose, onSaved }: {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
 
-  const saldoRealNum = useMemo(() => {
-    const s = saldoReal.trim().replace(',', '.')
-    if (!s) return null
-    const n = parseFloat(s)
-    return isNaN(n) ? null : n
-  }, [saldoReal])
+  const saldoRealNum = useMemo(() => parseBRL(saldoReal), [saldoReal])
 
   const diferenca = saldoRealNum != null ? saldoRealNum - account.saldo : null
   const isMatch = diferenca != null && Math.abs(diferenca) <= TOL
@@ -167,7 +162,7 @@ export function ReconciliationModal({ account, onClose, onSaved }: {
             type="text" inputMode="decimal"
             placeholder="ex: 1234,56"
             value={saldoReal}
-            onChange={e => setSaldoReal(e.target.value)}
+            onChange={e => setSaldoReal(sanitizeMoneyInput(e.target.value))}
             style={{ ...inputStyle(), fontFamily: 'var(--font-mono)' }}
           />
         </div>

@@ -368,6 +368,19 @@
         box-shadow: var(--shadow-md);
       }
 
+      /* ─── Money privacy blur ─── */
+      /* Usado pelo <Money> de Hub Finance. Quando o root do layout tem
+         data-finance-private="true" (toggle do olho na tab bar), todos os
+         valores ficam borrados + dessaturados (sem deixar dica de cor). */
+      .hq-money {
+        transition: filter 220ms cubic-bezier(0.3, 0, 0.7, 1);
+        will-change: filter;
+      }
+      [data-finance-private="true"] .hq-money {
+        filter: blur(8px) saturate(40%);
+        user-select: none;
+      }
+
       /* ─── Grain layer pra cards/modais (overlay localizado) ─── */
       .hq-grain {
         position: relative;

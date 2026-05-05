@@ -399,7 +399,7 @@ export function LancamentosPage() {
                     {acc?.nome ?? '—'}
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{
+                    <span className="hq-money" style={{
                       fontSize: 13, fontWeight: 600,
                       fontFamily: 'var(--font-mono)',
                       color: isEntry ? 'var(--color-success)' : 'var(--color-accent-primary)',
@@ -566,7 +566,7 @@ function FooterStat({ label, value, color, bold }: {
       }}>
         {label}
       </div>
-      <div style={{
+      <div className="hq-money" style={{
         fontSize: 13, fontWeight: bold ? 700 : 600, color,
         fontFamily: 'var(--font-mono)',
       }}>

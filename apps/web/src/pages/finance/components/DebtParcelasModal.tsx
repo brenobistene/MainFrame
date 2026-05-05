@@ -22,7 +22,7 @@ import type {
 } from '../../../types'
 import {
   sectionLabel, fieldLabel, hintText, inputStyle, primaryButton, ghostButton,
-  modalOverlay, formatBRL, ICON_SIZE, ICON_STROKE,
+  modalOverlay, formatBRL, parseBRL, sanitizeMoneyInput, ICON_SIZE, ICON_STROKE,
   modalShell, modalHairline, modalHeader, modalBody,
 } from './styleHelpers'
 import { EmptyState, IconButton } from '../../../components/ui/Primitives'
@@ -52,14 +52,20 @@ export function DebtParcelasModal({
   }
   useEffect(() => { refresh() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [debt.id])
 
-  // Cálculos agregados
+  // Cálculos agregados.
+  //
+  // Tolerância de 1 centavo (R$ 0,01) nas comparações pra absorver ruído de
+  // IEEE-754: somar floats BRL pode produzir N.X1000000000001 quando o
+  // "verdadeiro" é N.X1. Sem tolerância, o usuário vê alertas do tipo
+  // "fixou X — mais que X" (mesma string nos dois lados do operador).
+  const CENT_EPS = 0.01
   const sumPlanejado = parcelas.reduce((s, p) => s + (p.valor_planejado ?? 0), 0)
   const autoCount = parcelas.filter(p => p.is_auto).length
   const autoValue = autoCount > 0 ? (debt.valor_total_original - sumPlanejado) / autoCount : 0
   const sumPago = parcelas.reduce((s, p) => s + (p.valor_pago ?? 0), 0)
   const sumEfetivo = parcelas.reduce((s, p) => s + p.valor_efetivo, 0)
-  const sobreAlocado = sumPlanejado > debt.valor_total_original
-  const subAlocado = sumEfetivo < debt.valor_total_original - 0.01
+  const sobreAlocado = sumPlanejado > debt.valor_total_original + CENT_EPS
+  const subAlocado = sumEfetivo < debt.valor_total_original - CENT_EPS
 
   async function handleAddParcela() {
     setBusy(true)
@@ -190,7 +196,7 @@ export function DebtParcelasModal({
             <ParcelaStat
               label={autoCount > 0 ? `Auto × ${autoCount}` : 'Sem auto'}
               value={autoCount > 0 ? autoValue : 0}
-              color={autoValue < 0 ? 'var(--color-error)' : 'var(--color-accent-light)'}
+              color={autoValue < -CENT_EPS ? 'var(--color-error)' : 'var(--color-accent-light)'}
               hint={autoCount > 0 ? `cada parcela auto recebe este valor` : undefined}
             />
           </div>
@@ -392,8 +398,8 @@ function ParcelaRow({ parcela, autoValue, onEdit, onDelete, onMarkPaid, onUnlink
       }
       return
     }
-    const parsed = parseFloat(trimmed.replace(',', '.'))
-    if (isNaN(parsed) || parsed < 0) {
+    const parsed = parseBRL(trimmed)
+    if (parsed == null || parsed < 0) {
       alert('Valor inválido. Use número positivo ou deixe vazio pra auto.')
       setValorDraft(parcela.valor_planejado != null
         ? String(parcela.valor_planejado).replace('.', ',') : '')
@@ -467,7 +473,7 @@ function ParcelaRow({ parcela, autoValue, onEdit, onDelete, onMarkPaid, onUnlink
           inputMode="decimal"
           placeholder={parcela.is_auto ? `auto · ${formatBRL(autoValue)}` : '0,00'}
           value={valorDraft}
-          onChange={e => setValorDraft(e.target.value)}
+          onChange={e => setValorDraft(sanitizeMoneyInput(e.target.value))}
           onBlur={commitValor}
           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
           disabled={isPaga}
@@ -808,8 +814,8 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
       alert('Descrição e conta são obrigatórias.')
       return
     }
-    const valorNum = parseFloat(valor.replace(',', '.'))
-    if (isNaN(valorNum) || valorNum <= 0) {
+    const valorNum = parseBRL(valor)
+    if (valorNum == null || valorNum <= 0) {
       alert('Valor inválido.')
       return
     }
@@ -880,7 +886,7 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
                 type="text"
                 inputMode="decimal"
                 value={valor}
-                onChange={e => setValor(e.target.value)}
+                onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
                 style={{
                   ...inputStyle(), width: '100%', boxSizing: 'border-box',
                   fontFamily: 'var(--font-mono)',

@@ -10,13 +10,20 @@ router = APIRouter()
 
 
 def _executed_minutes_for_deliverable(conn, deliv_id: str) -> int:
-    """Soma em minutos das sessões fechadas das quests done deste deliverable."""
+    """Soma em minutos das sessões fechadas de TODAS as quests do deliverable.
+
+    Antes filtrava `q.status = 'done'`, mas isso fazia o card do entregável
+    mentir até o user finalizar a quest: 5h trabalhadas em uma quest aberta
+    apareciam como 0 em "feitos". Agora conta tempo real, independente do
+    status da quest. Sessão em andamento (ended_at NULL) ainda fica de fora
+    — só é somada depois de pause/finalize.
+    """
     rows = conn.execute(
         """
         SELECT s.started_at, s.ended_at
         FROM quest_sessions s
         JOIN quests q ON q.id = s.quest_id
-        WHERE q.deliverable_id = ? AND q.status = 'done'
+        WHERE q.deliverable_id = ?
           AND s.ended_at IS NOT NULL
         """,
         (deliv_id,),
@@ -49,7 +56,6 @@ def list_deliverables(project_id: str):
             JOIN quests q ON q.id = s.quest_id
             JOIN deliverables d ON d.id = q.deliverable_id
             WHERE d.project_id = ?
-              AND q.status = 'done'
               AND s.ended_at IS NOT NULL
             """,
             (project_id,),

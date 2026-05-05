@@ -8,7 +8,7 @@ from db import get_conn
 from models.quest import QuestCreate, QuestOut, QuestUpdate
 from models.session import SessionOut
 from services.active_session import find_active_session
-from services.utils import calculate_quest_duration, parse_iso, utcnow_iso_z
+from services.utils import parse_iso, utcnow_iso_z
 
 
 class SessionEdit(BaseModel):
@@ -178,10 +178,15 @@ def update_quest(quest_id: str, body: QuestUpdate):
                     (utcnow_iso_z(), quest_id),
                 )
                 fields["completed_at"] = utcnow_iso_z()
-                if new_status == "done":
-                    actual_minutes = calculate_quest_duration(conn, quest_id)
-                    if actual_minutes > 0:
-                        fields["estimated_minutes"] = actual_minutes
+                # NOTA: NÃO sobrescrevemos `estimated_minutes` com o tempo
+                # real ao virar done. Isso era destrutivo no caso de reabrir
+                # a quest depois — o estimated original ficava perdido e o
+                # planner do Dia passava a "consumir" o tempo já trabalhado
+                # de novo (ex: quest com estimativa de 1h vinha pro plano
+                # cobrando 7h depois de 7h de sessões).
+                # `worked_minutes` (já populado em todas as responses via
+                # soma de quest_sessions) é a fonte de verdade pro tempo
+                # gasto. `estimated_minutes` fica imutável — só user-set.
             elif new_status not in TERMINAL and prev_status in TERMINAL:
                 fields["completed_at"] = None
 
@@ -315,23 +320,32 @@ def start_session(quest_id: str):
 
 @router.post("/api/quests/{quest_id}/sessions/pause", response_model=SessionOut)
 def pause_session(quest_id: str):
+    """Pausa a sessão aberta da quest. Idempotente: se não há ativa,
+    retorna a última sessão (200) em vez de 404 — banner pode estar
+    com state ligeiramente stale e tentar pausar duas vezes."""
     now = utcnow_iso_z()
     with get_conn() as conn:
         session = conn.execute(
             "SELECT * FROM quest_sessions WHERE quest_id = ? AND ended_at IS NULL ORDER BY session_num DESC LIMIT 1",
             (quest_id,),
         ).fetchone()
-        if not session:
-            raise HTTPException(404, detail="No active session")
-        conn.execute(
-            "UPDATE quest_sessions SET ended_at = ? WHERE id = ?",
-            (now, session["id"]),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM quest_sessions WHERE id = ?", (session["id"],)
+        if session:
+            conn.execute(
+                "UPDATE quest_sessions SET ended_at = ? WHERE id = ?",
+                (now, session["id"]),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM quest_sessions WHERE id = ?", (session["id"],)
+            ).fetchone()
+            return dict(row)
+        last = conn.execute(
+            "SELECT * FROM quest_sessions WHERE quest_id = ? ORDER BY session_num DESC LIMIT 1",
+            (quest_id,),
         ).fetchone()
-    return dict(row)
+        if last:
+            return dict(last)
+        raise HTTPException(404, detail="Quest has no sessions")
 
 
 @router.post("/api/quests/{quest_id}/sessions/resume", response_model=SessionOut, status_code=201)
