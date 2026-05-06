@@ -3,11 +3,10 @@ import type { Area, Project, Quest } from '../types'
 import { fetchDeliverables, deleteQuest, reportApiError } from '../api'
 import type { DateRange } from '../utils/dateRange'
 import { computeRange, isInRange } from '../utils/dateRange'
-import { Label } from '../components/ui/Label'
 import { DateRangeFilter } from '../components/DateRangeFilter'
 import { QuestRow } from '../components/QuestRow'
 import { NewQuestRow } from '../components/NewQuestRow'
-import { Card } from '../components/ui/Primitives'
+import { PageShell } from '../components/ui/CyberShell'
 
 type DeliverableLite = { id: string; title: string; done: boolean; estimated_minutes?: number; minutes_worked?: number; deadline?: string }
 
@@ -170,49 +169,50 @@ export function QuestsView({ projects, quests: initial, areas, onSessionUpdate, 
   const areaBySlug = (slug: string) => areas.find(a => a.slug === slug)
 
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil — Label + tabs por área */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) 0',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-      }}>
-      <Label>quests</Label>
-      <div style={{ display: 'flex', marginTop: 16, borderBottom: '1px solid var(--color-divider)' }}>
-        {[{ slug: 'all', name: 'Todas', color: 'var(--color-accent-primary)' as string }, ...areas.map(a => ({ slug: a.slug, name: a.name, color: a.color }))].map(a => {
-          const isActive = filter === a.slug
-          return (
-            <button key={a.slug} onClick={() => setFilter(a.slug)} style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: '8px 14px', fontSize: 12,
-              color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-              borderBottom: isActive ? `2px solid ${a.color}` : '2px solid transparent',
-              marginBottom: -1, transition: 'color 0.15s, border-color 0.15s',
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-            }}>
-              {a.slug !== 'all' && (
-                <span style={{
-                  width: 8, height: 8, borderRadius: '50%', background: a.color, flexShrink: 0,
-                }} />
-              )}
-              {a.name}
-            </button>
-          )
-        })}
-      </div>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+    <PageShell
+      headerLabel="QUESTS"
+      headerRightControls={
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {[{ slug: 'all', name: 'TODAS', color: 'var(--color-ice)' as string }, ...areas.map(a => ({ slug: a.slug, name: a.name.toUpperCase(), color: a.color }))].map(a => {
+            const isActive = filter === a.slug
+            return (
+              <button
+                key={a.slug}
+                onClick={() => setFilter(a.slug)}
+                style={{
+                  background: isActive ? 'rgba(143, 191, 211, 0.10)' : 'rgba(8, 12, 18, 0.55)',
+                  border: `1px solid ${isActive ? 'rgba(143, 191, 211, 0.45)' : 'var(--color-border)'}`,
+                  cursor: 'pointer',
+                  padding: '5px 10px',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: '0.18em',
+                  color: isActive ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
+                  borderRadius: 0,
+                  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                  transition: 'all 0.15s',
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                {a.slug !== 'all' && (
+                  <span style={{
+                    width: 6, height: 6, background: a.color, flexShrink: 0,
+                  }} />
+                )}
+                {a.name}
+              </button>
+            )
+          })}
+        </div>
+      }
+      footerCaption={
+        <>
+          <div>// QUEST.PIPELINE · {activeGroups.length} ACTIVE</div>
+          <div style={{ opacity: 0.6, marginTop: 2 }}>TYPE: TACTICAL.QUESTS</div>
+        </>
+      }
+    >
 
       <NewQuestRow areaSlug={filter} areas={areas} projects={projects} onCreated={add} />
 
@@ -295,8 +295,6 @@ export function QuestsView({ projects, quests: initial, areas, onSessionUpdate, 
           )}
         </div>
       )}
-      </div>
-    </Card>
-    </div>
+    </PageShell>
   )
 }

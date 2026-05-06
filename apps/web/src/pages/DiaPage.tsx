@@ -15,8 +15,8 @@ import { getAllBlockRangesForDay } from '../utils/blocks'
 import { DateRangeFilter } from '../components/DateRangeFilter'
 import { DayPeriodsEditModal } from '../components/DayPeriodsEditModal'
 import { PlannedItemRow } from '../components/PlannedItemRow'
-import { Card } from '../components/ui/Primitives'
 import { modalHairline, modalHeader } from './finance/components/styleHelpers'
+import { PageShell, TechId } from '../components/ui/CyberShell'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -99,6 +99,12 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
     new Set(['quest', 'task', 'routine'])
   )
   const [plannerIncludeUndated, setPlannerIncludeUndated] = useState(true)
+  // Mostrar quests de TODOS os entregáveis (não só o ativo de cada projeto).
+  // Default false — mantém o filtro padrão "só o entregável corrente".
+  // Quando ativo, libera puxar trabalho de entregáveis futuros do mesmo
+  // projeto (útil quando você quer adiantar uma quest de um entregável
+  // que ainda não está em execução).
+  const [plannerShowAllDeliverables, setPlannerShowAllDeliverables] = useState(false)
   // Filtro de prioridade: `null` = sem filtro; Set de prioridades = só essas.
   // Default: todas habilitadas.
   const [plannerPriorities, setPlannerPriorities] = useState<Set<string>>(
@@ -393,7 +399,12 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
         if (!priorityOK(q.priority)) { counters.byPriority++; return false }
         const info = projectActiveInfo.get(q.project_id)
         if (!info) { counters.byNoInfo++; return false }
-        if (q.deliverable_id !== info.activeId) { counters.byMismatchDeliv++; return false }
+        // Bypass do filtro "só entregável ativo" quando o user liga
+        // "mostrar todos os entregáveis" — útil pra puxar quests de
+        // entregáveis futuros do mesmo projeto.
+        if (!plannerShowAllDeliverables && q.deliverable_id !== info.activeId) {
+          counters.byMismatchDeliv++; return false
+        }
         counters.passed++
         if (passedSamples.length < 30) passedSamples.push({ project: q.project_id, deliv: q.deliverable_id, title: q.title?.slice(0, 40) })
         return true
@@ -612,78 +623,91 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-      <header style={{
-        display: 'flex', alignItems: 'flex-end', gap: 14,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 10, color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-            marginBottom: 4,
-          }}>
-            Dia
-          </div>
-          <div style={{
-            fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-            color: 'var(--color-text-primary)', lineHeight: 1.2,
-            textTransform: 'capitalize',
+    <PageShell
+      headerLabel="DIA"
+      headerLeftContent={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {todayLabel}
-          </div>
+          </span>
+          <TechId>SCHED.LIVE · {String(nowDate.getHours()).padStart(2, '0')}:{String(nowDate.getMinutes()).padStart(2, '0')}</TechId>
         </div>
-
-        <button
-          onClick={() => setEditingPeriods(true)}
-          title={`Ajustar períodos do dia · Manhã ${minutesToHHMM(dayPeriods.morningStart)} · Tarde ${minutesToHHMM(dayPeriods.afternoonStart)} · Noite ${minutesToHHMM(dayPeriods.eveningStart)}`}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--color-text-muted)', fontSize: 9,
-            letterSpacing: '0.05em',
-            padding: '4px 6px', transition: 'color 0.15s',
-            opacity: 0.7,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}
-          onMouseLeave={e => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.color = 'var(--color-text-muted)' }}
-        >
-          ajustar períodos
-        </button>
-
-        <button
-          onClick={() => setShowPlanner(true)}
-          style={{
-            background: 'var(--color-accent-primary)', border: 'none', cursor: 'pointer',
-            color: 'var(--color-bg-primary)', fontSize: 11, fontWeight: 700,
-            padding: '8px 16px', borderRadius: 3,
-            letterSpacing: '0.1em', textTransform: 'uppercase',
-            transition: 'all 0.15s',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-secondary)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-accent-primary)')}
-        >
-          Planejar dia
-        </button>
-      </header>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+      }
+      headerRightControls={
+        <>
+          <button
+            onClick={() => setEditingPeriods(true)}
+            title={`Ajustar períodos do dia · Manhã ${minutesToHHMM(dayPeriods.morningStart)} · Tarde ${minutesToHHMM(dayPeriods.afternoonStart)} · Noite ${minutesToHHMM(dayPeriods.eveningStart)}`}
+            style={{
+              background: 'rgba(8, 12, 18, 0.55)',
+              border: '1px solid var(--color-border)',
+              cursor: 'pointer',
+              color: 'var(--color-text-tertiary)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 9, fontWeight: 700,
+              padding: '6px 10px',
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              borderRadius: 0,
+              clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
+              e.currentTarget.style.color = 'var(--color-ice-light)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--color-border)'
+              e.currentTarget.style.color = 'var(--color-text-tertiary)'
+            }}
+          >
+            // PERIODS
+          </button>
+          <button
+            onClick={() => setShowPlanner(true)}
+            style={{
+              background: 'rgba(143, 191, 211, 0.10)',
+              border: '1px solid rgba(143, 191, 211, 0.45)',
+              cursor: 'pointer',
+              color: 'var(--color-ice-light)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10, fontWeight: 700,
+              padding: '7px 14px',
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              borderRadius: 0,
+              clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+              boxShadow: '0 0 12px rgba(143, 191, 211, 0.18)',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'rgba(143, 191, 211, 0.18)'
+              e.currentTarget.style.boxShadow = '0 0 18px rgba(143, 191, 211, 0.35)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'rgba(143, 191, 211, 0.10)'
+              e.currentTarget.style.boxShadow = '0 0 12px rgba(143, 191, 211, 0.18)'
+            }}
+          >
+            PLANEJAR DIA
+          </button>
+        </>
+      }
+      footerCaption={
+        <>
+          <div>// SCHED.RECONCILED · LAST.SYNC: {new Date().toLocaleTimeString('pt-BR')}</div>
+          <div style={{ opacity: 0.6, marginTop: 2 }}>
+            DOCUMENT/D/{isoToLocalYmd(new Date()).replace(/-/g, '')} · TYPE: TACTICAL.DAILY
+          </div>
+        </>
+      }
+    >
 
       {overdueTasks.length > 0 && (
         <OverdueTasksBanner
@@ -866,6 +890,8 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
           setPlannerTypes={setPlannerTypes}
           plannerIncludeUndated={plannerIncludeUndated}
           setPlannerIncludeUndated={setPlannerIncludeUndated}
+          plannerShowAllDeliverables={plannerShowAllDeliverables}
+          setPlannerShowAllDeliverables={setPlannerShowAllDeliverables}
           plannerPriorities={plannerPriorities}
           setPlannerPriorities={setPlannerPriorities}
           draggedItem={draggedItem}
@@ -883,9 +909,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
         />,
         document.body,
       )}
-      </div>
-    </Card>
-    </div>
+    </PageShell>
   )
 }
 
@@ -1092,6 +1116,7 @@ function PlannerDrawer({
   plannerRange, setPlannerRange,
   plannerTypes, setPlannerTypes,
   plannerIncludeUndated, setPlannerIncludeUndated,
+  plannerShowAllDeliverables, setPlannerShowAllDeliverables,
   plannerPriorities, setPlannerPriorities,
   draggedItem, setDraggedItem,
   areas, projects, quests, routines, allTasks, doneRoutineIds,
@@ -1109,6 +1134,8 @@ function PlannerDrawer({
   setPlannerTypes: (fn: (prev: Set<'quest' | 'task' | 'routine'>) => Set<'quest' | 'task' | 'routine'>) => void
   plannerIncludeUndated: boolean
   setPlannerIncludeUndated: (v: boolean) => void
+  plannerShowAllDeliverables: boolean
+  setPlannerShowAllDeliverables: (v: boolean) => void
   plannerPriorities: Set<string>
   setPlannerPriorities: (fn: (prev: Set<string>) => Set<string>) => void
   draggedItem: any
@@ -1455,6 +1482,30 @@ function PlannerDrawer({
               incluir sem data
             </span>
           </label>
+
+          {/* Toggle: mostrar quests de TODOS os entregáveis (não só o ativo).
+              Default OFF — quando ON, libera puxar quests de entregáveis
+              futuros do mesmo projeto pro dia. Highlight ice quando ativo. */}
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+            color: plannerShowAllDeliverables
+              ? 'var(--color-ice-light)'
+              : 'var(--color-text-tertiary)',
+            transition: 'color var(--motion-fast) var(--ease-smooth)',
+          }}>
+            <input
+              type="checkbox"
+              checked={plannerShowAllDeliverables}
+              onChange={e => setPlannerShowAllDeliverables(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+            <span
+              title="Quando desligado, só aparece o entregável corrente de cada projeto. Ligue pra puxar quests de entregáveis futuros."
+              style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase' }}
+            >
+              todos entregáveis
+            </span>
+          </label>
         </div>
 
         {/* Body: disponíveis × períodos */}
@@ -1747,12 +1798,8 @@ function PlannerDrawer({
           </div>
         </div>
 
-        {/* Footer: hairline oxblood (echo do topo) + actions com glass. */}
-        <div style={{
-          height: 1,
-          background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-          opacity: 0.35,
-        }} />
+        {/* Footer: hairline ice (echo do topo) + actions com glass. */}
+        <div className="hq-hairline-ice" style={{ opacity: 0.5 }} />
         <div
           className="hq-grain"
           style={{

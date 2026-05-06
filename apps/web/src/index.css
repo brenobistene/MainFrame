@@ -13,12 +13,9 @@ body {
   min-height: 100vh;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0c0d0e; }
-::-webkit-scrollbar-thumb { background: #1e2023; border-radius: 0; }
-::-webkit-scrollbar-thumb:hover { background: #2e2c2a; }
-* { scrollbar-width: thin; scrollbar-color: #1e2023 #0c0d0e; }
+/* Scrollbar definida em index.html (cyberpunk oxblood). Removidas
+   as regras antigas daqui que estavam sobrescrevendo as cores cyber
+   por cinza neutro. NÃO REINTRODUZIR scrollbar styles aqui. */
 
 /* FullCalendar dark theme */
 :root {

@@ -8,12 +8,18 @@
  * hover/focus/animação prontos via CSS classes.
  */
 import type { ReactNode, MouseEventHandler } from 'react'
+import { motion } from 'framer-motion'
+import { fadeUpVariants, springSnap, modalVariants, overlayVariants, useMotionPrefs } from './Motion'
 
 // ─── Card ────────────────────────────────────────────────────────────────
 
 /** Card glass — surface base pra blocos de info no dashboard.
  *  - hoverable: lift + brightness no hover (use pra cards interativos)
- *  - elevated: glass mais opaco + sombra (modal, dialogs) */
+ *  - elevated: glass mais opaco + sombra (modal, dialogs)
+ *
+ *  Entrance via spring (Framer Motion) — substitui o antigo
+ *  `animation: hq-fade-up` linear. Hover/press com spring pequeno
+ *  só quando hoverable=true ou onClick presente. */
 export function Card({
   children, hoverable = false, elevated = false, padding = 'md', style, onClick,
 }: {
@@ -24,6 +30,7 @@ export function Card({
   style?: React.CSSProperties
   onClick?: MouseEventHandler<HTMLDivElement>
 }) {
+  const { safeFadeUp, reduced } = useMotionPrefs()
   const padMap = {
     none: '0',
     sm: 'var(--space-3)',
@@ -35,10 +42,17 @@ export function Card({
     hoverable && 'hq-card-hoverable',
   ].filter(Boolean).join(' ')
 
+  const interactive = !!(onClick || hoverable)
+
   return (
-    <div
+    <motion.div
       className={cls}
       onClick={onClick}
+      variants={safeFadeUp}
+      initial="hidden"
+      animate="visible"
+      whileHover={interactive && !reduced ? { y: -2, transition: springSnap } : undefined}
+      whileTap={onClick && !reduced ? { scale: 0.985, transition: springSnap } : undefined}
       style={{
         padding: padMap[padding],
         cursor: onClick ? 'pointer' : undefined,
@@ -46,15 +60,18 @@ export function Card({
       }}
     >
       {children}
-    </div>
+    </motion.div>
   )
 }
+
+// Suprime warning de `fadeUpVariants` não usado — exportado pra outros lugares.
+void fadeUpVariants
 
 // ─── Button ──────────────────────────────────────────────────────────────
 
 type ButtonVariant = 'primary' | 'ghost' | 'danger'
 
-/** Botão padrão. Vem com hover lift + glow + spring transitions. */
+/** Botão padrão. Hover lift + press scale com spring real (Framer Motion). */
 export function Button({
   children, onClick, variant = 'primary', disabled, type = 'button',
   fullWidth, leadingIcon, trailingIcon,
@@ -68,19 +85,22 @@ export function Button({
   leadingIcon?: ReactNode
   trailingIcon?: ReactNode
 }) {
+  const { reduced } = useMotionPrefs()
   const cls = `hq-btn hq-btn--${variant}`
   return (
-    <button
+    <motion.button
       type={type}
       onClick={onClick}
       disabled={disabled}
       className={cls}
       style={fullWidth ? { width: '100%' } : undefined}
+      whileHover={disabled || reduced ? undefined : { y: -1, transition: springSnap }}
+      whileTap={disabled || reduced ? undefined : { scale: 0.96, transition: springSnap }}
     >
       {leadingIcon}
       {children}
       {trailingIcon}
-    </button>
+    </motion.button>
   )
 }
 
@@ -88,7 +108,7 @@ export function Button({
 
 type IconButtonVariant = 'default' | 'danger' | 'accent' | 'bare'
 
-/** Botão icon-only padronizado. `aria-label` obrigatório. */
+/** Botão icon-only padronizado. `aria-label` obrigatório. Spring no press. */
 export function IconButton({
   children, label, onClick, variant = 'default', disabled, type = 'button',
 }: {
@@ -99,6 +119,7 @@ export function IconButton({
   disabled?: boolean
   type?: 'button' | 'submit'
 }) {
+  const { reduced } = useMotionPrefs()
   const className = variant === 'bare'
     ? 'hq-icon-btn-bare'
     : variant === 'danger'
@@ -108,16 +129,18 @@ export function IconButton({
         : 'hq-icon-btn'
 
   return (
-    <button
+    <motion.button
       type={type}
       onClick={onClick}
       disabled={disabled}
       title={label}
       aria-label={label}
       className={className}
+      whileHover={disabled || reduced ? undefined : { y: -1, transition: springSnap }}
+      whileTap={disabled || reduced ? undefined : { scale: 0.92, transition: springSnap }}
     >
       {children}
-    </button>
+    </motion.button>
   )
 }
 
@@ -130,8 +153,13 @@ export function EmptyState({ text, sub, icon, dense = false }: {
   icon?: ReactNode
   dense?: boolean
 }) {
+  const { safeFadeUp } = useMotionPrefs()
   return (
-    <div style={{
+    <motion.div
+      variants={safeFadeUp}
+      initial="hidden"
+      animate="visible"
+      style={{
       padding: dense ? 'var(--space-5) var(--space-4)' : 'var(--space-10) var(--space-5)',
       border: '1px dashed var(--color-border)',
       borderRadius: 'var(--radius-md)',
@@ -141,7 +169,6 @@ export function EmptyState({ text, sub, icon, dense = false }: {
       flexDirection: 'column',
       alignItems: 'center',
       gap: 'var(--space-2)',
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
     }}>
       {icon && (
         <div style={{ color: 'var(--color-text-tertiary)', opacity: 0.6 }}>
@@ -156,23 +183,28 @@ export function EmptyState({ text, sub, icon, dense = false }: {
         {text}
       </div>
       {sub && (
-        <div style={{
-          fontSize: 'var(--text-xs)',
-          color: 'var(--color-text-muted)',
-          maxWidth: 320,
-          lineHeight: 1.5,
-        }}>
+        <div
+          className="hq-serif-italic"
+          style={{
+            fontSize: 'var(--text-sm)',
+            color: 'var(--color-text-muted)',
+            maxWidth: 360,
+            lineHeight: 1.55,
+            marginTop: 'var(--space-1)',
+          }}
+        >
           {sub}
         </div>
       )}
-    </div>
+    </motion.div>
   )
 }
 
 // ─── Modal frame ─────────────────────────────────────────────────────────
 
-/** Frame padrão de modal: overlay com blur + content com entrance animation.
- *  Use no lugar de inline `modalOverlay()` quando criar novo modal.
+/** Frame padrão de modal: overlay com blur + content com spring entrance.
+ *  Substitui as antigas keyframes `hq-animate-modal-in` por Framer Motion
+ *  com physics real — modal "sobe" de baixo com peso, fecha com fade rápido.
  *  Inclui hairline oxblood no topo (mesma estética dos cards Carteira). */
 export function ModalFrame({
   children, onClose, minWidth = 460, maxWidth = 560, padding = 'md',
@@ -185,9 +217,12 @@ export function ModalFrame({
 }) {
   const padValue = padding === 'lg' ? 'var(--space-6)' : 'var(--space-5)'
   return (
-    <div
+    <motion.div
       onClick={onClose}
-      className="hq-animate-overlay-in"
+      variants={overlayVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
       style={{
         position: 'fixed',
         inset: 0,
@@ -200,9 +235,13 @@ export function ModalFrame({
         zIndex: 100,
       }}
     >
-      <div
+      <motion.div
         onClick={e => e.stopPropagation()}
-        className="hq-glass-elevated hq-animate-modal-in"
+        className="hq-glass-elevated"
+        variants={modalVariants}
+        initial="hidden"
+        animate="visible"
+        exit="exit"
         style={{
           minWidth,
           maxWidth,
@@ -212,17 +251,12 @@ export function ModalFrame({
           overflow: 'hidden',
         }}
       >
-        {/* Hairline accent — linha sutil oxblood no topo */}
-        <div style={{
-          height: 1,
-          background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-          opacity: 0.5,
-          flexShrink: 0,
-        }} />
+        {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+        <div className="hq-hairline-ice" style={{ flexShrink: 0 }} />
         <div style={{ padding: padValue, flex: 1, overflowY: 'auto' }}>
           {children}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }

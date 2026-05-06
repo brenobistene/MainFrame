@@ -88,12 +88,8 @@ export function RoutineEditor({
         marginBottom: 'var(--space-4)',
       }}
     >
-      {/* Hairline oxblood — assinatura visual do design system */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" />
 
       {/* Header compacto: eyebrow + título input em linha */}
       <div

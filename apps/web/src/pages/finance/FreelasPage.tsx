@@ -17,6 +17,7 @@ import { ClientsManagerModal } from './components/ClientsManagerModal'
 import { formatBRL, cardLabel } from './components/styleHelpers'
 import { MonthPicker } from './components/MonthPicker'
 import { Card } from '../../components/ui/Primitives'
+import { SkeletonStatCard, SkeletonRow, SkeletonCardGrid } from '../../components/ui/Motion'
 
 // Helpers visuais reutilizados nos 4 cards da página — extraídos pra evitar
 // repetir markup do header com gradient + hairline em cada um.
@@ -25,22 +26,17 @@ const cardWrap: React.CSSProperties = {
 }
 
 function CardHairline() {
-  return (
-    <div style={{
-      height: 1,
-      background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-      opacity: 0.5,
-    }} />
-  )
+  return <div className="hq-hairline-ice" />
 }
 
 const headerWithGradient: React.CSSProperties = {
   padding: 'var(--space-5) var(--space-6) var(--space-4)',
   background: `
-    radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+    radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+    radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
     linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
   `,
-  borderBottom: '1px solid var(--color-divider)',
+  borderBottom: '1px solid var(--color-ice-deep)',
 }
 
 const cardBody: React.CSSProperties = {
@@ -76,7 +72,17 @@ export function FreelasPage() {
       .sort((a, b) => (a.parcela.data_prevista ?? 'z').localeCompare(b.parcela.data_prevista ?? 'z'))
   }, [freelaProjects, selectedMonth.year, selectedMonth.month])
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Carregando…</p>
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div className="hq-glass" style={{ padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <SkeletonStatCard labelWidth={120} numberWidth={200} />
+        <SkeletonCardGrid count={2} height={80} />
+      </div>
+      <div className="hq-glass" style={{ padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}
+      </div>
+    </div>
+  )
 
   const ativos = freelaProjects.filter(p => p.status === 'doing' || p.status === 'pending')
 

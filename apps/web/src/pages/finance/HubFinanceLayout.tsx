@@ -14,17 +14,77 @@ import { Settings, Upload, Eye, EyeOff } from 'lucide-react'
 import { HubFinanceProvider, useHubFinance } from './HubFinanceContext'
 import { ImportCsvModal } from './components/ImportCsvModal'
 import { RulesModal } from './components/RulesModal'
-import { ghostButton } from './components/styleHelpers'
 
 const TABS: { path: string; label: string }[] = [
-  { path: '/hub-finance/visao-geral',  label: 'visão geral' },
-  { path: '/hub-finance/carteira',     label: 'carteira' },
-  { path: '/hub-finance/lancamentos',  label: 'lançamentos' },
-  { path: '/hub-finance/fixas',        label: 'contas/receitas fixas' },
-  { path: '/hub-finance/dividas',      label: 'dívidas' },
-  { path: '/hub-finance/freelas',      label: 'freelas' },
-  { path: '/hub-finance/categorias',   label: 'categorias' },
+  { path: '/hub-finance/visao-geral',  label: 'VISÃO GERAL' },
+  { path: '/hub-finance/carteira',     label: 'CARTEIRA' },
+  { path: '/hub-finance/lancamentos',  label: 'LANÇAMENTOS' },
+  { path: '/hub-finance/fixas',        label: 'FIXAS' },
+  { path: '/hub-finance/dividas',      label: 'DÍVIDAS' },
+  { path: '/hub-finance/freelas',      label: 'FREELAS' },
+  { path: '/hub-finance/categorias',   label: 'CATEGORIAS' },
 ]
+
+/** Botão CP2077 com chamfer-bl. Variant ice (default), oxblood (active),
+ *  ghost (icon-text). Usa mono uppercase. */
+function CyberButton({
+  children,
+  onClick,
+  active,
+  ariaPressed,
+  title,
+  variant = 'ghost',
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  active?: boolean
+  ariaPressed?: boolean
+  title?: string
+  variant?: 'ghost' | 'oxblood' | 'ice'
+}) {
+  const styles: React.CSSProperties = (() => {
+    if (variant === 'oxblood' || (variant === 'ghost' && active)) {
+      return {
+        background: 'rgba(159, 18, 57, 0.14)',
+        border: '1px solid var(--color-accent-primary)',
+        color: 'var(--color-accent-light)',
+      }
+    }
+    if (variant === 'ice') {
+      return {
+        background: 'rgba(143, 191, 211, 0.10)',
+        border: '1px solid rgba(143, 191, 211, 0.45)',
+        color: 'var(--color-ice-light)',
+      }
+    }
+    return {
+      background: 'rgba(8, 12, 18, 0.55)',
+      border: '1px solid var(--color-border)',
+      color: 'var(--color-text-tertiary)',
+    }
+  })()
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-pressed={ariaPressed}
+      style={{
+        ...styles,
+        cursor: 'pointer',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9, fontWeight: 700,
+        padding: '6px 10px',
+        letterSpacing: '0.18em', textTransform: 'uppercase',
+        borderRadius: 0,
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        transition: 'all 0.15s',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
 
 export function HubFinanceLayout() {
   return (
@@ -46,89 +106,108 @@ function LayoutInner() {
       data-finance-private={privateMode || undefined}
       style={{ color: 'var(--color-text-primary)' }}
     >
-      {/* Tab bar sticky — gruda no topo do <main> (já offsetado pelo banner de sessão) */}
-      <div style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        background: 'var(--color-bg-primary)',
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-        <div style={{
-          padding: '0 24px',
+      {/* Hairline ice topo */}
+      <div className="hq-hairline-ice" />
+
+      {/* Header band CP2077 — // HUB.FINANCE label + tab nav + controles */}
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 50,
+          padding: '12px 18px',
+          background: 'linear-gradient(180deg, rgba(10, 14, 22, 0.95), rgba(8, 10, 14, 0.92))',
+          borderBottom: '1px solid var(--color-ice-deep)',
           display: 'flex',
           alignItems: 'center',
-          gap: 4,
-          height: 48,
+          gap: 'var(--space-4)',
+          minHeight: 56,
+        }}
+      >
+        {/* Tab marker ice */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0, bottom: -1,
+            width: 64, height: 2,
+            background: 'var(--color-ice)',
+            boxShadow: '0 0 12px var(--color-ice-glow)',
+          }}
+        />
+
+        <div className="hq-tech-label" style={{
+          fontSize: 11,
+          color: 'var(--color-ice-light)',
+          letterSpacing: '0.28em',
+          flexShrink: 0,
         }}>
+          HUB.FINANCE
+        </div>
+
+        <div style={{ width: 1, height: 22, background: 'var(--color-border-strong)', flexShrink: 0 }} />
+
+        {/* Tab nav — pills cyber com chamfer-bl, active ice */}
+        <div style={{ display: 'flex', gap: 4, flex: 1, minWidth: 0, overflow: 'auto' }}>
           {TABS.map(t => (
             <NavLink
               key={t.path}
               to={t.path}
               style={({ isActive }) => ({
-                padding: '14px 12px',
-                fontSize: 11,
-                fontWeight: 600,
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                padding: '6px 10px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9, fontWeight: 700,
+                letterSpacing: '0.18em', textTransform: 'uppercase',
+                color: isActive ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
+                background: isActive ? 'rgba(143, 191, 211, 0.10)' : 'rgba(8, 12, 18, 0.55)',
+                border: `1px solid ${isActive ? 'rgba(143, 191, 211, 0.45)' : 'var(--color-border)'}`,
                 textDecoration: 'none',
-                borderBottom: isActive
-                  ? '2px solid var(--color-accent-light)'
-                  : '2px solid transparent',
-                transition: 'color 0.15s, border-color 0.15s',
-                marginBottom: -1,
+                borderRadius: 0,
+                clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                transition: 'all 0.15s',
+                whiteSpace: 'nowrap',
+                boxShadow: isActive ? '0 0 12px rgba(143, 191, 211, 0.18)' : 'none',
               })}
             >
               {t.label}
             </NavLink>
           ))}
-          <div style={{ flex: 1 }} />
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {/* Toggle privacidade — texto + ícone pra ser óbvio.
-                Vira oxblood quando ativo. */}
-            <button
-              onClick={togglePrivate}
-              aria-pressed={privateMode}
-              title={privateMode ? 'Clique pra mostrar os valores' : 'Esconder valores (modo privacidade)'}
-              style={{
-                ...ghostButton(),
-                ...(privateMode ? {
-                  background: 'rgba(159, 18, 57, 0.14)',
-                  border: '1px solid var(--color-accent-primary)',
-                  color: 'var(--color-accent-light)',
-                } : {}),
-              }}
-            >
-              {privateMode
-                ? <EyeOff size={11} strokeWidth={2} style={{ marginRight: 4 }} />
-                : <Eye size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
-              {privateMode ? 'mostrar' : 'ocultar'}
-            </button>
-
-            {hasAccounts && (
-              <>
-                <button
-                  onClick={() => setShowRulesModal(true)}
-                  title="Gerenciar regras de auto-categorização"
-                  style={ghostButton()}
-                >
-                  <Settings size={11} strokeWidth={2} style={{ marginRight: 4 }} />
-                  regras
-                </button>
-                <button
-                  onClick={() => setShowImportModal(true)}
-                  title="Importar CSV de extrato Nubank"
-                  style={ghostButton()}
-                >
-                  <Upload size={11} strokeWidth={2} style={{ marginRight: 4 }} />
-                  importar
-                </button>
-              </>
-            )}
-          </div>
         </div>
-      </div>
+
+        {/* Controles direita */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          <CyberButton
+            onClick={togglePrivate}
+            ariaPressed={privateMode}
+            title={privateMode ? 'Clique pra mostrar os valores' : 'Esconder valores (modo privacidade)'}
+            active={privateMode}
+          >
+            {privateMode
+              ? <EyeOff size={11} strokeWidth={2} />
+              : <Eye size={11} strokeWidth={2} />}
+            {privateMode ? 'MOSTRAR' : 'OCULTAR'}
+          </CyberButton>
+
+          {hasAccounts && (
+            <>
+              <CyberButton
+                onClick={() => setShowRulesModal(true)}
+                title="Gerenciar regras de auto-categorização"
+              >
+                <Settings size={11} strokeWidth={2} />
+                REGRAS
+              </CyberButton>
+              <CyberButton
+                onClick={() => setShowImportModal(true)}
+                title="Importar CSV de extrato Nubank"
+              >
+                <Upload size={11} strokeWidth={2} />
+                IMPORTAR
+              </CyberButton>
+            </>
+          )}
+        </div>
+      </header>
 
       {/* Conteúdo da sub-rota */}
       <div style={{

@@ -418,17 +418,14 @@ export function QuestDetailPanel({
     <Card padding="none" style={{
       animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
     }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil — fechar + título do projeto */}
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" />
+      {/* Header com atmosphere ice/fog — fechar + título do projeto */}
       <div style={{
         padding: 'var(--space-5) var(--space-6) var(--space-4)',
         background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
           linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
         `,
         borderBottom: '1px solid var(--color-divider)',

@@ -16,6 +16,7 @@ import {
   formatBRL, formatMoney, primaryButton, ICON_SIZE, ICON_STROKE,
 } from './components/styleHelpers'
 import { Card, IconButton, EmptyState } from '../../components/ui/Primitives'
+import { AnimatedNumber, StaggerList, StaggerItem, SkeletonStatCard, SkeletonRow } from '../../components/ui/Motion'
 import { ExchangeRateModal } from './components/ExchangeRateModal'
 import { AccountManagerModal } from './components/AccountManagerModal'
 import { AccountModal } from './components/AccountModal'
@@ -38,7 +39,14 @@ export function CarteiraPage() {
     }))
   }, [summary, cotacoes])
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Carregando…</p>
+  if (loading) return (
+    <div className="hq-glass" style={{ padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <SkeletonStatCard labelWidth={100} numberWidth={240} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-4)' }}>
+        {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)}
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -46,48 +54,60 @@ export function CarteiraPage() {
         animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
         overflow: 'hidden',
       }}>
-        {/* Header com gradient sutil — mancha oxblood top-left */}
+        {/* Header com atmosphere ice/fog — vibe HUD CP2077 */}
         <div style={{
           padding: 'var(--space-6) var(--space-6) var(--space-5)',
           background: `
-            radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.08), transparent 60%),
+            radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.06), transparent 60%),
+            radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
             linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
           `,
-          borderBottom: '1px solid var(--color-divider)',
+          borderBottom: '1px solid var(--color-ice-deep)',
           position: 'relative',
         }}>
-          <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0,
-            height: 1,
-            background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-            opacity: 0.5,
-          }} />
+          <div
+            className="hq-hairline-ice"
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0,
+            }}
+          />
           <div style={{
             display: 'flex',
             alignItems: 'center',
             gap: 'var(--space-2)',
-            fontSize: 'var(--text-xs)',
-            color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.12em',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.22em',
             textTransform: 'uppercase',
-            fontWeight: 600,
+            fontWeight: 700,
             marginBottom: 'var(--space-2)',
           }}>
             <Wallet size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
-            Saldo geral
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, letterSpacing: 0 }}>//</span>
+            BALANCE.TOTAL
           </div>
           <div className="hq-money" style={{
             fontSize: 'var(--text-4xl)',
             fontWeight: 700,
             fontFamily: 'var(--font-mono)',
             fontVariantNumeric: 'tabular-nums',
+            // Champagne quando positivo (prosperidade — Mercury/Stripe vibe).
+            // Oxblood-light só quando negativo (alerta real).
             color: (summary?.saldo_total ?? 0) < 0
               ? 'var(--color-accent-light)'
-              : 'var(--color-text-primary)',
+              : 'var(--color-ice)',
             letterSpacing: '-0.02em',
             lineHeight: 1.1,
+            textShadow: (summary?.saldo_total ?? 0) >= 0
+              ? '0 0 24px var(--color-ice-glow)'
+              : 'none',
           }}>
-            {formatBRL(summary?.saldo_total ?? 0)}
+            <AnimatedNumber
+              value={summary?.saldo_total ?? 0}
+              format={n => formatBRL(n)}
+              duration={1.0}
+            />
           </div>
 
           {moedasConvertidas.length > 0 && (
@@ -185,25 +205,24 @@ export function CarteiraPage() {
           {accounts.length === 0 ? (
             <EmptyState text="Adicione sua primeira carteira" dense />
           ) : (
-            <div className="hq-stagger" style={{
+            <StaggerList style={{
               display: 'flex',
               flexDirection: 'column',
               gap: 'var(--space-1)',
             }}>
-              {accounts.map((a, i) => {
+              {accounts.map((a) => {
                 const isForeign = a.moeda !== 'BRL'
                 const brlEquiv = isForeign && a.cotacao_brl ? a.saldo * a.cotacao_brl : null
                 return (
+                  <StaggerItem key={a.id} layout>
                   <div
-                    key={a.id}
-                    className="hq-row-hoverable hq-animate-fade-up"
+                    className="hq-row-hoverable"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 'var(--space-3)',
                       padding: 'var(--space-2) var(--space-3)',
                       borderRadius: 'var(--radius-sm)',
-                      ['--stagger-i' as any]: i,
                     }}
                   >
                     <span style={{
@@ -264,9 +283,10 @@ export function CarteiraPage() {
                       )}
                     </span>
                   </div>
+                  </StaggerItem>
                 )
               })}
-            </div>
+            </StaggerList>
           )}
         </div>
 

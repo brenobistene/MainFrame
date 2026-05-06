@@ -142,24 +142,27 @@ export function modalShell(): React.CSSProperties {
   }
 }
 
-/** Linha sutil oxblood no topo do modal — mesma assinatura visual usada
- *  nos cards do Carteira/Visão Geral. */
+/** Linha ice elétrica no topo do modal — assinatura HUD CP2077 em vez
+ *  do antigo hairline oxblood. Coordena com o resto do app pós-cyberpunk. */
 export const modalHairline: React.CSSProperties = {
   height: 1,
-  background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-  opacity: 0.5,
+  background: 'linear-gradient(90deg, transparent, var(--color-ice-deep), var(--color-ice-light), var(--color-ice-deep), transparent)',
+  backgroundSize: '200% 100%',
+  animation: 'hq-shimmer 10s ease-in-out infinite',
+  opacity: 0.7,
 }
 
-/** Header section do modal com gradient sutil (mancha oxblood top-left).
- *  Aplicar em volta do título + ações de cabeçalho. Inclui borderBottom. */
+/** Header section do modal com atmosphere ice/fog. Coordena com a
+ *  identidade cyberpunk aplicada em volta do app. */
 export function modalHeader(): React.CSSProperties {
   return {
     padding: 'var(--space-5) var(--space-6) var(--space-4)',
     background: `
-      radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+      radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+      radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
       linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
     `,
-    borderBottom: '1px solid var(--color-divider)',
+    borderBottom: '1px solid var(--color-ice-deep)',
   }
 }
 

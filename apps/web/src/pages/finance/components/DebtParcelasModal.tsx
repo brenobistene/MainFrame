@@ -815,8 +815,16 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
       return
     }
     const valorNum = parseBRL(valor)
-    if (valorNum == null || valorNum <= 0) {
+    if (valorNum == null || valorNum < 0) {
       alert('Valor inválido.')
+      return
+    }
+    // Aceita valor 0 SOMENTE se a parcela foi planejada como zero (carência,
+    // mês "pulado" do cronograma). Caso contrário, valor 0 é provável erro
+    // de digitação. A transação de R$ 0 vira marcador: o status da parcela
+    // depende de transacao_pagamento_id existir, não do valor.
+    if (valorNum === 0 && (parcela.valor_planejado ?? 0) !== 0) {
+      alert('Valor inválido — essa parcela não é zerada.')
       return
     }
     setBusy(true)

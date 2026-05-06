@@ -1,4 +1,4 @@
-import { Card } from '../components/ui/Primitives'
+import { PageShell, TechId } from '../components/ui/CyberShell'
 
 /**
  * `/arquivados` — lista simples das ideias arquivadas pelo usuário
@@ -7,47 +7,30 @@ import { Card } from '../components/ui/Primitives'
  */
 export function ArquivadosView({ archivedIdeas, onDelete }: { archivedIdeas: Array<{ id: string; title: string; created_at: string }>; onDelete: (id: string) => void }) {
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-      <header>
-        <div style={{
-          fontSize: 10, color: 'var(--color-text-tertiary)',
-          letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-          marginBottom: 4,
-        }}>
-          Arquivo
+    <PageShell
+      headerLabel="ARQUIVADOS"
+      headerLeftContent={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
+          }}>
+            {archivedIdeas.length} {archivedIdeas.length === 1 ? 'IDEIA' : 'IDEIAS'} GUARDADA{archivedIdeas.length !== 1 ? 'S' : ''}
+          </span>
+          <TechId>COLD.STORAGE · DUMP HISTORY</TechId>
         </div>
-        <div style={{
-          fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-          color: 'var(--color-text-primary)', lineHeight: 1.2,
-        }}>
-          Ideias guardadas
-        </div>
-        <div style={{
-          marginTop: 8, fontSize: 11, color: 'var(--color-text-tertiary)', lineHeight: 1.5,
-        }}>
-          Ideias capturadas pelo Dump e guardadas pra revisitar depois.
-        </div>
-      </header>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+      }
+      footerCaption={
+        <>
+          <div>// COLD.STORAGE · {archivedIdeas.length} ENTRIES</div>
+          <div style={{ opacity: 0.6, marginTop: 2 }}>TYPE: TACTICAL.ARCHIVE</div>
+        </>
+      }
+    >
 
       <section style={{ marginTop: 40 }}>
         <div style={{
@@ -127,8 +110,6 @@ export function ArquivadosView({ archivedIdeas, onDelete }: { archivedIdeas: Arr
           </div>
         )}
       </section>
-      </div>
-    </Card>
-    </div>
+    </PageShell>
   )
 }

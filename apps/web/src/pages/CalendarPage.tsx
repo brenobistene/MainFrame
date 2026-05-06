@@ -305,38 +305,40 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
     <Card padding="none" style={{
       animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
     }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" />
+      {/* Header com atmosphere ice/fog */}
       <div style={{
         padding: 'var(--space-5) var(--space-6) var(--space-4)',
         background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
           linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
         `,
-        borderBottom: '1px solid var(--color-divider)',
+        borderBottom: '1px solid var(--color-ice-deep)',
       }}>
       <header style={{
         display: 'flex', alignItems: 'flex-end', gap: 14,
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
-            fontSize: 10, color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9, color: 'var(--color-text-muted)',
+            letterSpacing: '0.22em', textTransform: 'uppercase', fontWeight: 700,
             marginBottom: 4,
           }}>
-            Calendário
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+            CALENDAR
           </div>
           <div style={{
-            fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-            color: 'var(--color-text-primary)', lineHeight: 1.2,
-            textTransform: 'capitalize',
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
+            textTransform: 'uppercase',
           }}>
-            {viewMode === 'dia' ? 'Visão do dia' : viewMode === 'semana' ? 'Visão da semana' : viewMode === 'mês' ? 'Visão do mês' : 'Visão do ano'}
+            {viewMode === 'dia' ? 'VISÃO DO DIA' : viewMode === 'semana' ? 'VISÃO DA SEMANA' : viewMode === 'mês' ? 'VISÃO DO MÊS' : 'VISÃO DO ANO'}
           </div>
         </div>
         {/* Mode tabs — segmented control glass */}

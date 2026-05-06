@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Routine } from '../types'
 import { fetchAllRoutines, createRoutine, updateRoutine, deleteRoutine, reportApiError } from '../api'
 import { RoutineEditor } from '../components/RoutineEditor'
-import { Card } from '../components/ui/Primitives'
+import { PageShell, TechId } from '../components/ui/CyberShell'
 
 /**
  * `/rotinas` — gerenciador de rotinas. Agrupa por recorrência
@@ -115,66 +115,61 @@ export function RoutinesView() {
   const totalMonthly = routines.filter(r => r.recurrence === 'monthly').length
 
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-      <header style={{
-        display: 'flex', alignItems: 'flex-end', gap: 14,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 10, color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-            marginBottom: 4,
+    <PageShell
+      headerLabel="ROTINAS"
+      headerLeftContent={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
           }}>
-            Rotinas
-          </div>
-          <div style={{
-            fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-            color: 'var(--color-text-primary)', lineHeight: 1.2,
-            fontFamily: 'var(--font-mono)',
-          }}>
-            {routines.length} {routines.length === 1 ? 'rotina' : 'rotinas'}
-            {routines.length > 0 && (
-              <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 400, marginLeft: 8 }}>
-                · {totalDaily} diárias · {totalWeekly} semanais · {totalMonthly} mensais
-              </span>
-            )}
-          </div>
+            {routines.length} {routines.length === 1 ? 'ROTINA' : 'ROTINAS'}
+          </span>
+          <TechId>
+            {totalDaily} DIA · {totalWeekly} WEEK · {totalMonthly} MONTH
+          </TechId>
         </div>
+      }
+      headerRightControls={
         <button
           onClick={handleNewRoutine}
           style={{
-            background: 'var(--color-accent-primary)', border: 'none', cursor: 'pointer',
-            color: 'var(--color-bg-primary)', fontSize: 11, fontWeight: 700,
-            padding: '8px 16px', borderRadius: 3,
-            letterSpacing: '0.1em', textTransform: 'uppercase',
+            background: 'rgba(143, 191, 211, 0.10)',
+            border: '1px solid rgba(143, 191, 211, 0.45)',
+            cursor: 'pointer',
+            color: 'var(--color-ice-light)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10, fontWeight: 700,
+            padding: '7px 14px',
+            letterSpacing: '0.18em', textTransform: 'uppercase',
+            borderRadius: 0,
+            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+            boxShadow: '0 0 12px rgba(143, 191, 211, 0.18)',
             transition: 'all 0.15s',
           }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-secondary)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-accent-primary)')}
+          onMouseEnter={e => {
+            e.currentTarget.style.background = 'rgba(143, 191, 211, 0.18)'
+            e.currentTarget.style.boxShadow = '0 0 18px rgba(143, 191, 211, 0.35)'
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = 'rgba(143, 191, 211, 0.10)'
+            e.currentTarget.style.boxShadow = '0 0 12px rgba(143, 191, 211, 0.18)'
+          }}
         >
-          + nova rotina
+          + NOVA ROTINA
         </button>
-      </header>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+      }
+      footerCaption={
+        <>
+          <div>// HABITS.SCHEDULER · {routines.length} REGISTERED</div>
+          <div style={{ opacity: 0.6, marginTop: 2 }}>TYPE: TACTICAL.ROUTINES</div>
+        </>
+      }
+    >
 
       {editingId === 'new' && (
         <div style={{ marginTop: 32 }}>
@@ -305,9 +300,6 @@ export function RoutinesView() {
           })()
         )}
       </div>
-
-      </div>
-    </Card>
-    </div>
+    </PageShell>
   )
 }

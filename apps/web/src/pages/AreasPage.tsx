@@ -5,13 +5,12 @@ import type { Area, Project, Quest, Deliverable } from '../types'
 import { createArea, createProject, deleteProject, fetchDeliverables, fetchDeliverablesSummary, reportApiError } from '../api'
 import type { DateRange } from '../utils/dateRange'
 import { computeRange, isInRange } from '../utils/dateRange'
-import { Label } from '../components/ui/Label'
 import { ColorPickerPopover } from '../components/ColorPickerPopover'
 import { AreaRow } from '../components/AreaRow'
 import { DateRangeFilter } from '../components/DateRangeFilter'
 import { QuestDetailPanel } from '../components/QuestDetailPanel'
 import { PRIORITIES } from '../components/PrioritySelect'
-import { Card } from '../components/ui/Primitives'
+import { PageShell, TechId } from '../components/ui/CyberShell'
 
 /**
  * `/areas` — lista editável de áreas. Um clique numa linha navega pra
@@ -48,62 +47,61 @@ export function AreasView({ areas, projects, onAreaCreate, onAreaUpdate, onAreaD
   }
 
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-      <header style={{
-        display: 'flex', alignItems: 'flex-end', gap: 14,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 10, color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-            marginBottom: 4,
+    <PageShell
+      headerLabel="ÁREAS"
+      headerLeftContent={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
           }}>
-            Áreas
-          </div>
-          <div style={{
-            fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-            color: 'var(--color-text-primary)', lineHeight: 1.2,
-          }}>
-            {areas.length} {areas.length === 1 ? 'área' : 'áreas'} · {projects.length} {projects.length === 1 ? 'projeto' : 'projetos'}
-          </div>
+            {areas.length} {areas.length === 1 ? 'ÁREA' : 'ÁREAS'} · {projects.length} {projects.length === 1 ? 'PROJETO' : 'PROJETOS'}
+          </span>
+          <TechId>DOMAINS.MATRIX</TechId>
         </div>
-        {!creating && (
+      }
+      headerRightControls={
+        !creating && (
           <button
             onClick={() => setCreating(true)}
             style={{
-              background: 'var(--color-accent-primary)', border: 'none', cursor: 'pointer',
-              color: 'var(--color-bg-primary)', fontSize: 11, fontWeight: 700,
-              padding: '8px 16px', borderRadius: 3,
-              letterSpacing: '0.1em', textTransform: 'uppercase',
+              background: 'rgba(143, 191, 211, 0.10)',
+              border: '1px solid rgba(143, 191, 211, 0.45)',
+              cursor: 'pointer',
+              color: 'var(--color-ice-light)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10, fontWeight: 700,
+              padding: '7px 14px',
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              borderRadius: 0,
+              clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+              boxShadow: '0 0 12px rgba(143, 191, 211, 0.18)',
               transition: 'all 0.15s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-secondary)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-accent-primary)')}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'rgba(143, 191, 211, 0.18)'
+              e.currentTarget.style.boxShadow = '0 0 18px rgba(143, 191, 211, 0.35)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'rgba(143, 191, 211, 0.10)'
+              e.currentTarget.style.boxShadow = '0 0 12px rgba(143, 191, 211, 0.18)'
+            }}
           >
-            + nova área
+            + NOVA ÁREA
           </button>
-        )}
-      </header>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+        )
+      }
+      footerCaption={
+        <>
+          <div>// DOMAINS.MAPPED · {areas.length} REGISTERED</div>
+          <div style={{ opacity: 0.6, marginTop: 2 }}>TYPE: TACTICAL.AREAS</div>
+        </>
+      }
+    >
 
       {creating && (
         <section style={{
@@ -202,10 +200,7 @@ export function AreasView({ areas, projects, onAreaCreate, onAreaUpdate, onAreaD
         )}
       </section>
 
-      <div style={{ display: 'none' }}><Label>áreas</Label></div>
-      </div>
-    </Card>
-    </div>
+    </PageShell>
   )
 }
 
@@ -443,50 +438,69 @@ function AreaDetailView({
   }
 
   return (
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil — area name + progresso */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
-          <h2 style={{ color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 600, margin: 0 }}>{area.name}</h2>
-          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-            {total} projeto{total !== 1 ? 's' : ''}
+    <PageShell
+      headerLabel={`AREA · ${area.name.toUpperCase()}`}
+      headerLeftContent={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
+          }}>
+            {total} {total === 1 ? 'PROJETO' : 'PROJETOS'}
+            {doing > 0 && ` · ${doing} FAZENDO`}
+            {pending > 0 && ` · ${pending} PENDENTE${pending !== 1 ? 'S' : ''}`}
           </span>
+          <TechId>
+            {total > 0 ? `PROGRESS ${Math.round((closed / total) * 100)}%` : 'EMPTY DOMAIN'}
+          </TechId>
         </div>
-        {area.description && (
-          <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', margin: '8px 0 0 0' }}>{area.description}</p>
-        )}
-        {total > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ marginBottom: 8, display: 'flex', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-              {doing > 0 && <span>{doing} fazendo</span>}
-              {pending > 0 && <span>{pending} pendente{pending !== 1 ? 's' : ''}</span>}
+      }
+      headerRightControls={
+        total > 0 ? (
+          <div style={{ width: 120, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 1 }}>
+              {Array.from({ length: 10 }).map((_, i) => {
+                const filled = (closed / total) * 10 > i
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1, height: 4,
+                      background: filled ? area.color : 'rgba(255, 255, 255, 0.08)',
+                      boxShadow: filled ? `0 0 4px ${area.color}` : 'none',
+                    }}
+                  />
+                )
+              })}
             </div>
-            <div style={{ height: 3, background: 'var(--color-border)', borderRadius: 1 }}>
-              <div style={{
-                height: '100%', borderRadius: 1, background: 'var(--color-accent-light)',
-                width: `${Math.round((closed / total) * 100)}%`,
-                transition: 'width 0.3s',
-              }} />
-            </div>
+            <span style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: '0.15em',
+              color: 'var(--color-text-muted)',
+              textAlign: 'right',
+            }}>
+              {Math.round((closed / total) * 100)}% · {closed}/{total}
+            </span>
           </div>
-        )}
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+        ) : undefined
+      }
+      footerCaption={
+        <>
+          <div>// AREA.{area.slug.toUpperCase()} · {total} PROJECTS · {closed} CLOSED</div>
+          {area.description && (
+            <div style={{ opacity: 0.6, marginTop: 2, textTransform: 'none', letterSpacing: '0.05em' }}>
+              {area.description}
+            </div>
+          )}
+        </>
+      }
+    >
 
       {!creatingProject ? (
         <div style={{ marginTop: 24 }}>
@@ -690,8 +704,7 @@ function AreaDetailView({
           )}
         </div>
       )}
-      </div>
-    </Card>
+    </PageShell>
   )
 }
 

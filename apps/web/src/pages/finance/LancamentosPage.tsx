@@ -31,6 +31,7 @@ import { NewTransactionModal } from './components/NewTransactionModal'
 import { MonthPicker } from './components/MonthPicker'
 import { parseTxDescricao } from './components/parseTxDescricao'
 import { Card } from '../../components/ui/Primitives'
+import { StaggerList, StaggerItem } from '../../components/ui/Motion'
 
 export function LancamentosPage() {
   const {
@@ -108,26 +109,38 @@ export function LancamentosPage() {
       position: 'relative',
       zIndex: 20,
     }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" />
+      {/* Header com atmosphere ice/fog */}
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center',
         padding: 'var(--space-4) var(--space-6)',
         background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
           linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
         `,
-        borderBottom: '1px solid var(--color-divider)',
+        borderBottom: '1px solid var(--color-ice-deep)',
       }}>
-        <div style={{
-          fontSize: 14, fontWeight: 700, color: 'var(--color-text-primary)',
-        }}>
-          Lançamentos
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9, color: 'var(--color-text-muted)',
+            letterSpacing: '0.22em', textTransform: 'uppercase', fontWeight: 700,
+          }}>
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+            TRANSACTIONS
+          </span>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
+          }}>
+            LANÇAMENTOS
+          </span>
         </div>
 
         {/* Seletor de mês — MonthPicker compartilhado (atalhos: Hoje, Mês
@@ -241,7 +254,7 @@ export function LancamentosPage() {
             sub="Ajuste a busca ou limpe os filtros."
           />
         ) : (
-          <div className="hq-stagger" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <StaggerList style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {/* Header de colunas — guia visual da estrutura tabular.
                 Bordas transparentes pra reservar o mesmo espaço que cada linha
                 de transação tem (border 1px + borderLeft 3px do tipo), senão
@@ -267,15 +280,14 @@ export function LancamentosPage() {
               <span>valor</span>
             </div>
 
-            {filtered.map((tx, i) => {
+            {filtered.map((tx) => {
               const isEntry = tx.valor >= 0
               const cat = tx.categoria_id ? catById.get(tx.categoria_id) : null
               const acc = accountById.get(tx.conta_id)
               const p = parsed.get(tx.id) ?? { tipo: null, nome: tx.descricao, doc: null }
               return (
+                <StaggerItem key={tx.id} layout>
                 <div
-                  key={tx.id}
-                  className="hq-animate-fade-up"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: TX_GRID,
@@ -286,7 +298,6 @@ export function LancamentosPage() {
                     borderLeft: `3px solid ${isEntry ? 'var(--color-success)' : 'var(--color-accent-primary)'}`,
                     borderRadius: 'var(--radius-sm)',
                     transition: 'border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth)',
-                    ['--stagger-i' as any]: Math.min(i, 20),  // cap stagger pra não criar delay enorme em listas grandes
                   }}
                   onMouseEnter={e => {
                     e.currentTarget.style.borderColor = 'var(--color-border-strong)'
@@ -426,9 +437,10 @@ export function LancamentosPage() {
                     </span>
                   </span>
                 </div>
+                </StaggerItem>
               )
             })}
-          </div>
+          </StaggerList>
         )}
       </div>
 

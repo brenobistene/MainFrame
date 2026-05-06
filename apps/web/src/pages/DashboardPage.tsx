@@ -6,7 +6,7 @@ import { fetchAllRoutines, fetchDeliverables, fetchTasks, reportApiError } from 
 import { getAllBlockRangesForDay } from '../utils/blocks'
 import type { UnproductiveBlock } from '../utils/blocks'
 import { ProfileEditModal } from '../components/ProfileEditModal'
-import { Card } from '../components/ui/Primitives'
+import { AnimatedNumber, SkeletonBlock } from '../components/ui/Motion'
 
 // ─── Tipos e constantes ────────────────────────────────────────────────────
 
@@ -25,6 +25,12 @@ type ProjectPressure = {
   remainingMin: number
   estimatedMin: number
   workedMin: number
+  /** Total trabalhado em TODAS as quests linkadas ao projeto (via project_id
+   *  direto OU via qualquer entregável, incluindo entregáveis já concluídos
+   *  e quests "soltas" sem deliverable_id). EXEC mostrado no card. */
+  totalWorkedMin: number
+  /** Total estimado em TODAS as quests linkadas. Usado pro % do card. */
+  totalEstimatedMin: number
   status: Pressure
 }
 
@@ -160,16 +166,32 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
   const [delivsByProject, setDelivsByProject] = useState<Record<string, Deliverable[]>>({})
   const [editingProfile, setEditingProfile] = useState(false)
   const [showAllProjects, setShowAllProjects] = useState(false)
+  // Flags pra evitar "pop-in" — dashboard só renderiza conteúdo final quando
+  // todas as 3 fontes de dados carregaram pelo menos uma vez. Antes, cada
+  // fetch que chegava re-disparava re-render com cálculos meio-prontos
+  // (horas oscilando, contagens pulando), parecia bug visual.
+  const [routinesLoaded, setRoutinesLoaded] = useState(false)
+  const [tasksLoaded, setTasksLoaded] = useState(false)
+  const [delivsLoaded, setDelivsLoaded] = useState(false)
   // Filtro da seção "Próximas deadlines": null = tudo; 'projeto' ou 'entregável' filtra.
   const [deadlineTypeFilter, setDeadlineTypeFilter] = useState<null | 'projeto' | 'entregável'>(null)
+  // Estado de colapso por seção — vibe codex CP2077 onde categorias podem
+  // ser fechadas pra reduzir density. Default: tudo aberto.
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
+  const toggleSection = (key: string) =>
+    setCollapsedSections(s => ({ ...s, [key]: !s[key] }))
 
   useEffect(() => {
     try { localStorage.setItem(WINDOW_STORAGE_KEY, JSON.stringify(windowRange)) } catch {}
   }, [windowRange])
 
   useEffect(() => {
-    fetchAllRoutines().then(setRoutines).catch(err => reportApiError('DashboardPage', err))
-    fetchTasks().then(setTasks).catch(err => reportApiError('DashboardPage', err))
+    fetchAllRoutines()
+      .then(list => { setRoutines(list); setRoutinesLoaded(true) })
+      .catch(err => reportApiError('DashboardPage', err))
+    fetchTasks()
+      .then(list => { setTasks(list); setTasksLoaded(true) })
+      .catch(err => reportApiError('DashboardPage', err))
   }, [])
 
   // Projetos arquivados ficam fora de todos os cálculos do dashboard — o
@@ -184,7 +206,11 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
     [activeFromPortfolio],
   )
   useEffect(() => {
-    if (projectIds.length === 0) { setDelivsByProject({}); return }
+    if (projectIds.length === 0) {
+      setDelivsByProject({})
+      setDelivsLoaded(true)
+      return
+    }
     let cancelled = false
     Promise.all(projectIds.map(pid =>
       fetchDeliverables(pid)
@@ -195,6 +221,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
       const map: Record<string, Deliverable[]> = {}
       for (const r of results) map[r.pid] = r.ds
       setDelivsByProject(map)
+      setDelivsLoaded(true)
     })
     return () => { cancelled = true }
   }, [projectIds.join(',')])
@@ -307,6 +334,22 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         const eff = effectiveDeliverableDeadline(d, p)
         if (eff) delivDeadlines.push(eff)
       }
+
+      // Totais reais — soma TODAS as quests linkadas ao projeto, seja por
+      // project_id direto (quests "soltas") ou via qualquer entregável,
+      // incluindo entregáveis CONCLUÍDOS. O loop acima ignorava isso e
+      // mostrava EXEC=0 falsamente em projetos com entregáveis done.
+      const allProjectDelivIds = new Set((delivsByProject[p.id] ?? []).map(d => d.id))
+      let totalWorkedMin = 0
+      let totalEstimatedMin = 0
+      for (const q of quests) {
+        const linkedDirect = q.project_id === p.id
+        const linkedViaDeliv = !!(q.deliverable_id && allProjectDelivIds.has(q.deliverable_id))
+        if (linkedDirect || linkedViaDeliv) {
+          totalWorkedMin += q.worked_minutes ?? 0
+          totalEstimatedMin += q.estimated_minutes ?? 0
+        }
+      }
       // Prazo do projeto manda quando existe (é o que o user edita direto no
       // projeto); só cai pra entregáveis quando o projeto não tem prazo próprio.
       const effectiveDeadline = p.deadline
@@ -336,7 +379,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         else if (imminent || unplanned) status = 'tight'
         else status = 'ok'
       }
-      return { project: p, deliverables: delivs, effectiveDeadline, daysAway, remainingMin, estimatedMin, workedMin, status }
+      return { project: p, deliverables: delivs, effectiveDeadline, daysAway, remainingMin, estimatedMin, workedMin, totalWorkedMin, totalEstimatedMin, status }
     })
     .sort((a, b) => {
       const order = { overdue: 0, impossible: 1, tight: 2, ok: 3, 'no-deadline': 4, done: 5 }
@@ -460,6 +503,39 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quests, delivsByProject, areas, todayIso, windowStartIso, windowEndIso])
 
+  // ─── PROJECT.MATRIX ─── grid de TODOS os projetos não-arquivados,
+  // agrupados por área (estilo skill tree CP2077). Diferente do
+  // PRESSURE.MATRIX (só os em risco) — esse é o portfolio inteiro.
+  const allProjectsByArea = useMemo(() => {
+    const map: Record<string, { area: Area; projects: Project[] }> = {}
+    for (const p of activeFromPortfolio) {
+      const area = areas.find(a => a.slug === p.area_slug)
+      if (!area) continue
+      if (!map[p.area_slug]) map[p.area_slug] = { area, projects: [] }
+      map[p.area_slug].projects.push(p)
+    }
+    // Sort projects: ativos primeiro (por deadline), done/cancelled ao fim
+    for (const k of Object.keys(map)) {
+      map[k].projects.sort((a, b) => {
+        const aActive = a.status !== 'done' && a.status !== 'cancelled'
+        const bActive = b.status !== 'done' && b.status !== 'cancelled'
+        if (aActive !== bActive) return aActive ? -1 : 1
+        const aDl = a.deadline ?? '9999'
+        const bDl = b.deadline ?? '9999'
+        return aDl.localeCompare(bDl)
+      })
+    }
+    return Object.values(map).sort((a, b) => a.area.name.localeCompare(b.area.name))
+  }, [activeFromPortfolio, areas])
+
+  // Stats por projeto pra cell — reutiliza projectPressures (ativos) e
+  // calcula default pra done/cancelled.
+  const pressureByProjectId = useMemo(() => {
+    const map: Record<string, ProjectPressure> = {}
+    for (const pp of projectPressures) map[pp.project.id] = pp
+    return map
+  }, [projectPressures])
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const overdueTasksCount = tasks.filter(t =>
@@ -470,15 +546,22 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
     p.status === 'overdue' || p.status === 'impossible' || p.status === 'tight'
   )
   const visibleProjects = showAllProjects ? projectPressures : riskProjects
+  const totalProjectsInMatrix = allProjectsByArea.reduce((sum, c) => sum + c.projects.length, 0)
 
   // Veredito híbrido: status (por risco) + ação (hoje) + mais urgente.
   const overdueCount = projectPressures.filter(p => p.status === 'overdue').length
   const atRiskCount = projectPressures.filter(p => p.status === 'impossible' || p.status === 'tight').length
+  // Cor do veredito: oxblood vivo (overdue) → oxblood (risco) → ice (tudo em dia).
+  // Ice no estado calmo é proposital — vibe HIU "alien-tech ligada e estável",
+  // mais cinematográfica que o verde genérico de success state.
   const vereditoColor = overdueCount > 0
     ? 'var(--color-accent-vivid)'
     : atRiskCount > 0
       ? 'var(--color-accent-primary)'
-      : 'var(--color-success)'
+      : 'var(--color-ice)'
+  const vereditoGlow = overdueCount === 0 && atRiskCount === 0
+    ? '0 0 24px var(--color-ice-glow)'
+    : 'none'
   const vereditoHeadline = overdueCount > 0
     ? `${overdueCount} projeto${overdueCount !== 1 ? 's' : ''} atrasado${overdueCount !== 1 ? 's' : ''}${atRiskCount > 0 ? ` · ${atRiskCount} em risco` : ''}`
     : atRiskCount > 0
@@ -492,152 +575,322 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
     return `em ${daysAway}d`
   }
 
+  const dashboardReady = routinesLoaded && tasksLoaded && delivsLoaded
+
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-      <header style={{
-        display: 'flex', alignItems: 'center', gap: 14,
-      }}>
-        {profile.avatar_url ? (
-          <img
-            src={profile.avatar_url}
-            alt={profile.name || 'perfil'}
-            onClick={() => setEditingProfile(true)}
-            style={{
-              width: 40, height: 40, borderRadius: '50%',
-              objectFit: 'cover', cursor: 'pointer', flexShrink: 0,
-              border: '1px solid var(--color-border)',
-            }}
-          />
-        ) : (
-          <button
-            onClick={() => setEditingProfile(true)}
-            style={{
-              width: 40, height: 40, borderRadius: '50%',
-              border: '1px dashed var(--color-border)', background: 'var(--color-bg-tertiary)',
-              color: 'var(--color-text-muted)', cursor: 'pointer',
-              fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase',
-            }}
-          >
-            foto
-          </button>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+    <div style={{ color: 'var(--color-text-primary)', position: 'relative' }}>
+      {/* ─── HEADER BAND CP2077 (estilo "DATA BUFFER") ─────────────────
+          Faixa solid no topo da página — não é card, é stamp.
+          Esquerda: tab `// DASHBOARD` + identidade do user (avatar minúsculo
+            + nome + role) como "tab content" estilo CP2077.
+          Direita: stack metadata técnico (SW.LINE, MODE, CONN) + window selector.
+          Hairline ice elétrica abaixo separa do body modular. */}
+      <header
+        style={{
+          position: 'relative',
+          padding: '12px 18px',
+          background: 'linear-gradient(180deg, rgba(10, 14, 22, 0.92), rgba(8, 10, 14, 0.88))',
+          borderBottom: '1px solid var(--color-ice-deep)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-5)',
+          minHeight: 56,
+        }}
+      >
+        {/* TAB MARKER — pequeno indicador ice estendendo abaixo do title,
+            assinatura "tab pull" das HUDs CP2077. */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0, bottom: -1,
+            width: 64, height: 2,
+            background: 'var(--color-ice)',
+            boxShadow: '0 0 12px var(--color-ice-glow)',
+          }}
+        />
+
+        {/* LEFT: tab title + user identity */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flex: 1, minWidth: 0 }}>
           <div
-            onClick={() => setEditingProfile(true)}
+            className="hq-tech-label"
             style={{
-              fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-              color: profile.name ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-              cursor: 'pointer', lineHeight: 1.2,
+              fontSize: 11,
+              color: 'var(--color-ice-light)',
+              letterSpacing: '0.28em',
+              flexShrink: 0,
             }}
           >
-            {profile.name || 'seu nome'}
+            DASHBOARD
           </div>
-          <div
-            onClick={() => setEditingProfile(true)}
-            style={{
-              fontSize: 10, color: 'var(--color-text-tertiary)',
-              textTransform: 'uppercase', letterSpacing: '0.12em', cursor: 'pointer',
-              marginTop: 2,
-            }}
-          >
-            {profile.role || 'seu cargo'}
-          </div>
-        </div>
-        <WindowRangeSelector value={windowRange} onChange={setWindowRange} />
-      </header>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
-
-      {/* ─── Veredito (sem card, só tipografia) ─── */}
-      <section style={{ marginTop: 56, marginBottom: 56 }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
-          fontSize: 10, color: 'var(--color-text-tertiary)',
-          letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-        }}>
-          {windowRangeLabel(windowRange, todayIso)}
-          <span
-            title={`Status: conta projetos atrasados (overdue) e em risco (ritmo > ${Math.round(avgDailyCapacityMin / 60 * 10) / 10}h/dia ou deadline em ≤1d).\n\nHoje: soma das horas que você precisa trabalhar hoje se distribuir o tempo restante de cada entregável uniformemente até sua deadline.\n\nMais urgente: item (projeto ou entregável) com a deadline mais próxima.`}
-            style={{ display: 'inline-flex', color: 'var(--color-text-muted)', cursor: 'help' }}
-          >
-            <Info size={11} strokeWidth={1.8} />
-          </span>
-        </div>
-
-        <div style={{
-          fontSize: 32, fontWeight: 700, lineHeight: 1.1,
-          color: vereditoColor,
-          fontFamily: 'var(--font-mono)',
-          letterSpacing: '-0.02em',
-        }}>
-          {vereditoHeadline}
-        </div>
-
-        <div style={{
-          marginTop: 14, display: 'flex', flexDirection: 'column', gap: 4,
-          fontSize: 13, color: 'var(--color-text-secondary)',
-          fontFamily: 'var(--font-mono)',
-        }}>
-          {todayQuotaMin > 0 ? (
-            <div>
-              <span style={{
-                fontSize: 9, color: 'var(--color-text-muted)',
-                letterSpacing: '0.15em', textTransform: 'uppercase', marginRight: 8,
-              }}>Hoje</span>
-              <span style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
-                {fmtHM(todayQuotaMin)}
-              </span>
-              <span style={{ color: 'var(--color-text-tertiary)', marginLeft: 6 }}>
-                pra ficar em dia
-              </span>
-            </div>
+          <div style={{ width: 1, height: 22, background: 'var(--color-border-strong)', flexShrink: 0 }} />
+          {profile.avatar_url ? (
+            <img
+              src={profile.avatar_url}
+              alt={profile.name || 'perfil'}
+              onClick={() => setEditingProfile(true)}
+              style={{
+                width: 28, height: 28, borderRadius: 0,
+                objectFit: 'cover', cursor: 'pointer', flexShrink: 0,
+                border: '1px solid var(--color-ice-deep)',
+              }}
+            />
           ) : (
-            <div>
-              <span style={{
-                fontSize: 9, color: 'var(--color-text-muted)',
-                letterSpacing: '0.15em', textTransform: 'uppercase', marginRight: 8,
-              }}>Hoje</span>
-              <span style={{ color: 'var(--color-text-tertiary)' }}>
-                sem compromissos
-              </span>
-            </div>
+            <button
+              onClick={() => setEditingProfile(true)}
+              style={{
+                width: 28, height: 28, borderRadius: 0,
+                border: '1px dashed var(--color-border-strong)', background: 'var(--color-bg-tertiary)',
+                color: 'var(--color-text-muted)', cursor: 'pointer',
+                fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase',
+                flexShrink: 0,
+              }}
+            >
+              IMG
+            </button>
           )}
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <div
+              onClick={() => setEditingProfile(true)}
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 14, fontWeight: 600,
+                letterSpacing: '0.04em',
+                color: profile.name ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                cursor: 'pointer', lineHeight: 1.1,
+                textTransform: 'uppercase',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {profile.name || 'SEU NOME'}
+            </div>
+            <div
+              onClick={() => setEditingProfile(true)}
+              className="hq-tech-id"
+              style={{ cursor: 'pointer' }}
+            >
+              {profile.role || 'CARGO'}
+            </div>
+          </div>
+        </div>
 
-          {mostUrgent && (overdueCount > 0 || atRiskCount > 0) && (
-            <div>
-              <span style={{
-                fontSize: 9, color: 'var(--color-text-muted)',
-                letterSpacing: '0.15em', textTransform: 'uppercase', marginRight: 8,
-              }}>Mais urgente</span>
-              <span style={{
-                color: mostUrgent.daysAway < 0 ? 'var(--color-accent-vivid)' : 'var(--color-text-primary)',
-                fontWeight: 500,
-              }}>
-                {mostUrgent.title}
-              </span>
-              <span style={{ color: 'var(--color-text-tertiary)', marginLeft: 6 }}>
-                ({urgencyLabel(mostUrgent.daysAway)})
-              </span>
+        {/* RIGHT: technical metadata stack + window selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
+            <div className="hq-tech-id" style={{ color: 'var(--color-text-muted)' }}>
+              SW.LINE {todayIso.replace(/-/g, '')}.{String(today.getDay()).padStart(2, '0')}
             </div>
-          )}
+            <div className="hq-tech-id" style={{ color: 'var(--color-text-muted)', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span>MODE.TACTICAL</span>
+              <span style={{ color: 'var(--color-success)' }}>· CONN.OK</span>
+            </div>
+          </div>
+          <WindowRangeSelector value={windowRange} onChange={setWindowRange} />
+        </div>
+      </header>
+      {/* Body como cena CP2077 — panel opaco escuro com grid HUD, halos
+          ice/fog atmosféricos por trás dos elementos hero, e contraste
+          alto. Não é mais "vidro translúcido", é "monitor de console
+          tático". Camadas (z-bottom → z-top):
+          1. Base sólida quase preta (panel HUD)
+          2. Halo cinza-luminoso intenso atrás do veredito
+          3. Fog azul-aço denso meio-superior
+          4. Halo ice elétrico off-axis direita (alien-tech)
+          5. Fog azul secundário canto inferior-esquerdo
+          6. Whisper oxblood top-left (visceral)
+          7. Vinheta inferior preta pesada
+          8. Grid HUD sutil (mesh CRT)
+          9. Grain denso bluish */}
+      <div
+        className="hq-dashboard-body"
+        style={{
+          padding: 'var(--space-5) var(--space-6) var(--space-10)',
+          position: 'relative',
+          overflow: 'hidden',
+          background: `
+            radial-gradient(ellipse 50% 35% at 50% 12%, rgba(220, 224, 228, 0.14), transparent 75%),
+            radial-gradient(ellipse 90% 55% at 50% 18%, rgba(50, 62, 73, 0.40), transparent 75%),
+            radial-gradient(ellipse 40% 35% at 100% 45%, rgba(143, 191, 211, 0.10), transparent 70%),
+            radial-gradient(ellipse 55% 45% at 0% 75%, rgba(40, 50, 57, 0.30), transparent 70%),
+            radial-gradient(ellipse 50% 35% at 0% 8%, rgba(159, 18, 57, 0.07), transparent 60%),
+            radial-gradient(ellipse 110% 70% at 50% 115%, rgba(0, 0, 0, 0.85), transparent 70%),
+            #06080c
+          `,
+        }}
+      >
+        {/* Grain extra-denso só no dashboard body (acima do grain global)
+            pra reforçar a textura "filme/scene" sem afetar o resto do app. */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            opacity: 0.13,
+            mixBlendMode: 'overlay',
+            backgroundImage:
+              "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='dn'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0.6 0 0 0 0.45  0.7 0 0 0 0.55  0.85 0 0 0 0.7  0 0 0 0.8 0'/></filter><rect width='100%25' height='100%25' filter='url(%23dn)'/></svg>\")",
+            zIndex: 0,
+          }}
+        />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+
+      {/* ─── VEREDITO (data display frame estilo "score readout" CP2077) ─── */}
+      <section style={{ marginTop: 40, marginBottom: 40, position: 'relative' }}>
+        {/* Frame outer com corner brackets ice + tab title bar no topo.
+            Estrutura: [TITLE BAR] [BIG SCORE] [STATS GRID] */}
+        <div
+          className="hq-brackets-full"
+          style={{
+            position: 'relative',
+            border: '1px solid var(--color-ice-deep)',
+            background: `
+              radial-gradient(ellipse 60% 100% at 50% 0%, rgba(143, 191, 211, 0.06), transparent 70%),
+              radial-gradient(ellipse 80% 60% at 50% 100%, rgba(40, 50, 57, 0.30), transparent 70%),
+              rgba(8, 12, 18, 0.65)
+            `,
+            padding: 0,
+            color: 'var(--color-ice)',  // for hq-brackets-full corner color
+            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%)',
+          }}
+        >
+          {/* TITLE BAR — faixa solid no topo do frame */}
+          <div
+            style={{
+              padding: '8px 16px',
+              borderBottom: '1px solid var(--color-ice-deep)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              background: 'rgba(40, 50, 57, 0.45)',
+            }}
+          >
+            <div
+              aria-hidden="true"
+              style={{
+                width: 8, height: 8,
+                background: 'var(--color-ice)',
+                boxShadow: '0 0 8px var(--color-ice-glow)',
+              }}
+            />
+            <span
+              className="hq-tech-label"
+              style={{
+                color: 'var(--color-ice-light)',
+                letterSpacing: '0.28em',
+                flex: 1,
+              }}
+            >
+              STATUS.READOUT
+            </span>
+            <span
+              className="hq-tech-id"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              {windowRangeLabel(windowRange, todayIso).toUpperCase()}
+            </span>
+            <span
+              title={`Status: conta projetos atrasados (overdue) e em risco (ritmo > ${Math.round(avgDailyCapacityMin / 60 * 10) / 10}h/dia ou deadline em ≤1d).\n\nHoje: soma das horas que você precisa trabalhar hoje se distribuir o tempo restante de cada entregável uniformemente até sua deadline.\n\nMais urgente: item (projeto ou entregável) com a deadline mais próxima.`}
+              style={{ display: 'inline-flex', color: 'var(--color-text-muted)', cursor: 'help' }}
+            >
+              <Info size={11} strokeWidth={1.8} />
+            </span>
+          </div>
+
+          {/* CONTENT */}
+          <div style={{ padding: '24px 28px' }}>
+            {!dashboardReady ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <SkeletonBlock height={42} width="60%" />
+                <SkeletonBlock height={16} width="40%" />
+                <SkeletonBlock height={14} width="50%" />
+              </div>
+            ) : (
+              <>
+                {/* HERO HEADLINE — score gigante */}
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 40, fontWeight: 700, lineHeight: 1,
+                    color: vereditoColor,
+                    textShadow: vereditoGlow,
+                    letterSpacing: '0.02em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {vereditoHeadline}
+                </div>
+
+                {/* STATS GRID — pares LABEL : VALUE alinhados estilo scoreboard */}
+                <div
+                  style={{
+                    marginTop: 22,
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '14px 32px',
+                    paddingTop: 16,
+                    borderTop: '1px solid var(--color-divider)',
+                  }}
+                >
+                  {/* HOJE */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span className="hq-tech-label" style={{ color: 'var(--color-text-muted)' }}>
+                      HOJE
+                    </span>
+                    <span style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 18, fontWeight: 700,
+                      color: todayQuotaMin > 0 ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
+                      letterSpacing: '0.02em',
+                      textShadow: todayQuotaMin > 0 ? '0 0 12px var(--color-ice-glow)' : 'none',
+                    }}>
+                      {todayQuotaMin > 0
+                        ? <AnimatedNumber value={todayQuotaMin} format={fmtHM} duration={0.7} />
+                        : '—'}
+                    </span>
+                    <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
+                      {todayQuotaMin > 0 ? '// PRA FICAR EM DIA' : '// SEM COMPROMISSOS'}
+                    </span>
+                  </div>
+
+                  {/* MAIS URGENTE */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span className="hq-tech-label" style={{ color: 'var(--color-text-muted)' }}>
+                      MAIS URGENTE
+                    </span>
+                    {mostUrgent ? (
+                      <>
+                        <span style={{
+                          fontFamily: 'var(--font-display)',
+                          fontSize: 14, fontWeight: 600,
+                          color: mostUrgent.daysAway < 0 ? 'var(--color-accent-vivid)' : 'var(--color-text-primary)',
+                          letterSpacing: '0.03em',
+                          textTransform: 'uppercase',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {mostUrgent.title}
+                        </span>
+                        <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
+                          // {mostUrgent.type.toUpperCase()} · {urgencyLabel(mostUrgent.daysAway).toUpperCase()}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 18, fontWeight: 700,
+                          color: 'var(--color-text-tertiary)',
+                        }}>—</span>
+                        <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
+                          // NENHUM ITEM CRÍTICO
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </section>
 
@@ -669,22 +922,122 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         </section>
       )}
 
-      {/* ─── Projetos em risco ─── */}
-      <section style={{ marginBottom: 56 }}>
+      {/* ─── PROJECT.MATRIX ─── grid de TODOS os projetos não-arquivados,
+          agrupados por área, estilo skill tree CP2077. Default colapsado.
+          Vem ANTES de PRESSURE.MATRIX porque é a visão geral do portfólio. */}
+      <section style={{ marginBottom: 32 }}>
+        <SectionHeader
+          label="PROJECT.MATRIX"
+          count={totalProjectsInMatrix}
+          collapsed={collapsedSections['matrix'] === undefined ? true : !!collapsedSections['matrix']}
+          onToggle={() => toggleSection('matrix')}
+        />
         <div style={{
-          fontSize: 10, color: 'var(--color-text-tertiary)',
-          letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-          marginBottom: 18,
-          display: 'flex', alignItems: 'center', gap: 8,
+          maxHeight: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? 0 : 9999,
+          overflow: 'hidden',
+          opacity: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? 0 : 1,
+          transition: 'opacity var(--motion-base) var(--ease-emphasis), max-height var(--motion-base) var(--ease-emphasis)',
+          marginTop: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? 0 : 14,
         }}>
-          Projetos em risco
-          <span
-            title="Apenas projetos com status atrasado, impossível ou apertado. Use 'ver todos' pra ver todos os ativos."
-            style={{ display: 'inline-flex', color: 'var(--color-text-muted)', cursor: 'help' }}
-          >
-            <Info size={11} strokeWidth={1.8} />
-          </span>
+          {totalProjectsInMatrix === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+              Nenhum projeto cadastrado.
+            </div>
+          ) : (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gap: '24px 28px',
+            }}>
+              {allProjectsByArea.map(({ area, projects }) => {
+                const activeCount = projects.filter(p =>
+                  p.status !== 'done' && p.status !== 'cancelled'
+                ).length
+                return (
+                  <div
+                    key={area.slug}
+                    style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+                  >
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingBottom: 6,
+                      borderBottom: `1px solid ${area.color}66`,
+                    }}>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: '0.22em',
+                        textTransform: 'uppercase',
+                        color: area.color,
+                      }}>
+                        {area.name}
+                      </span>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        letterSpacing: '0.12em',
+                        color: 'var(--color-text-muted)',
+                      }}>
+                        {activeCount.toString().padStart(2, '0')}/{projects.length.toString().padStart(2, '0')}
+                      </span>
+                    </div>
+                    <div style={{ position: 'relative', paddingLeft: 10 }}>
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          position: 'absolute',
+                          left: 0, top: 4, bottom: 4,
+                          width: 1,
+                          background: `linear-gradient(180deg, ${area.color}88 0%, ${area.color}22 60%, transparent)`,
+                        }}
+                      />
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 5,
+                      }}>
+                        {projects.map(p => (
+                          <ProjectCell
+                            key={p.id}
+                            project={p}
+                            areaColor={area.color}
+                            pressure={pressureByProjectId[p.id]}
+                            onOpen={() => {
+                              onSelectProject(p.id)
+                              navigate(`/areas/${p.area_slug}`)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
+      </section>
+
+      {/* ─── Projetos em risco ─── */}
+      <section style={{ marginBottom: 32 }}>
+        <SectionHeader
+          label="PRESSURE.MATRIX"
+          count={visibleProjects.length}
+          collapsed={!!collapsedSections['pressure']}
+          onToggle={() => toggleSection('pressure')}
+          accent={riskProjects.some(p => p.status === 'overdue') ? 'oxblood' : 'ice'}
+        />
+        <div style={{
+          maxHeight: collapsedSections['pressure'] ? 0 : 9999,
+          overflow: 'hidden',
+          opacity: collapsedSections['pressure'] ? 0 : 1,
+          transition: 'opacity var(--motion-base) var(--ease-emphasis), max-height var(--motion-base) var(--ease-emphasis)',
+          marginTop: collapsedSections['pressure'] ? 0 : 14,
+        }}>
 
         {visibleProjects.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
@@ -721,7 +1074,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
               letterSpacing: '0.1em', textTransform: 'uppercase', padding: 0,
               transition: 'color 0.15s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-accent-light)')}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-ice-light)')}
             onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-tertiary)')}
           >
             ver todos os projetos ({projectPressures.length})
@@ -736,26 +1089,35 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
               letterSpacing: '0.1em', textTransform: 'uppercase', padding: 0,
               transition: 'color 0.15s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-accent-light)')}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-ice-light)')}
             onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-tertiary)')}
           >
             só em risco
           </button>
         )}
+        </div>
       </section>
 
       {/* ─── Próximas deadlines ─── */}
-      <section style={{ marginBottom: 48 }}>
+      <section style={{ marginBottom: 32 }}>
+        <SectionHeader
+          label="DEADLINE.QUEUE"
+          count={upcomingItems.length}
+          collapsed={!!collapsedSections['deadlines']}
+          onToggle={() => toggleSection('deadlines')}
+          accent={upcomingItems.some(i => i.isOverdue) ? 'oxblood' : 'ice'}
+        />
+        <div style={{
+          maxHeight: collapsedSections['deadlines'] ? 0 : 9999,
+          overflow: 'hidden',
+          opacity: collapsedSections['deadlines'] ? 0 : 1,
+          transition: 'opacity var(--motion-base) var(--ease-emphasis), max-height var(--motion-base) var(--ease-emphasis)',
+          marginTop: collapsedSections['deadlines'] ? 0 : 14,
+        }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: 12, marginBottom: 18, flexWrap: 'wrap',
         }}>
-          <div style={{
-            fontSize: 10, color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-          }}>
-            Próximas deadlines
-          </div>
           {(() => {
             const projCount = upcomingItems.filter(i => i.type === 'projeto').length
             const delivCount = upcomingItems.filter(i => i.type === 'entregável').length
@@ -766,14 +1128,15 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                   key={label}
                   onClick={() => setDeadlineTypeFilter(value)}
                   style={{
-                    background: active ? 'var(--color-accent-primary)' : 'none',
-                    border: `1px solid ${active ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
+                    background: active ? 'var(--color-ice-soft)' : 'none',
+                    border: `1px solid ${active ? 'rgba(143, 191, 211, 0.32)' : 'var(--color-border)'}`,
                     cursor: 'pointer',
-                    color: active ? 'var(--color-bg-primary)' : 'var(--color-text-tertiary)',
+                    color: active ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
                     padding: '4px 10px', fontSize: 10, fontWeight: 600,
                     letterSpacing: '0.1em', textTransform: 'uppercase',
                     borderRadius: 3, fontFamily: 'inherit',
                     transition: 'all 0.15s',
+                    boxShadow: active ? '0 0 12px rgba(143, 191, 211, 0.18)' : 'none',
                   }}
                   onMouseEnter={e => {
                     if (!active) {
@@ -824,39 +1187,99 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {filtered.map((item, idx) => {
               const daysAway = calendarDaysUntil(item.date)
-              const dayLabel = daysAway === 0 ? 'hoje'
-                : daysAway === 1 ? 'amanhã'
-                : daysAway < 0 ? `atrasado ${Math.abs(daysAway)}d`
-                : `em ${daysAway}d`
+              const dayLabel = daysAway === 0 ? 'HOJE'
+                : daysAway === 1 ? 'AMANHÃ'
+                : daysAway < 0 ? `+${Math.abs(daysAway)}D`
+                : `${daysAway}D`
+              const itemBorderColor = item.isOverdue
+                ? 'rgba(159, 18, 57, 0.55)'
+                : 'rgba(143, 191, 211, 0.30)'
+              const itemAccentColor = item.isOverdue
+                ? 'var(--color-accent-vivid)'
+                : 'var(--color-ice)'
+              const [, mm, dd] = item.date.split('-')
               return (
-                <div key={idx} style={{
-                  display: 'flex', alignItems: 'center', gap: 14,
-                  padding: '10px 0',
-                  borderBottom: idx < filtered.length - 1 ? '1px solid var(--color-divider)' : 'none',
-                  opacity: item.done ? 0.45 : 1,
-                }}>
+                <div
+                  key={idx}
+                  style={{
+                    position: 'relative',
+                    display: 'flex', alignItems: 'stretch', gap: 6,
+                    marginBottom: 10,
+                    opacity: item.done ? 0.45 : 1,
+                    transition: 'transform var(--motion-fast) var(--ease-smooth)',
+                  }}
+                >
+                  {/* THUMBNAIL: data como display tactical */}
                   <div style={{
-                    width: 56, flexShrink: 0, textAlign: 'left',
-                    fontFamily: 'var(--font-mono)',
-                    color: item.isOverdue ? 'var(--color-accent-vivid)' : 'var(--color-text-tertiary)',
+                    width: 56, flexShrink: 0,
+                    background: `linear-gradient(135deg, ${item.color}22, ${item.color}08 60%, transparent)`,
+                    border: `1px solid ${itemBorderColor}`,
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center',
+                    gap: 2,
+                    clipPath: 'polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px)',
                   }}>
-                    <div style={{ fontSize: 11, fontWeight: 600 }}>
-                      {(() => { const [, m, d] = item.date.split('-'); return `${d}/${m}` })()}
-                    </div>
-                    <div style={{ fontSize: 9, marginTop: 1, opacity: 0.8 }}>{dayLabel}</div>
-                  </div>
-                  <div style={{ width: 2, height: 22, background: item.color, flexShrink: 0, borderRadius: 1 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 500,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      textDecoration: item.done ? 'line-through' : 'none',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 14, fontWeight: 700,
+                      color: itemAccentColor,
+                      letterSpacing: '0.05em',
+                      lineHeight: 1,
                     }}>
-                      {item.title}
+                      {dd}/{mm}
                     </div>
-                    <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', marginTop: 2, letterSpacing: '0.05em' }}>
-                      <span style={{ textTransform: 'uppercase', color: item.color }}>{item.type}</span>
-                      {item.context && <span style={{ marginLeft: 8 }}>· {item.context}</span>}
+                    <div style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 8, fontWeight: 700,
+                      color: 'var(--color-text-muted)',
+                      letterSpacing: '0.12em',
+                      marginTop: 3,
+                    }}>
+                      {dayLabel}
+                    </div>
+                  </div>
+
+                  {/* MAIN CARD */}
+                  <div style={{
+                    flex: 1, minWidth: 0,
+                    background: item.isOverdue
+                      ? 'rgba(159, 18, 57, 0.08)'
+                      : 'rgba(8, 12, 18, 0.55)',
+                    border: `1px solid ${itemBorderColor}`,
+                    padding: '10px 16px',
+                    display: 'flex', alignItems: 'center', gap: 16,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontFamily: 'var(--font-display)',
+                        fontSize: 14, fontWeight: 600,
+                        color: 'var(--color-text-primary)',
+                        letterSpacing: '0.03em',
+                        textTransform: 'uppercase',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        textDecoration: item.done ? 'line-through' : 'none',
+                        lineHeight: 1.2,
+                      }}>
+                        {item.title}
+                      </div>
+                      <div style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 9, fontWeight: 600,
+                        color: 'var(--color-text-muted)',
+                        letterSpacing: '0.15em',
+                        textTransform: 'uppercase',
+                        marginTop: 4,
+                        display: 'flex', alignItems: 'center', gap: 8,
+                      }}>
+                        <span style={{ color: item.color }}>{item.type}</span>
+                        {item.context && (
+                          <>
+                            <span style={{ opacity: 0.4 }}>·</span>
+                            <span>{item.context}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -865,17 +1288,39 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           </div>
           )
         })()}
+        </div>
       </section>
 
-      {editingProfile && (
-        <ProfileEditModal
-          profile={profile}
-          onClose={() => setEditingProfile(false)}
-          onSave={onProfileUpdate}
-        />
-      )}
+      {/* ─── FOOTER CAPTION ─── disclaimer técnico mono no rodapé do panel,
+          igual ao "CUSTOM GLITCHES ON UI..." da referência CP2077. */}
+      <div
+        style={{
+          marginTop: 32,
+          paddingTop: 'var(--space-3)',
+          borderTop: '1px solid var(--color-divider)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 9,
+          color: 'var(--color-text-muted)',
+          letterSpacing: '0.12em',
+          lineHeight: 1.6,
+          textTransform: 'uppercase',
+        }}
+      >
+        <div>// DATA RECONCILED · LAST.SYNC: {new Date().toLocaleTimeString('pt-BR')}</div>
+        <div style={{ opacity: 0.6, marginTop: 2 }}>
+          DOCUMENT/D/{todayIso.replace(/-/g, '')}-{profile.name?.replace(/\s+/g, '').slice(0, 6).toUpperCase() || 'GUEST'} · TYPE: TACTICAL.SCAN
+        </div>
       </div>
-    </Card>
+        </div>
+      </div>
+
+    {editingProfile && (
+      <ProfileEditModal
+        profile={profile}
+        onClose={() => setEditingProfile(false)}
+        onSave={onProfileUpdate}
+      />
+    )}
     </div>
   )
 }
@@ -883,74 +1328,518 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
 // ─── Subcomponents ─────────────────────────────────────────────────────────
 
 /**
+ * Section header collapsable estilo CP2077 codex (CHARACTERS/GLOSSARY/etc).
+ * Border ice deep + bottom-right chamfer + chevron rotacionado conforme
+ * estado. Click toggle expand/collapse com transição smooth.
+ */
+function SectionHeader({
+  label,
+  count,
+  collapsed,
+  onToggle,
+  accent = 'ice',
+}: {
+  label: string
+  count?: number
+  collapsed: boolean
+  onToggle: () => void
+  accent?: 'ice' | 'oxblood'
+}) {
+  const borderColor = accent === 'oxblood'
+    ? 'rgba(159, 18, 57, 0.55)'
+    : 'rgba(143, 191, 211, 0.45)'
+  const textColor = accent === 'oxblood'
+    ? 'var(--color-accent-light)'
+    : 'var(--color-ice-light)'
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      style={{
+        width: '100%',
+        background: 'rgba(8, 12, 18, 0.55)',
+        border: `1px solid ${borderColor}`,
+        padding: '12px 18px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-3)',
+        cursor: 'pointer',
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)',
+        borderRadius: 0,
+        transition: 'background var(--motion-fast) var(--ease-smooth), border-color var(--motion-fast) var(--ease-smooth)',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.background = accent === 'oxblood'
+          ? 'rgba(159, 18, 57, 0.10)'
+          : 'rgba(143, 191, 211, 0.06)'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = 'rgba(8, 12, 18, 0.55)'
+      }}
+    >
+      {/* Tab marker à esquerda */}
+      <div
+        aria-hidden="true"
+        style={{
+          width: 3, height: 18,
+          background: textColor,
+          boxShadow: accent === 'oxblood'
+            ? '0 0 8px rgba(159, 18, 57, 0.55)'
+            : '0 0 8px var(--color-ice-glow)',
+        }}
+      />
+      <span
+        style={{
+          flex: 1,
+          textAlign: 'left',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.25em',
+          textTransform: 'uppercase',
+          color: textColor,
+        }}
+      >
+        {label}
+        {typeof count === 'number' && count > 0 && (
+          <span style={{
+            marginLeft: 12,
+            color: 'var(--color-text-muted)',
+            fontWeight: 600,
+          }}>
+            [{count}]
+          </span>
+        )}
+      </span>
+      {/* Chevron rotacionado conforme estado */}
+      <ChevronDown
+        size={14}
+        strokeWidth={2}
+        color={textColor}
+        style={{
+          transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+          transition: 'transform var(--motion-base) var(--ease-emphasis)',
+          flexShrink: 0,
+        }}
+      />
+    </button>
+  )
+}
+
+/**
+ * Cell horizontal do PROJECT.MATRIX — slot retangular com title completo
+ * (truncado), status dot + mini progress bar. Estilo "data row" CP2077
+ * codex. Click navega pra área com o projeto selecionado.
+ */
+function ProjectCell({
+  project,
+  areaColor,
+  pressure,
+  onOpen,
+}: {
+  project: Project
+  areaColor: string
+  pressure?: ProjectPressure
+  onOpen: () => void
+}) {
+  const isDone = project.status === 'done'
+  const isCancelled = project.status === 'cancelled'
+  const dimmed = isDone || isCancelled
+
+  const status: Pressure | 'cancelled' = isCancelled
+    ? 'cancelled' as any
+    : isDone
+      ? 'done'
+      : pressure?.status ?? 'no-deadline'
+
+  const isOverdue = status === 'overdue' || status === 'impossible'
+  const isTight = status === 'tight'
+
+  const dotColor = isOverdue
+    ? 'var(--color-accent-vivid)'
+    : isTight
+      ? 'var(--color-warning)'
+      : isDone
+        ? 'var(--color-success)'
+        : isCancelled
+          ? 'var(--color-text-muted)'
+          : 'var(--color-ice)'
+
+  const borderColor = isOverdue
+    ? 'rgba(159, 18, 57, 0.50)'
+    : isTight
+      ? 'rgba(192, 138, 58, 0.40)'
+      : dimmed
+        ? 'rgba(255, 255, 255, 0.06)'
+        : 'rgba(143, 191, 211, 0.22)'
+
+  const pct = isDone
+    ? 100
+    : pressure && pressure.totalEstimatedMin > 0
+      ? Math.min(100, Math.round((pressure.totalWorkedMin / pressure.totalEstimatedMin) * 100))
+      : 0
+
+  const tooltipParts = [project.title]
+  if (project.deadline) tooltipParts.push(`prazo ${project.deadline}`)
+  if (status !== 'no-deadline' && status !== 'done' && status !== ('cancelled' as any)) {
+    tooltipParts.push(`status: ${status}`)
+  }
+  const tooltip = tooltipParts.join(' · ')
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={tooltip}
+      aria-label={tooltip}
+      style={{
+        position: 'relative',
+        width: '100%',
+        background: dimmed ? 'rgba(8, 12, 18, 0.35)' : 'rgba(8, 12, 18, 0.55)',
+        border: `1px solid ${borderColor}`,
+        borderLeft: `2px solid ${areaColor}${dimmed ? '55' : 'aa'}`,
+        borderRadius: 0,
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
+        cursor: 'pointer',
+        opacity: dimmed ? 0.55 : 1,
+        padding: '7px 9px 5px 8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        alignItems: 'stretch',
+        textAlign: 'left',
+        transition: 'transform var(--motion-fast) var(--ease-smooth), border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
+        fontFamily: 'inherit',
+        boxShadow: 'none',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'translateX(2px)'
+        e.currentTarget.style.boxShadow = isOverdue
+          ? '0 0 12px rgba(159, 18, 57, 0.25)'
+          : '0 0 12px rgba(143, 191, 211, 0.18)'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'translateX(0)'
+        e.currentTarget.style.boxShadow = 'none'
+      }}
+    >
+      {/* Linha topo: status dot + title (truncate) + date à direita */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}>
+        <span
+          aria-hidden="true"
+          style={{
+            width: 6, height: 6,
+            background: dotColor,
+            boxShadow: dimmed ? 'none' : `0 0 4px ${dotColor}`,
+            flexShrink: 0,
+          }}
+        />
+        <span style={{
+          flex: 1, minWidth: 0,
+          fontFamily: 'var(--font-display)',
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: dimmed ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          lineHeight: 1.15,
+          textDecoration: isCancelled ? 'line-through' : 'none',
+        }}>
+          {project.title}
+        </span>
+        {/* Date dd/mm à direita — mono, cor accent quando próximo/atrasado.
+            Title trunca com ellipsis se for longo, mas date sempre visível. */}
+        {project.deadline ? (
+          <span style={{
+            flexShrink: 0,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.04em',
+            color: dimmed
+              ? 'var(--color-text-muted)'
+              : isOverdue
+                ? 'var(--color-accent-vivid)'
+                : isTight
+                  ? 'var(--color-warning)'
+                  : 'var(--color-text-tertiary)',
+          }}>
+            {(() => {
+              const [, mm, dd] = project.deadline.split('-')
+              return `${dd}/${mm}`
+            })()}
+          </span>
+        ) : (
+          <span style={{
+            flexShrink: 0,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            fontWeight: 600,
+            color: 'var(--color-text-muted)',
+            opacity: 0.5,
+          }}>
+            —
+          </span>
+        )}
+      </div>
+
+      {/* Mini progress bar — 5 segments */}
+      <div style={{ display: 'flex', gap: 1 }}>
+        {Array.from({ length: 5 }).map((_, i) => {
+          const filled = (pct / 20) > i
+          return (
+            <div
+              key={i}
+              style={{
+                flex: 1,
+                height: 2,
+                background: filled
+                  ? (dimmed ? 'rgba(255, 255, 255, 0.18)' : dotColor)
+                  : 'rgba(255, 255, 255, 0.05)',
+              }}
+            />
+          )
+        })}
+      </div>
+    </button>
+  )
+}
+
+/**
  * Linha enxuta de um projeto em risco. Cor de status (vermelho/amarelo) só
  * nos números que comunicam a urgência; o resto é neutro.
  */
 function ProjectRiskRow({ pp, areaColor, areaName, onOpen }: { pp: ProjectPressure; areaColor: string; areaName: string; onOpen: () => void }) {
-  const severe = pp.status === 'overdue' || pp.status === 'impossible'
-  const metricColor = severe
+  // Pct contra o TOTAL estimado (delivs done + pending + quests soltas) em vez
+  // de só pendente — assim 100% = projeto inteiro entregue, não "todas as
+  // pending feitas". Cap em 100 pra evitar overflow visual quando worked > est.
+  const pct = pp.totalEstimatedMin > 0
+    ? Math.min(100, Math.round((pp.totalWorkedMin / pp.totalEstimatedMin) * 100))
+    : null
+
+  // Cor de borda/fill do card depende do status — oxblood pra severos
+  // (overdue/impossible), ice pra resto. Mapeia urgência semântica
+  // diretamente na intensidade visual do card. Estilo CP2077 codex onde
+  // item "selecionado/hot" recebe fill saturado.
+  const isSevere = pp.status === 'overdue' || pp.status === 'impossible'
+  const borderColor = isSevere
+    ? 'rgba(159, 18, 57, 0.55)'
+    : pp.status === 'tight'
+      ? 'rgba(192, 138, 58, 0.45)'
+      : 'rgba(143, 191, 211, 0.30)'
+  const accentColor = isSevere
     ? 'var(--color-accent-primary)'
     : pp.status === 'tight'
       ? 'var(--color-warning)'
-      : 'var(--color-text-tertiary)'
+      : 'var(--color-ice)'
 
-  const deadlineText = pp.daysAway === null
-    ? 'sem prazo'
-    : pp.daysAway < 0
-      ? `${Math.abs(pp.daysAway)}d atrasado`
-      : pp.daysAway === 0
-        ? 'hoje'
-        : pp.daysAway === 1
-          ? 'amanhã'
-          : `em ${pp.daysAway}d`
+  // Thumbnail: data da deadline + relativo. Mais útil que iniciais
+  // de área (que já aparece no caption). Sem deadline → traço.
+  let thumbDateDay = '—'
+  let thumbDateMonth = ''
+  let thumbRelative = 'NO.DL'
+  if (pp.effectiveDeadline) {
+    const [, mm, dd] = pp.effectiveDeadline.split('-')
+    thumbDateDay = dd
+    thumbDateMonth = mm
+    if (pp.daysAway === null) thumbRelative = '—'
+    else if (pp.daysAway < 0) thumbRelative = `+${Math.abs(pp.daysAway)}D`
+    else if (pp.daysAway === 0) thumbRelative = 'HOJE'
+    else if (pp.daysAway === 1) thumbRelative = 'AMANHÃ'
+    else thumbRelative = `${pp.daysAway}D`
+  }
 
-  const pct = pp.estimatedMin > 0
-    ? Math.round((pp.workedMin / pp.estimatedMin) * 100)
-    : null
+  // Stats extras pra preencher o card: trabalhado + estimado + count entregáveis.
+  // Vira a 3ª linha do body em mono technical readout.
+  const delivCount = pp.deliverables.length
 
   return (
     <div
       onClick={onOpen}
       style={{
-        display: 'flex', alignItems: 'center', gap: 14,
-        padding: '12px 10px', margin: '0 -10px',
-        borderBottom: '1px solid var(--color-divider)',
-        cursor: 'pointer', borderRadius: 3,
-        transition: 'background 0.12s',
+        position: 'relative',
+        display: 'flex', alignItems: 'stretch', gap: 6,
+        marginBottom: 10,
+        cursor: 'pointer',
+        transition: 'transform var(--motion-fast) var(--ease-smooth)',
       }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'translateX(2px)'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'translateX(0)'
+      }}
     >
-      <div style={{ width: 2, height: 32, background: areaColor, flexShrink: 0, borderRadius: 1 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* THUMBNAIL — data deadline + relativo. Top-left chamfer angular. */}
+      <div
+        style={{
+          width: 64, flexShrink: 0,
+          background: `linear-gradient(135deg, ${areaColor}22, ${areaColor}08 60%, transparent)`,
+          border: `1px solid ${borderColor}`,
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          gap: 2,
+          clipPath: 'polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px)',
+        }}
+      >
         <div style={{
-          fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 500,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          lineHeight: 1.2,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 15, fontWeight: 700,
+          color: accentColor,
+          letterSpacing: '0.02em',
+          lineHeight: 1,
         }}>
-          {pp.project.title}
+          {thumbDateDay}{thumbDateMonth ? `/${thumbDateMonth}` : ''}
         </div>
         <div style={{
-          fontSize: 9, color: areaColor, marginTop: 3,
-          letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 8, fontWeight: 700,
+          color: 'var(--color-text-muted)',
+          letterSpacing: '0.12em',
+          marginTop: 4,
         }}>
-          {areaName}
+          {thumbRelative}
         </div>
       </div>
-      <div style={{
-        display: 'flex', gap: 16, alignItems: 'baseline', flexShrink: 0,
-        fontSize: 11, fontFamily: 'var(--font-mono)',
-        color: 'var(--color-text-tertiary)',
-      }}>
-        <span style={{ color: metricColor, fontWeight: 600 }}>{deadlineText}</span>
-        {pp.remainingMin > 0 && (
-          <span style={{ color: metricColor }}>
-            {fmtHM(pp.remainingMin)} pendente
-          </span>
-        )}
-        {pct !== null && (
-          <span style={{ minWidth: 36, textAlign: 'right' }}>{pct}%</span>
-        )}
+
+      {/* MAIN CARD — corpo principal: title + caption + stats row.
+          Bottom-right chamfer assinatura CP2077. */}
+      <div
+        style={{
+          flex: 1, minWidth: 0,
+          background: isSevere
+            ? 'rgba(159, 18, 57, 0.08)'
+            : 'rgba(8, 12, 18, 0.55)',
+          border: `1px solid ${borderColor}`,
+          padding: '12px 18px',
+          display: 'flex', alignItems: 'center', gap: 16,
+          clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
+          transition: 'background var(--motion-fast) var(--ease-smooth)',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {/* L1: Title em Rajdhani uppercase */}
+          <div style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 15, fontWeight: 600,
+            color: 'var(--color-text-primary)',
+            letterSpacing: '0.03em',
+            textTransform: 'uppercase',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            lineHeight: 1.2,
+          }}>
+            {pp.project.title}
+          </div>
+
+          {/* L2: Area · Status (sem deadline — já tá na thumbnail) */}
+          <div style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9, fontWeight: 600,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ color: areaColor }}>{areaName}</span>
+            <span style={{ opacity: 0.4, color: 'var(--color-text-muted)' }}>·</span>
+            <span style={{ color: accentColor, fontWeight: 700 }}>
+              {pp.status === 'overdue' ? 'ATRASADO' : pp.status === 'impossible' ? 'IMPOSSÍVEL' : pp.status === 'tight' ? 'APERTADO' : pp.status === 'ok' ? 'EM DIA' : pp.status === 'done' ? 'CONCLUÍDO' : 'SEM PRAZO'}
+            </span>
+          </div>
+
+          {/* L3: Stats technical readout (// EXEC · EST · QUEUE) */}
+          <div style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9, fontWeight: 600,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            display: 'flex', alignItems: 'center', gap: 12,
+          }}>
+            <span>
+              <span style={{ color: 'var(--color-ice-deep)', marginRight: 4 }}>//</span>
+              EXEC
+              <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
+                {pp.totalWorkedMin > 0 ? fmtHM(pp.totalWorkedMin) : '0H'}
+              </span>
+            </span>
+            <span style={{ opacity: 0.3 }}>·</span>
+            <span>
+              EST
+              <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
+                {pp.totalEstimatedMin > 0 ? fmtHM(pp.totalEstimatedMin) : '—'}
+              </span>
+            </span>
+            <span style={{ opacity: 0.3 }}>·</span>
+            <span>
+              QUEUE
+              <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
+                {delivCount} {delivCount === 1 ? 'ENTREGÁVEL' : 'ENTREGÁVEIS'}
+              </span>
+            </span>
+          </div>
+        </div>
+
+        {/* METRICS RIGHT: pendente + % com mini segmented progress bar */}
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+          gap: 6, flexShrink: 0,
+          fontFamily: 'var(--font-mono)',
+        }}>
+          <div style={{
+            display: 'flex', gap: 18, alignItems: 'baseline',
+            fontSize: 11,
+            color: 'var(--color-text-tertiary)',
+          }}>
+            {pp.remainingMin > 0 && (
+              <span style={{ color: accentColor, fontWeight: 600, letterSpacing: '0.05em' }}>
+                {fmtHM(pp.remainingMin)}
+              </span>
+            )}
+            {pct !== null && (
+              <span style={{
+                minWidth: 40, textAlign: 'right',
+                color: 'var(--color-text-secondary)',
+                fontWeight: 700,
+              }}>
+                {pct}%
+              </span>
+            )}
+          </div>
+
+          {/* Segmented progress bar — 10 chunks ice/oxblood (estilo HUD progress) */}
+          {pct !== null && (
+            <div style={{
+              display: 'flex', gap: 2,
+              minWidth: 120,
+            }}>
+              {Array.from({ length: 10 }).map((_, i) => {
+                const filled = (pct / 10) > i
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1, height: 4,
+                      background: filled
+                        ? accentColor
+                        : 'rgba(255, 255, 255, 0.08)',
+                      boxShadow: filled
+                        ? `0 0 4px ${accentColor}`
+                        : 'none',
+                    }}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1045,13 +1934,14 @@ function WindowRangeSelector({ value, onChange }: {
                   key={p.label}
                   onClick={() => { onChange(p.range); setOpen(false) }}
                   style={{
-                    background: active ? 'var(--color-accent-primary)' : 'transparent',
-                    color: active ? 'var(--color-bg-primary)' : 'var(--color-text-tertiary)',
-                    border: `1px solid ${active ? 'var(--color-accent-primary)' : 'var(--color-border)'}`,
+                    background: active ? 'var(--color-ice-soft)' : 'transparent',
+                    color: active ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
+                    border: `1px solid ${active ? 'rgba(143, 191, 211, 0.32)' : 'var(--color-border)'}`,
                     cursor: 'pointer',
                     fontSize: 10, padding: '4px 10px', borderRadius: 3,
                     letterSpacing: '0.08em', textTransform: 'uppercase',
                     fontWeight: active ? 700 : 500, transition: 'all 0.15s',
+                    boxShadow: active ? '0 0 12px rgba(143, 191, 211, 0.18)' : 'none',
                   }}
                 >
                   {p.label}
@@ -1103,14 +1993,17 @@ function WindowRangeSelector({ value, onChange }: {
               disabled={!customStart || !customEnd || customStart > customEnd}
               style={{
                 background: customStart && customEnd && customStart <= customEnd
-                  ? 'var(--color-accent-primary)' : 'var(--color-bg-tertiary)',
+                  ? 'var(--color-ice-soft)' : 'var(--color-bg-tertiary)',
                 color: customStart && customEnd && customStart <= customEnd
-                  ? 'var(--color-bg-primary)' : 'var(--color-text-muted)',
-                border: 'none',
+                  ? 'var(--color-ice-light)' : 'var(--color-text-muted)',
+                border: `1px solid ${customStart && customEnd && customStart <= customEnd
+                  ? 'rgba(143, 191, 211, 0.32)' : 'transparent'}`,
                 cursor: customStart && customEnd && customStart <= customEnd ? 'pointer' : 'not-allowed',
                 fontSize: 10, padding: '6px', borderRadius: 3,
                 fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
                 marginTop: 2,
+                boxShadow: customStart && customEnd && customStart <= customEnd
+                  ? '0 0 12px rgba(143, 191, 211, 0.18)' : 'none',
               }}
             >
               Aplicar

@@ -6,10 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hub Quest</title>
 
-    <!-- Fonts: JetBrains Mono via Google (body/labels/values) + Geist via Google (display fallback) -->
+    <!-- Fonts: Inter (body sans) + Geist (display) + JetBrains Mono (números/timers/code).
+         Body sans premium em vez de mono everywhere — mono fica só onde
+         valor numérico precisa de tabular nums (saldo, timer, parcelas). -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Cyberpunk 2077 stack — Rajdhani (display heros/headers, geometric
+         condensed) + Chakra Petch (body, semi-condensed geometric) +
+         JetBrains Mono (números/timers/HUD readouts) + Bitter (italic
+         editorial moments). Inter mantido como fallback web-safe. -->
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;400;500;600;700&family=Chakra+Petch:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Bitter:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
 
     <style>
       /* ─── PP Neue Machina ─── (paid font from Pangram Pangram).
@@ -54,17 +60,27 @@
       }
 
       :root {
-        /* ─── Font stacks ─── */
-        --font-display: 'PP Neue Machina', 'Geist', -apple-system, 'Segoe UI', sans-serif;
-        --font-body:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', 'Menlo', monospace;
+        /* ─── Font stacks — CP2077 / Hell Is Us ─── */
+        /* display: Rajdhani — fonte de signature CP2077 (geometric
+            condensed, alta tracking, sensação de "tech HUD"). Usar em
+            heros, headers, números grandes do veredito. */
+        --font-display: 'Rajdhani', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+        /* body: Chakra Petch — geometric semi-condensed, mantém o ar
+            tech sem cansar em parágrafos. Substitui Inter como default.
+            Inter fica como fallback. */
+        --font-body:    'Chakra Petch', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+        /* mono: JetBrains Mono — timers, IDs, saldos, system codes. */
         --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+        /* serif italic: Bitter — usado em momentos editoriais raros. */
+        --font-serif:   'Bitter', 'Iowan Old Style', Georgia, serif;
 
         /* ─── Palette: True Black + Chromado primary + Oxblood semantic-only ─── */
 
-        /* Backgrounds — true black warm undertone */
-        --color-bg-primary: #08080a;
-        --color-bg-secondary: #131214;
-        --color-bg-tertiary: #1c1a1d;
+        /* Backgrounds — quase-preto com hint blue muito leve. Meio termo
+           entre preto puro #08080a (buraco) e slate visível (claro demais). */
+        --color-bg-primary: #0b0d12;
+        --color-bg-secondary: #131519;
+        --color-bg-tertiary: #1c1f25;
 
         /* Text — warm soft scale */
         --color-text-primary: #ece8e3;
@@ -92,6 +108,21 @@
         --color-accent-light: #fb7185;
         --color-accent-subtle: #4c0519;
         --color-accent-vivid: #dc2626;
+
+        /* Ice — paleta dessaturada (-56 canal blue, equivalente Photoshop)
+           pra harmonizar com a paleta do app. Mantém a identidade fria
+           sem o cyan elétrico gritante. Antes muito chamativo contra
+           o resto do site dark. */
+        --color-ice: #8fbfd3;
+        --color-ice-light: #cfe2ea;
+        --color-ice-deep: #536e7a;
+        --color-ice-soft: rgba(143, 191, 211, 0.10);
+        --color-ice-glow: rgba(143, 191, 211, 0.45);
+        --color-ice-glow-strong: rgba(143, 191, 211, 0.75);
+
+        /* Fog atmosphere — também dessaturado pra coerência. */
+        --color-fog-blue: #283239;
+        --color-fog-white: #d4dadc;
 
         /* Functional */
         --color-success: #5e7a52;
@@ -129,9 +160,44 @@
         --glow-danger: 0 0 0 3px rgba(220, 38, 38, 0.28);
 
         /* ─── Shadows ─── */
-        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px rgba(0, 0, 0, 0.2);
-        --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.25);
-        --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.4), 0 16px 48px rgba(0, 0, 0, 0.35);
+        /* Multi-layer shadows pra ilusão de elevação real (estilo Linear/
+           Vercel/Apple). Cada layer faz um trabalho:
+           - contact (1-2px): sombra "tocando" o chão, dá nitidez na borda
+           - medium (8-16px): falloff médio, define a forma
+           - ambient (24-64px): difuso, dá peso atmosférico
+           Na adição, opacidades menores que 1-layer tradicional (0.15-0.25)
+           porque 3 layers somam visualmente — somar 0.4 + 0.4 + 0.4 vira
+           preto puro, perde a sutileza. */
+        /* Sombras com hint blue-black (não preto puro) — preto puro
+           parece "buraco no ecrã"; com leve azulação fica "ar denso",
+           o estilo cinematográfico de Hell Is Us. RGB ~ #0a0d12. */
+        --shadow-sm:
+          0 1px 1px rgba(8, 12, 18, 0.22),
+          0 2px 4px rgba(8, 12, 18, 0.16),
+          0 4px 8px rgba(8, 12, 18, 0.10);
+        --shadow-md:
+          0 1px 2px rgba(8, 12, 18, 0.24),
+          0 4px 8px rgba(8, 12, 18, 0.20),
+          0 12px 24px rgba(8, 12, 18, 0.16);
+        --shadow-lg:
+          0 1px 2px rgba(8, 12, 18, 0.26),
+          0 8px 16px rgba(8, 12, 18, 0.22),
+          0 24px 48px rgba(8, 12, 18, 0.20);
+        --shadow-xl:
+          0 2px 4px rgba(8, 12, 18, 0.28),
+          0 12px 24px rgba(8, 12, 18, 0.24),
+          0 40px 80px rgba(8, 12, 18, 0.22);
+
+        /* Glows direcionais — usar em estados (focus, error, success).
+           Sutis: opacidade baixa pra não parecer bling. */
+        --shadow-glow-accent: 0 0 0 1px rgba(159, 18, 57, 0.4),
+                              0 0 16px 2px rgba(159, 18, 57, 0.18);
+        --shadow-glow-success: 0 0 0 1px rgba(122, 154, 138, 0.4),
+                               0 0 14px 2px rgba(122, 154, 138, 0.16);
+
+        /* Focus ring: anel oxblood com offset transparente. */
+        --focus-ring: 0 0 0 2px var(--color-bg-primary),
+                      0 0 0 4px rgba(251, 113, 133, 0.45);
         --shadow-modal: 0 20px 80px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.4);
         --shadow-chrome-inner: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.3);
 
@@ -178,17 +244,151 @@
         --ease-emphasis: cubic-bezier(0.2, 0, 0, 1);
       }
 
-      /* ─── Default font is BODY (mono), display only via class/tag ─── */
+      /* ─── Selection color — texto selecionado em oxblood translucido.
+         Detalhe sutil: o cursor selection é o último lugar que app genérico
+         deixa default branco. Premium é highlight da brand. */
+      ::selection {
+        background: rgba(159, 18, 57, 0.4);
+        color: var(--color-text-primary);
+      }
+      ::-moz-selection {
+        background: rgba(159, 18, 57, 0.4);
+        color: var(--color-text-primary);
+      }
+
+      /* ─── Scrollbar ─── pixel-perfect angular. Hard background sólido
+         (sem rgba translúcido que dá anti-aliasing nas bordas e parece
+         arredondado). Setinhas com `shape-rendering="crispEdges"` força
+         pixel-perfect no SVG. !important everywhere pra blindar de
+         override de libs (Mantine, BlockNote, etc). */
+      ::-webkit-scrollbar {
+        width: 10px !important;
+        height: 10px !important;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0f1822 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+      }
+      ::-webkit-scrollbar-thumb {
+        /* Solid color, NÃO translúcido. RGBA translúcido em pixels
+           pequenos faz anti-aliasing nas bordas, dá impressão de
+           arredondado. Cor dim pra não gritar. */
+        background: #2b4a64 !important;
+        border-radius: 0 !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        transition: background 180ms;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #3a6a8a !important;
+      }
+      ::-webkit-scrollbar-thumb:active {
+        background: #5dd5ff !important;
+      }
+      ::-webkit-scrollbar-corner {
+        background: #0f1822 !important;
+      }
+      /* Setinhas — triângulos com `shape-rendering="crispEdges"` força
+         pixel-perfect, sem anti-aliasing suave nas bordas. Cor solid
+         #5a8aa8 (dim ice). */
+      ::-webkit-scrollbar-button {
+        background-color: #131f2c !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        height: 12px !important;
+        width: 12px !important;
+        display: block !important;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+      }
+      ::-webkit-scrollbar-button:vertical:decrement {
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'><polygon points='6,3 10,8 2,8' fill='%235a8aa8'/></svg>") !important;
+      }
+      ::-webkit-scrollbar-button:vertical:increment {
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'><polygon points='2,4 10,4 6,9' fill='%235a8aa8'/></svg>") !important;
+      }
+      ::-webkit-scrollbar-button:horizontal:decrement {
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'><polygon points='8,2 8,10 3,6' fill='%235a8aa8'/></svg>") !important;
+      }
+      ::-webkit-scrollbar-button:horizontal:increment {
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'><polygon points='4,2 9,6 4,10' fill='%235a8aa8'/></svg>") !important;
+      }
+      ::-webkit-scrollbar-button:hover {
+        background-color: #1c3044 !important;
+      }
+      ::-webkit-scrollbar-button:start:no-button,
+      ::-webkit-scrollbar-button:end:no-button,
+      ::-webkit-scrollbar-button:vertical:start:increment,
+      ::-webkit-scrollbar-button:vertical:end:decrement,
+      ::-webkit-scrollbar-button:horizontal:start:increment,
+      ::-webkit-scrollbar-button:horizontal:end:decrement {
+        display: none !important;
+      }
+      /* Firefox — solid, não translúcido */
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: #2b4a64 #0f1822;
+      }
+
+      /* ─── Focus ring global — só :focus-visible (não dispara ao clicar).
+         Fica em qualquer elemento focado por teclado: button, input, link,
+         div com tabindex. Fora os componentes que sobrescrevem manualmente. */
+      :focus { outline: none; }
+      :focus-visible {
+        outline: none;
+        box-shadow: var(--focus-ring);
+        border-radius: var(--radius-sm);
+      }
+      /* Inputs já têm border próprio — anel fica fora do border, sem
+         conflito visual. */
+      input:focus-visible, textarea:focus-visible, select:focus-visible {
+        box-shadow: var(--focus-ring), 0 0 0 1px var(--color-accent-primary) inset;
+      }
+
+      /* ─── Default font is BODY (Chakra Petch), display only via class/tag ─── */
       * {
         font-family: var(--font-body);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+        /* Chakra Petch é geometric semi-condensed — tracking neutro
+           preserva legibilidade. Antes era -0.005em (Inter), agora 0
+           pra evitar apertar demais a fonte angular. */
+        letter-spacing: 0;
+      }
+
+      /* Numéricos / timers / código mantêm mono. Aplicado ad-hoc via
+         style={{ fontFamily: 'var(--font-mono)' }} ou className="hq-mono". */
+      .hq-mono {
+        font-family: var(--font-mono);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
       }
 
       h1, h2, h3, h4, h5, h6,
       .hq-display {
         font-family: var(--font-display);
-        letter-spacing: -0.02em;
+        /* Rajdhani é tall + condensed — tracking ligeiramente expandido
+           (+0.015em) dá ar "HUD tech" sem prejudicar densidade. */
+        letter-spacing: 0.015em;
+        font-weight: 600;
+      }
+
+      /* Frases-marca, empty states, hero copy. Use em momentos onde a UI
+         "fala com você" — não em conteúdo funcional (botões, labels). */
+      .hq-serif-italic {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-weight: 400;
+        letter-spacing: 0;
       }
 
       /* Avisa o browser que nossa UI é dark — afeta widgets nativos do OS:
@@ -214,23 +414,51 @@
       /* Background — true black com vinheta + mancha sangue MUITO sutil top-left
          (vermelho como leve toque, não detalhe). Layer de noise grain por cima. */
       body {
+        /* Atmosphere "Hell Is Us" — azul turvo + halo cinzento luminoso.
+           Camadas (ordem importa, primeira fica em cima):
+           1. CORE branco-luz pequeno (o ponto-foco — luminância concentrada
+              que aparece "do nada" no meio da névoa, ancora o olho)
+           2. Halo branco-cinza médio off-center (o "portal" volumétrico
+              do poster — depth principal, ligeiramente assimétrico
+              porque simetria perfeita parece UI estática, não cinema)
+           3. Azul-turvo wide-spread central (fog cool denso de meio campo)
+           4. Azul-turvo profundo embaixo do halo (underlayer pra dar
+              "espessura" ao fog — sem isso o halo flutua sobre preto plano)
+           5. Mancha cyan elétrico top-right (whisper alien-tech)
+           6. Mancha oxblood top-left (visceral leve)
+           7. Vinheta inferior preta pesada (depth, abaixa o olho)
+           8. bg-primary preto-base */
         background:
-          radial-gradient(ellipse 70% 50% at 0% 0%, rgba(159, 18, 57, 0.04), transparent 55%),
-          radial-gradient(ellipse 100% 80% at 50% 120%, rgba(0, 0, 0, 0.5), transparent 70%),
+          radial-gradient(ellipse 12% 9% at 52% 20%, rgba(220, 224, 228, 0.14), transparent 70%),
+          radial-gradient(ellipse 38% 28% at 52% 22%, rgba(208, 214, 220, 0.10), transparent 75%),
+          radial-gradient(ellipse 85% 60% at 50% 30%, rgba(40, 50, 57, 0.18), transparent 70%),
+          radial-gradient(ellipse 55% 35% at 50% 22%, rgba(50, 62, 73, 0.12), transparent 80%),
+          radial-gradient(ellipse 60% 50% at 100% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 70% 50% at 0% 0%, rgba(159, 18, 57, 0.05), transparent 55%),
+          radial-gradient(ellipse 100% 80% at 50% 120%, rgba(0, 0, 0, 0.7), transparent 70%),
           var(--color-bg-primary);
         min-height: 100vh;
         position: relative;
       }
-      /* Grain global — overlay em TODA tela. */
+      /* Grain global — overlay em TODA tela.
+         Aumentei opacity e usei azul-acinzentado em vez de branco puro
+         no feColorMatrix — grain agora reforça a vibe "fog azulado
+         cinemática" (Hell Is Us) em vez de só ruído branco.
+         Mix-blend overlay continua: claros ficam mais claros, escuros
+         mais escuros, dá profundidade. */
       body::before {
         content: '';
         position: fixed;
         inset: 0;
         pointer-events: none;
         z-index: 1;
-        opacity: 0.085;
+        opacity: 0.15;
         mix-blend-mode: overlay;
-        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+        /* baseFrequency mais alta = grain mais fino (poeira em vez de
+           textura); numOctaves 3 = mais variedade de grão. Color matrix:
+           azul-aço acinzentado (R 0.55, G 0.62, B 0.74) — partículas com
+           tinta fria, não branco neutro. */
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='280'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0.68 0 0 0 0.52  0.78 0 0 0 0.62  0.88 0 0 0 0.74  0 0 0 0.75 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
       }
       /* Garante que conteúdo fique acima do grain global */
       #root { position: relative; z-index: 2; }
@@ -299,6 +527,21 @@
         to { opacity: 1; transform: translateX(0); }
       }
 
+      /* ─── Banner LIVE animations ───
+         Drift = scroll LINEAR seamless em uma direção (0% → -200%),
+         loop invisível porque o gradient tem background-size 200% e
+         wrap perfeito. Vibe espectro fluindo, sem ping-pong.
+         Grain = pulse de opacity respirando (sem mover, sem oscilar
+         lado-a-lado). Mantém presença orgânica. */
+      @keyframes hq-banner-drift {
+        from { background-position: 0% 50%; }
+        to   { background-position: -200% 50%; }
+      }
+      @keyframes hq-banner-pulse {
+        0%, 100% { opacity: 0.28; }
+        50%      { opacity: 0.40; }
+      }
+
       /* ─── Animation utility classes ─── */
       /* fade-in puro (só opacity) — usar em wrappers que contêm modais
          ou outros elementos com `position: fixed`. Transform num pai
@@ -325,6 +568,51 @@
       /* Stagger — set --stagger-i no item: style={{ '--stagger-i': i }} */
       .hq-stagger > * { animation-delay: calc(var(--motion-instant) * var(--stagger-i, 0)); }
 
+      /* ─── Banner live overlays ─── duas camadas absolute-positioned
+         que ficam SOB o conteúdo do banner (z-index 0). O conteúdo
+         tem position: relative inline pra ficar acima. */
+      .hq-banner-live-drift {
+        position: absolute !important;
+        inset: 0 !important;
+        pointer-events: none;
+        z-index: 1 !important;
+        /* Linear gradient com transições contínuas de cor — sem zonas
+           transparentes que criam "bordas" visíveis durante o scroll.
+           Padrão palindromo (fog → ice → fog → oxblood → fog) que
+           wrappa seamless: posição 0% e 100% têm a MESMA cor (fog),
+           então o loop -200% → 0% é invisível. */
+        background:
+          linear-gradient(
+            90deg,
+            rgba(40, 50, 57, 0.30) 0%,
+            rgba(143, 191, 211, 0.28) 25%,
+            rgba(40, 50, 57, 0.32) 50%,
+            rgba(159, 18, 57, 0.20) 75%,
+            rgba(40, 50, 57, 0.30) 100%
+          );
+        background-size: 200% 100%;
+        background-repeat: repeat;
+        animation: hq-banner-drift 28s linear infinite;
+      }
+      .hq-banner-live-grain {
+        position: absolute !important;
+        inset: 0 !important;
+        pointer-events: none;
+        z-index: 1 !important;
+        /* Grain estático com pulse de opacity (respiração). Cor ice-deep
+           dim, sem mix-blend-mode (overlay/screen amplificavam cores
+           da drift criando "barra branca" quando passava por peaks). */
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='bg'><feTurbulence type='fractalNoise' baseFrequency='1.4' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0.55 0 0 0 0  0.65 0 0 0 0  0.75 0 0 0 0  0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23bg)'/></svg>");
+        mix-blend-mode: soft-light;
+        animation: hq-banner-pulse 6s ease-in-out infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .hq-banner-live-drift,
+        .hq-banner-live-grain {
+          animation: none !important;
+        }
+      }
+
       /* ─── Indicador "ao vivo" ─── (vermelho pulsante, leve toque) */
       .hq-pulse-dot {
         width: 8px; height: 8px; border-radius: 50%;
@@ -334,6 +622,36 @@
       .hq-pulse-dot--success {
         background: var(--color-success);
         animation-name: none;
+      }
+
+      /* ─── Pulse square (HUD CP2077) ─── quadrado angular pulsante,
+         substitui o dot redondo pra dar a vibe "indicator panel".
+         Sombra também quadrada. Live = oxblood; pausado = success. */
+      @keyframes hq-pulse-square {
+        0%, 100% {
+          opacity: 1;
+          box-shadow: 0 0 0 0 rgba(159, 18, 57, 0.55), 0 0 8px rgba(159, 18, 57, 0.45);
+        }
+        70% {
+          opacity: 0.65;
+          box-shadow: 0 0 0 6px rgba(159, 18, 57, 0), 0 0 4px rgba(159, 18, 57, 0.25);
+        }
+      }
+      .hq-pulse-square {
+        width: 9px;
+        height: 9px;
+        background: var(--color-accent-primary);
+        animation: hq-pulse-square 1.6s var(--ease-smooth) infinite;
+        flex-shrink: 0;
+        /* Inset hairline pra dar profundidade "elemento HUD" */
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+      }
+      .hq-pulse-square--success {
+        background: var(--color-success);
+        animation: none;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.15),
+          0 0 6px rgba(122, 154, 138, 0.5);
       }
 
       /* ─── Glass surfaces ─── */
@@ -373,12 +691,44 @@
          data-finance-private="true" (toggle do olho na tab bar), todos os
          valores ficam borrados + dessaturados (sem deixar dica de cor). */
       .hq-money {
+        /* Sempre mono — números financeiros pedem tabular-nums pra alinhar
+           visualmente. Com body sans Inter, sem essa garantia, valores
+           BRL ficariam em sans e largura variável (ruim em colunas). */
+        font-family: var(--font-mono);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0;
         transition: filter 220ms cubic-bezier(0.3, 0, 0.7, 1);
         will-change: filter;
       }
       [data-finance-private="true"] .hq-money {
         filter: blur(8px) saturate(40%);
         user-select: none;
+      }
+
+      /* ─── Skeleton loaders ─── */
+      /* Bloco shimmer pra placeholder enquanto carrega — substitui texto
+         "Carregando…" por silhueta animada (sensação premium, não-bloqueante
+         visualmente). Usa hq-shimmer keyframe que já existe. */
+      .hq-skeleton {
+        position: relative;
+        overflow: hidden;
+        background: var(--glass-bg);
+        border-radius: var(--radius-sm);
+        isolation: isolate;
+      }
+      .hq-skeleton::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(236, 232, 227, 0.04) 50%,
+          transparent 100%
+        );
+        background-size: 200% 100%;
+        animation: hq-shimmer 1.6s ease-in-out infinite;
+        pointer-events: none;
       }
 
       /* ─── Grain layer pra cards/modais (overlay localizado) ─── */
@@ -414,6 +764,43 @@
         pointer-events: none;
       }
 
+      /* Hairline ICE elétrica — substitui o oxblood hairline em hero
+         cards de finance/saldos. Vibe Hell Is Us (energia synthetic
+         passando pela linha). Loop 10s, mais lento que oxblood pra
+         coexistir sem competir. */
+      .hq-hairline-ice {
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--color-ice-deep),
+          var(--color-ice-light),
+          var(--color-ice-deep),
+          transparent
+        );
+        background-size: 200% 100%;
+        animation: hq-shimmer 10s ease-in-out infinite;
+        opacity: 0.7;
+      }
+
+      /* Hairline oxblood com shimmer animado — usar em hero moments
+         (modal headers, card de saldo). Loop bem lento (8s) pra ser sutil
+         vs distrativo. Linear/Vercel usam essa técnica em separators. */
+      .hq-hairline-oxblood {
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--color-accent-primary),
+          rgba(251, 113, 133, 0.6),
+          var(--color-accent-primary),
+          transparent
+        );
+        background-size: 200% 100%;
+        animation: hq-shimmer 8s ease-in-out infinite;
+        opacity: 0.6;
+      }
+
       /* Chrome text gradient (pra hero numbers) */
       .hq-chrome-text {
         background: var(--chrome-text);
@@ -421,6 +808,181 @@
         background-clip: text;
         -webkit-text-fill-color: transparent;
         color: transparent;
+      }
+
+      /* ─── Cyberpunk 2077 — geometric & HUD utilities ─────────────────
+         Vibe CP2077 sem virar cosplay: clip-paths angulares, brackets
+         de canto, labels técnicos `//`, indicador angular ativo, scanlines
+         sutis. Cores ice/oxblood/fog (não amarelo/vermelho do CP). */
+
+      /* Cantos cortados angulares — CP2077 raramente usa border-radius
+         em cards; quase tudo tem pelo menos um chamfer diagonal. Default
+         CHAMFER = 14px (depth perceptível, não exagerado). Compõe com
+         clip-path inline pra cantos custom em casos especiais. */
+      .hq-chamfer-tr {
+        clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+      }
+      .hq-chamfer-bl {
+        clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+      }
+      /* Diagonais opostas — assinatura CP2077 panel */
+      .hq-chamfer-cross {
+        clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+      }
+      /* Tag/pill angular — paralelogramo cortado, ícone de "data tag" */
+      .hq-tag-angular {
+        clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+      }
+
+      /* Brackets de canto — L-marks nos 4 cantos via box-shadow trick.
+         Usar em elementos hero (veredito, saldo, banner). Cor herda
+         currentColor → controle via `color` no parent. Wrapper deve
+         ter position: relative. */
+      .hq-brackets {
+        position: relative;
+      }
+      .hq-brackets::before,
+      .hq-brackets::after {
+        content: '';
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        pointer-events: none;
+        opacity: 0.85;
+      }
+      .hq-brackets::before {
+        top: -2px;
+        left: -2px;
+        border-top: 1px solid currentColor;
+        border-left: 1px solid currentColor;
+      }
+      .hq-brackets::after {
+        bottom: -2px;
+        right: -2px;
+        border-bottom: 1px solid currentColor;
+        border-right: 1px solid currentColor;
+      }
+      /* Variante 4-corner pra hero stage frames */
+      .hq-brackets-full {
+        position: relative;
+      }
+      .hq-brackets-full::before,
+      .hq-brackets-full::after {
+        content: '';
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        pointer-events: none;
+      }
+      .hq-brackets-full::before {
+        top: -1px;
+        left: -1px;
+        border-top: 1px solid var(--color-ice);
+        border-left: 1px solid var(--color-ice);
+        box-shadow: -2px -2px 8px rgba(143, 191, 211, 0.25);
+      }
+      .hq-brackets-full::after {
+        bottom: -1px;
+        right: -1px;
+        border-bottom: 1px solid var(--color-ice);
+        border-right: 1px solid var(--color-ice);
+        box-shadow: 2px 2px 8px rgba(143, 191, 211, 0.25);
+      }
+
+      /* Technical label — labels com prefixo `//` em mono uppercase.
+         Usado em section headers, status indicators, footer system info.
+         Vibe HUD CP2077: tudo é informação categorizada com namespace. */
+      .hq-tech-label {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--color-text-tertiary);
+      }
+      .hq-tech-label::before {
+        content: '// ';
+        color: var(--color-ice);
+        opacity: 0.85;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+      /* Sub-label sem prefixo — "ID#0042" style */
+      .hq-tech-id {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.15em;
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+      }
+
+      /* Scanlines overlay — listras horizontais translúcidas, vibe CRT.
+         Default usa ice tint pra coordenar com o resto. Aplicar em
+         elementos com position: relative + content layered acima.
+         Z-index 1 garante que scanlines fiquem ATRÁS do conteúdo
+         mas em cima do background. */
+      .hq-scanlines::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image: repeating-linear-gradient(
+          0deg,
+          transparent 0,
+          transparent 2px,
+          rgba(143, 191, 211, 0.04) 2px,
+          rgba(143, 191, 211, 0.04) 3px
+        );
+        z-index: 1;
+      }
+
+      /* Active indicator angular — chevron sólido apontando pra direita,
+         substitui o dot circular nas listas. Forma triangular cortada
+         via clip-path, fica como "marca de seleção HUD". */
+      .hq-active-chevron {
+        width: 8px;
+        height: 12px;
+        background: var(--color-ice);
+        clip-path: polygon(0 0, 100% 50%, 0 100%, 0 70%, 60% 50%, 0 30%);
+        box-shadow: 0 0 8px var(--color-ice-glow);
+        flex-shrink: 0;
+      }
+
+      /* Side rail — barra vertical fina ice-glow no left edge de
+         elementos ativos. Combina com chamfer-bl pra dar a vibe
+         "elemento conectado por trilho HUD". */
+      .hq-rail-left::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8%;
+        bottom: 8%;
+        width: 2px;
+        background: linear-gradient(
+          180deg,
+          transparent,
+          var(--color-ice) 30%,
+          var(--color-ice-light) 50%,
+          var(--color-ice) 70%,
+          transparent
+        );
+        box-shadow: 0 0 8px var(--color-ice-glow);
+        pointer-events: none;
+      }
+
+      /* Glitch hover — pequeno deslocamento RGB-style ao passar mouse.
+         CP2077 tem glitches mais pesados em transições; aqui é leve
+         pra não cansar em app de produtividade. */
+      @keyframes hq-glitch-mini {
+        0%, 100% { transform: translate(0, 0); }
+        20% { transform: translate(-1px, 0); }
+        40% { transform: translate(1px, -0.5px); }
+        60% { transform: translate(-0.5px, 0.5px); }
+        80% { transform: translate(0.5px, 0); }
+      }
+      .hq-glitch-on-hover:hover {
+        animation: hq-glitch-mini 220ms steps(5, end);
       }
 
       /* ─── Buttons ─── */
@@ -502,10 +1064,14 @@
       }
 
       /* Icon buttons */
+      /* CP2077 cyber button — square corners, bottom-right chamfer 6px,
+         ice border (transparente até hover), label spacing expandido.
+         Substitui o radius arredondado anterior. Aplica em todo o app. */
       .hq-icon-btn {
-        background: transparent;
-        border: 1px solid transparent;
-        border-radius: var(--radius-sm);
+        background: rgba(8, 12, 18, 0.55);
+        border: 1px solid var(--color-border);
+        border-radius: 0;
+        clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
         cursor: pointer;
         color: var(--color-text-tertiary);
         padding: var(--space-2);
@@ -515,22 +1081,32 @@
         align-items: center;
         justify-content: center;
         font-family: var(--font-body);
+        letter-spacing: 0.05em;
+        transition:
+          background var(--motion-fast) var(--ease-smooth),
+          border-color var(--motion-fast) var(--ease-smooth),
+          color var(--motion-fast) var(--ease-smooth),
+          box-shadow var(--motion-fast) var(--ease-smooth);
       }
       .hq-icon-btn:not(:disabled):hover {
-        background: var(--glass-bg-hover);
-        border-color: var(--color-border-chrome);
-        color: var(--color-text-primary);
-        transform: translateY(-1px);
+        background: var(--color-ice-soft);
+        border-color: rgba(143, 191, 211, 0.45);
+        color: var(--color-ice-light);
+        box-shadow: 0 0 14px rgba(143, 191, 211, 0.18);
       }
       .hq-icon-btn--danger:not(:disabled):hover {
         background: var(--color-danger-bg);
         border-color: var(--color-danger-border);
         color: var(--color-error);
+        box-shadow: 0 0 14px rgba(220, 38, 38, 0.20);
       }
+      /* Accent agora oxblood (era chrome) — semanticamente "commit/finalize"
+         no banner = vibe visceral CP2077. */
       .hq-icon-btn--accent:not(:disabled):hover {
-        background: rgba(201, 204, 210, 0.06);
-        border-color: var(--color-border-chrome);
-        color: var(--color-text-primary);
+        background: rgba(159, 18, 57, 0.12);
+        border-color: rgba(159, 18, 57, 0.50);
+        color: var(--color-accent-light);
+        box-shadow: 0 0 14px rgba(159, 18, 57, 0.22);
       }
       .hq-icon-btn-bare {
         background: none;
@@ -543,7 +1119,7 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: var(--radius-sm);
+        border-radius: 0;
         font-family: var(--font-body);
       }
       .hq-icon-btn-bare:hover {

@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Sun, CalendarDays, Crosshair, Folders, Archive, Repeat, Lightbulb, LayoutDashboard,
-  ListChecks, Wallet, PanelLeftClose, PanelLeftOpen, Pause, Play, CheckCircle2,
+  ChevronsLeft, ChevronsRight, Pause, Play, CheckCircle2,
 } from 'lucide-react'
+/* Phosphor duotone — substitui os Lucide simples do sidebar pra dar
+   peso visual + suporte a duotone (corpo cinza + accent ice quando
+   ativo). Vibe Hell Is Us / Cron Calendar / Things 3. */
+import {
+  SquaresFour, SunHorizon, CalendarBlank, Folders as PFolders, Target,
+  CheckSquareOffset, ArrowsClockwise, Lightbulb as LightbulbDuo,
+  Vault, Archive as PArchive,
+} from '@phosphor-icons/react'
 import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import {
-  fetchQuests, fetchProjects, fetchAreas, fetchProfile, fetchActiveSession,
+  fetchQuests, fetchProjects, fetchAreas, fetchProfile, fetchActiveSession, fetchTasks,
   patchQuest, patchProject,
   fetchSessions, pauseSession, resumeSession,
   fetchTaskSessions, pauseTaskSession, resumeTaskSession, stopTaskSession,
   fetchRoutineSessions, pauseRoutineSession, resumeRoutineSession, stopRoutineSession,
   reportApiError,
 } from './api'
-import type { Project, Quest, Area, ActiveSession, Profile } from './types'
+import type { Project, Quest, Area, ActiveSession, Profile, Task } from './types'
 import { parseIsoAsUtc, sumClosedSessionsSeconds, formatHMS } from './utils/datetime'
 import { SessionHistoryModal } from './components/SessionHistoryModal'
 import { DashboardView } from './pages/DashboardPage'
@@ -33,17 +40,55 @@ import { DividasPage } from './pages/finance/DividasPage'
 import { FreelasPage } from './pages/finance/FreelasPage'
 import { CategoriasPage } from './pages/finance/CategoriasPage'
 
-const NAV: { path: string; label: string; Icon: React.FC<{ size?: number; strokeWidth?: number }> }[] = [
-  { path: '/dashboard',   label: 'Dashboard',       Icon: LayoutDashboard },
-  { path: '/dia',         label: 'Dia',             Icon: Sun             },
-  { path: '/calendario',  label: 'Calendário',      Icon: CalendarDays    },
-  { path: '/quests',      label: 'Quests',          Icon: Crosshair       },
-  { path: '/areas',       label: 'Áreas',           Icon: Folders         },
-  { path: '/rotinas',     label: 'Rotinas',         Icon: Repeat          },
-  { path: '/tarefas',     label: 'Tarefas',         Icon: ListChecks      },
-  { path: '/hub-finance', label: 'Finance',         Icon: Wallet          },
-  { path: '/micro-dump',  label: 'Dump',            Icon: Lightbulb       },
-  { path: '/arquivados',  label: 'Arquivados',      Icon: Archive         },
+/* Phosphor accept "size" + "weight" + "color" + "duotone-color".
+   Nosso wrapper usa weight="duotone" (default) + size + style pra glow. */
+type IconProps = { size?: number; weight?: 'thin' | 'light' | 'regular' | 'bold' | 'duotone' | 'fill'; color?: string; style?: React.CSSProperties }
+type NavItem = { path: string; label: string; Icon: React.FC<IconProps> }
+type NavSection = { label: string; items: NavItem[] }
+
+/**
+ * Sidebar agrupado em 4 seções pra dar respiro visual + organizar
+ * navegação por intenção. MAIN = orientação/visão; WORK = produção;
+ * FINANCE = módulo dedicado; ARCHIVE = histórico.
+ *
+ * Eyebrow label só aparece quando sidebar está expandido — colapsado
+ * mostra os ícones com pequeno gap entre seções.
+ *
+ * Ícones via @phosphor-icons/react no peso "duotone" — corpo translúcido
+ * + traço sólido cria 2-tone. Quando ativo, o "duotone" interior fica em
+ * ice glow → efeito alien-tech (vibe Hell Is Us).
+ */
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: 'Main',
+    items: [
+      { path: '/dashboard',   label: 'Dashboard',   Icon: SquaresFour as React.FC<IconProps> },
+      { path: '/dia',         label: 'Dia',         Icon: SunHorizon as React.FC<IconProps> },
+      { path: '/calendario',  label: 'Calendário',  Icon: CalendarBlank as React.FC<IconProps> },
+      { path: '/areas',       label: 'Áreas',       Icon: PFolders as React.FC<IconProps> },
+    ],
+  },
+  {
+    label: 'Work',
+    items: [
+      { path: '/quests',      label: 'Quests',      Icon: Target as React.FC<IconProps> },
+      { path: '/tarefas',     label: 'Tarefas',     Icon: CheckSquareOffset as React.FC<IconProps> },
+      { path: '/rotinas',     label: 'Rotinas',     Icon: ArrowsClockwise as React.FC<IconProps> },
+      { path: '/micro-dump',  label: 'Dump',        Icon: LightbulbDuo as React.FC<IconProps> },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { path: '/hub-finance', label: 'Hub Finance', Icon: Vault as React.FC<IconProps> },
+    ],
+  },
+  {
+    label: 'Archive',
+    items: [
+      { path: '/arquivados',  label: 'Arquivados',  Icon: PArchive as React.FC<IconProps> },
+    ],
+  },
 ]
 
 export default function App() {
@@ -51,6 +96,7 @@ export default function App() {
   const location = useLocation()
   const [projects, setProjects] = useState<Project[]>([])
   const [quests, setQuests] = useState<Quest[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [areas, setAreas] = useState<Area[]>([])
   const [profile, setProfile] = useState<Profile>({ name: '', role: '', avatar_url: '' })
   const [archivedIdeas, setArchivedIdeas] = useState<Array<{ id: string; title: string; created_at: string }>>(() => {
@@ -141,6 +187,7 @@ export default function App() {
     refreshActiveSession()
     fetchQuests().then(setQuests).catch(err => reportApiError('App', err))
     fetchProjects().then(setProjects).catch(err => reportApiError('App', err))
+    fetchTasks().then(setTasks).catch(err => reportApiError('App', err))
   }, [sessionUpdateTrigger])
 
   // Mantém o banner sincronizado com a sessão ativa do backend.
@@ -310,8 +357,10 @@ export default function App() {
   useEffect(() => {
     fetchQuests().then(setQuests).catch(err => reportApiError('App', err))
     fetchProjects().then(setProjects).catch(err => reportApiError('App', err))
+    fetchTasks().then(setTasks).catch(err => reportApiError('App', err))
     fetchAreas().then(setAreas).catch(err => reportApiError('App', err))
     fetchProfile().then(setProfile).catch(err => reportApiError('App', err))
+    fetchTasks().then(setTasks).catch(err => reportApiError('App', err))
 
     // Inject CSS animations
     const style = document.createElement('style')
@@ -355,6 +404,26 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [location.pathname, navigate])
 
+  // Contadores ao vivo pros badges do sidebar — sinal de "produto vivo"
+  // (Linear/Cron mostram # de unread/overdue ao lado dos itens). Apenas
+  // overdue de Tarefas (urgência real) e ativas de Quests (volume geral).
+  const sidebarBadges = (() => {
+    const now = new Date()
+    const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const overdueTasks = tasks.filter(t =>
+      !t.done && t.scheduled_date && t.scheduled_date < todayYmd
+    ).length
+    const activeQuests = quests.filter(q =>
+      q.status !== 'done' && q.status !== 'cancelled'
+    ).length
+    const archived = projects.filter(p => p.archived_at).length
+    return {
+      '/tarefas': { count: overdueTasks, urgent: true },
+      '/quests': { count: activeQuests, urgent: false },
+      '/arquivados': { count: archived, urgent: false },
+    } as Record<string, { count: number; urgent: boolean }>
+  })()
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
       <aside
@@ -366,94 +435,208 @@ export default function App() {
           borderRight: '1px solid var(--color-border)',
           padding: 'var(--space-4) 0 var(--space-3)',
           display: 'flex', flexDirection: 'column',
-          background: 'rgba(8, 8, 10, 0.55)',
-          backdropFilter: 'blur(24px) saturate(140%)',
-          WebkitBackdropFilter: 'blur(24px) saturate(140%)',
+          background: 'rgba(8, 12, 18, 0.62)',
+          backdropFilter: 'blur(28px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
           transition: 'width var(--motion-base) var(--ease-emphasis)',
           height: '100vh', overflowY: 'auto', overflowX: 'hidden',
           zIndex: 100, boxSizing: 'border-box',
         }}
       >
-        {/* Header: logo + toggle inline */}
+        {/* Header: monograma [HQ] cyber + caption tech + toggle angular */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
-          padding: sidebarCollapsed ? '0 var(--space-3)' : '0 var(--space-3) 0 var(--space-4)',
-          marginBottom: 'var(--space-6)',
+          padding: sidebarCollapsed ? '0 var(--space-3)' : '0 var(--space-3) 0 var(--space-3)',
+          marginBottom: sidebarCollapsed ? 'var(--space-4)' : 'var(--space-4)',
           gap: 'var(--space-2)',
-          minHeight: 36,
+          minHeight: 40,
         }}>
-          {sidebarCollapsed ? (
-            // Collapsed: só o toggle centralizado, logo some (a aside fica icon-only)
-            <button
-              onClick={() => setSidebarCollapsed(false)}
-              className="hq-icon-btn-bare"
-              title="Expandir menu"
-              aria-label="Expandir menu"
-              style={{ margin: '0 auto' }}
-            >
-              <PanelLeftOpen size={16} strokeWidth={1.8} />
-            </button>
-          ) : (
+          {/* MONOGRAMA HQ — só tipografia cyber, sem frame envolta.
+              Display font Rajdhani uppercase com text-shadow ice glow. */}
+          <div
+            aria-label="Hub Quest"
+            style={{
+              flexShrink: 0,
+              fontFamily: 'var(--font-display)',
+              fontSize: 22,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              color: 'var(--color-ice-light)',
+              textShadow: '0 0 12px var(--color-ice-glow)',
+              lineHeight: 1,
+              padding: sidebarCollapsed ? 0 : '0 4px',
+            }}
+          >
+            HQ
+          </div>
+
+          {!sidebarCollapsed && (
             <>
-              <img
-                src="/hub-quest-mark.svg"
-                alt=""
-                style={{ width: 28, height: 28, opacity: 0.9, flexShrink: 0 }}
-              />
-              <span style={{
-                fontSize: 'var(--text-xs)',
-                letterSpacing: '0.22em',
-                textTransform: 'uppercase',
-                color: 'var(--color-text-secondary)',
-                fontWeight: 700,
-                flex: 1,
+              {/* Caption tech: HUB.QUEST + sub-id */}
+              <div style={{
+                flex: 1, minWidth: 0,
+                display: 'flex', flexDirection: 'column', gap: 1,
               }}>
-                HUB QUEST
-              </span>
+                <span style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 11,
+                  letterSpacing: '0.22em',
+                  textTransform: 'uppercase',
+                  color: 'var(--color-ice-light)',
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}>
+                  HUB.QUEST
+                </span>
+                <span
+                  className="hq-tech-id"
+                  style={{ fontSize: 8, color: 'var(--color-text-muted)', lineHeight: 1 }}
+                >
+                  TACTICAL.SYS
+                </span>
+              </div>
+              {/* Toggle collapse — botão angular CP2077 com chevron duplo */}
               <button
                 onClick={() => setSidebarCollapsed(true)}
-                className="hq-icon-btn-bare"
                 title="Recolher menu"
                 aria-label="Recolher menu"
+                style={{
+                  width: 26, height: 26,
+                  background: 'rgba(8, 12, 18, 0.6)',
+                  border: '1px solid var(--color-border)',
+                  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                  cursor: 'pointer',
+                  color: 'var(--color-text-tertiary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background var(--motion-fast) var(--ease-smooth), border-color var(--motion-fast) var(--ease-smooth), color var(--motion-fast) var(--ease-smooth)',
+                  borderRadius: 0,
+                  flexShrink: 0,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'var(--color-ice-soft)'
+                  e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
+                  e.currentTarget.style.color = 'var(--color-ice-light)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(8, 12, 18, 0.6)'
+                  e.currentTarget.style.borderColor = 'var(--color-border)'
+                  e.currentTarget.style.color = 'var(--color-text-tertiary)'
+                }}
               >
-                <PanelLeftClose size={14} strokeWidth={1.8} />
+                <ChevronsLeft size={14} strokeWidth={2} />
               </button>
             </>
           )}
+
+          {sidebarCollapsed && (
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              title="Expandir menu"
+              aria-label="Expandir menu"
+              style={{
+                position: 'absolute',
+                left: 'calc(100% - 13px)',
+                top: 26,
+                width: 26, height: 26,
+                background: 'rgba(8, 12, 18, 0.92)',
+                border: '1px solid var(--color-ice-deep)',
+                clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                cursor: 'pointer',
+                color: 'var(--color-ice-light)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'box-shadow var(--motion-fast) var(--ease-smooth)',
+                borderRadius: 0,
+                zIndex: 101,
+                boxShadow: '0 0 8px rgba(143, 191, 211, 0.20)',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.boxShadow = '0 0 14px rgba(143, 191, 211, 0.45)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.boxShadow = '0 0 8px rgba(143, 191, 211, 0.20)'
+              }}
+            >
+              <ChevronsRight size={14} strokeWidth={2} />
+            </button>
+          )}
         </div>
 
-        {/* Nav items — com stagger entrance */}
-        <nav className="hq-stagger" style={{
+        {/* User chip removido — perfil acessível pelo header do Dashboard,
+            sidebar fica focada em navegação pura (vibe HUD CP2077). */}
+
+        {/* Nav: seções (Main/Work/Finance/Archive) com eyebrow label
+            quando expandido + items com pill oxblood ativa + dot indicator
+            esquerda + hover dois-tempos. Substitui a antiga lista plana. */}
+        <nav style={{
           display: 'flex',
           flexDirection: 'column',
-          gap: 2,
+          gap: sidebarCollapsed ? 'var(--space-3)' : 'var(--space-4)',
           padding: '0 var(--space-2)',
         }}>
-          {NAV.map((n, i) => (
+          {NAV_SECTIONS.map(section => (
+            <div key={section.label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {!sidebarCollapsed && (
+                <div
+                  className="hq-tech-label"
+                  style={{
+                    padding: '6px 12px 4px',
+                    color: 'var(--color-text-muted)',
+                  }}
+                >
+                  {section.label}
+                </div>
+              )}
+          {section.items.map(n => (
             <NavLink
               key={n.path}
               to={n.path}
               title={sidebarCollapsed ? n.label : undefined}
-              className="hq-animate-fade-up"
               style={({ isActive }) => ({
                 position: 'relative',
-                background: isActive ? 'var(--glass-bg-elevated)' : 'transparent',
-                border: '1px solid transparent',
+                /* Active item em estilo HUD CP2077: edge-rail ice esquerda
+                   + chamfer-bl angular + ice background sutil. Sem radius
+                   suave — formas angulares dão o ar "data row de painel". */
+                background: isActive
+                  ? 'var(--color-ice-soft)'
+                  : 'transparent',
+                borderTop: isActive
+                  ? '1px solid rgba(143, 191, 211, 0.18)'
+                  : '1px solid transparent',
+                borderRight: isActive
+                  ? '1px solid rgba(143, 191, 211, 0.18)'
+                  : '1px solid transparent',
+                borderBottom: isActive
+                  ? '1px solid rgba(143, 191, 211, 0.18)'
+                  : '1px solid transparent',
+                borderLeft: isActive
+                  ? '2px solid var(--color-ice)'
+                  : '2px solid transparent',
                 cursor: 'pointer',
                 textAlign: 'left',
                 padding: sidebarCollapsed ? '10px' : '9px 12px',
-                color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                color: isActive
+                  ? 'var(--color-ice-light)'
+                  : 'var(--color-text-tertiary)',
                 fontSize: 'var(--text-sm)',
                 fontWeight: isActive ? 600 : 500,
-                borderRadius: 'var(--radius-sm)',
+                borderRadius: 0,
+                clipPath: isActive
+                  ? 'polygon(0 0, 100% 0, 100% 100%, 10px 100%, 0 calc(100% - 10px))'
+                  : undefined,
                 transition: 'background var(--motion-fast) var(--ease-smooth), color var(--motion-fast) var(--ease-smooth), border-color var(--motion-fast) var(--ease-smooth)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: sidebarCollapsed ? 0 : 'var(--space-3)',
                 justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
                 textDecoration: 'none',
-                ['--stagger-i' as any]: i,
+                boxShadow: isActive
+                  ? 'inset 8px 0 24px -8px rgba(143, 191, 211, 0.20), 0 0 16px -4px rgba(143, 191, 211, 0.18)'
+                  : 'none',
               })}
               onMouseEnter={e => {
                 if (!e.currentTarget.classList.contains('active')) {
@@ -470,93 +653,206 @@ export default function App() {
             >
               {({ isActive }) => (
                 <>
-                  {/* Indicator: chrome shimmer sutil quando ativo (não mais barra vermelha) */}
-                  {isActive && (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        position: 'absolute',
-                        left: -1, top: '22%', bottom: '22%',
-                        width: 2,
-                        background: 'var(--chrome-grad)',
-                        borderRadius: 'var(--radius-pill)',
-                        boxShadow: '0 0 8px rgba(201, 204, 210, 0.4)',
-                      }}
-                    />
-                  )}
+                  {/* Active marker: edge-rail esquerdo (border-left 2px ice)
+                      + chamfer-bl no NavLink já marcam claramente o item
+                      selecionado — sem dot/chevron extra pra evitar ruído. */}
                   <n.Icon
-                    size={17}
-                    strokeWidth={isActive ? 1.6 : 1.25}
+                    size={18}
+                    weight={isActive ? 'duotone' : 'duotone'}
+                    color={isActive ? 'var(--color-ice-light)' : 'currentColor'}
+                    style={isActive ? {
+                      filter: 'drop-shadow(0 0 6px var(--color-ice-glow-strong))',
+                    } : undefined}
                   />
                   {!sidebarCollapsed && (
                     <span style={{ flex: 1 }}>{n.label}</span>
+                  )}
+                  {/* Badge: contador ao vivo. Urgente = oxblood, neutro =
+                      glass. Some quando 0. */}
+                  {!sidebarCollapsed && sidebarBadges[n.path]?.count > 0 && (
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '2px 6px',
+                      borderRadius: 999,
+                      minWidth: 20,
+                      textAlign: 'center',
+                      letterSpacing: 0,
+                      background: sidebarBadges[n.path].urgent
+                        ? 'rgba(159, 18, 57, 0.25)'
+                        : 'var(--glass-bg-elevated)',
+                      color: sidebarBadges[n.path].urgent
+                        ? 'var(--color-accent-light)'
+                        : 'var(--color-text-tertiary)',
+                      border: sidebarBadges[n.path].urgent
+                        ? '1px solid rgba(159, 18, 57, 0.4)'
+                        : '1px solid var(--color-border)',
+                    }}>
+                      {sidebarBadges[n.path].count}
+                    </span>
                   )}
                 </>
               )}
             </NavLink>
           ))}
+            </div>
+          ))}
         </nav>
 
-        {/* Spacer pra empurrar versão pro fim — bottom mark sutil */}
+        {/* Spacer pra empurrar versão pro fim */}
         <div style={{ flex: 1 }} />
-        {!sidebarCollapsed && (
-          <div style={{
-            padding: '0 var(--space-4)',
-            fontSize: 9,
-            color: 'var(--color-text-muted)',
-            letterSpacing: '0.1em',
-            opacity: 0.6,
-          }}>
-            v0.2.0
-          </div>
-        )}
+        {/* Footer: HUD readout CP2077 — status conn + versão + system tag.
+            No collapsed só o dot visível (modo compacto). */}
+        <div style={{
+          padding: sidebarCollapsed ? '0 0 0 0' : 'var(--space-3) var(--space-3) var(--space-2)',
+          marginTop: 'var(--space-3)',
+          borderTop: sidebarCollapsed ? 'none' : '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: sidebarCollapsed ? 'center' : 'space-between',
+          gap: 'var(--space-2)',
+        }}>
+          {sidebarCollapsed ? (
+            <span
+              aria-hidden="true"
+              title="Backend conectado · v0.5.0"
+              style={{
+                width: 6, height: 6,
+                background: 'var(--color-success)',
+                boxShadow: '0 0 6px rgba(122, 154, 138, 0.7), 0 0 0 1px rgba(122, 154, 138, 0.3)',
+                flexShrink: 0,
+              }}
+            />
+          ) : (
+            <>
+              <span
+                title="Backend conectado"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 5, height: 5,
+                    background: 'var(--color-success)',
+                    boxShadow: '0 0 4px rgba(122, 154, 138, 0.7)',
+                    flexShrink: 0,
+                  }}
+                />
+                CONN.OK
+              </span>
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                v0.5.1
+              </span>
+            </>
+          )}
+        </div>
       </aside>
 
       {isHydrated && activeSession && (
         <div
-          className="hq-animate-fade-down hq-grain hq-chrome-hairline"
+          className={`hq-animate-fade-down hq-grain hq-chrome-hairline${activeSession.is_active ? ' hq-scanlines' : ''}`}
           style={{
             position: 'fixed', top: 0,
             left: sidebarCollapsed ? 72 : 220,
             right: 0,
             height: 64,
-            background: 'rgba(8, 8, 10, 0.65)',
-            backdropFilter: 'blur(20px) saturate(140%)',
-            WebkitBackdropFilter: 'blur(20px) saturate(140%)',
-            borderBottom: '1px solid var(--color-border)',
+            // Atmosphere "Hell Is Us" — fog azulado por trás do glass.
+            // Quando live, halo ice cyan top-right (alien-tech ligado).
+            // Quando pausado, fog frio sem glow (estado dormente).
+            background: activeSession.is_active
+              ? `radial-gradient(ellipse 40% 100% at 100% 0%, rgba(143, 191, 211, 0.06), transparent 70%),
+                 radial-gradient(ellipse 60% 100% at 50% 100%, rgba(40, 50, 57, 0.20), transparent 75%),
+                 rgba(8, 10, 14, 0.7)`
+              : `radial-gradient(ellipse 60% 100% at 50% 100%, rgba(40, 50, 57, 0.16), transparent 75%),
+                 rgba(8, 10, 14, 0.7)`,
+            backdropFilter: 'blur(24px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(24px) saturate(160%)',
+            // Borda inferior com gradient ice quando live (HUD timer ligado),
+            // border neutra quando pausado.
+            borderBottom: activeSession.is_active
+              ? '1px solid transparent'
+              : '1px solid var(--color-border)',
             display: 'flex', alignItems: 'center',
             gap: 'var(--space-5)',
             padding: '0 var(--space-6)',
             transition: 'left var(--motion-base) var(--ease-emphasis)',
             zIndex: 99,
+            boxShadow: activeSession.is_active
+              ? 'inset 0 -1px 0 rgba(143, 191, 211, 0.24), 0 0 32px rgba(143, 191, 211, 0.04)'
+              : 'inset 0 -1px 0 var(--color-border)',
+            overflow: 'hidden',
           }}
         >
-          {/* Status dot pulsante */}
+          {/* Live-only animated overlays — gradient drift slow + grain
+              shake, ambos abaixo do conteúdo (z-index 0). Não aparecem
+              quando paused (HUD adormecido). */}
+          {activeSession.is_active && (
+            <>
+              <div className="hq-banner-live-drift" aria-hidden="true" />
+              <div className="hq-banner-live-grain" aria-hidden="true" />
+            </>
+          )}
+
+          {/* Status pulsante — square angular CP2077 (substitui dot redondo).
+              Live = oxblood pulsando; pausado = verde estático. */}
           <div
-            className={activeSession.is_active ? 'hq-pulse-dot' : 'hq-pulse-dot hq-pulse-dot--success'}
+            className={activeSession.is_active ? 'hq-pulse-square' : 'hq-pulse-square hq-pulse-square--success'}
             aria-hidden="true"
+            style={{ position: 'relative', zIndex: 1 }}
           />
 
-          {/* Session info — compacto */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Session info — compacto, estilo HUD CP2077 */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, position: 'relative', zIndex: 1 }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
-              fontSize: 'var(--text-xs)',
+              fontSize: 9,
+              fontFamily: 'var(--font-mono)',
               color: activeSession.is_active ? 'var(--color-accent-light)' : 'var(--color-success-light)',
-              fontWeight: 600,
-              letterSpacing: '0.12em',
+              fontWeight: 700,
+              letterSpacing: '0.22em',
               textTransform: 'uppercase',
             }}>
-              <span>{activeSession.is_active ? 'ao vivo' : 'pausado'}</span>
-              <span style={{
-                fontSize: 9, padding: '1px 6px',
-                borderRadius: 'var(--radius-pill)',
-                background: 'var(--glass-bg)',
-                color: 'var(--color-text-tertiary)',
-                border: '1px solid var(--color-border)',
-                letterSpacing: '0.08em',
-              }}>
-                {activeSession.type}
+              <span style={{ position: 'relative' }}>
+                <span style={{
+                  color: activeSession.is_active ? 'var(--color-accent-primary)' : 'var(--color-success)',
+                  marginRight: 4,
+                  opacity: 0.85,
+                }}>//</span>
+                {activeSession.is_active ? 'LIVE' : 'PAUSED'}
+              </span>
+              {/* Tag angular tipo CP2077 — clip-path paralelogramo */}
+              <span
+                className="hq-tag-angular"
+                style={{
+                  fontSize: 9,
+                  padding: '2px 10px',
+                  background: 'rgba(143, 191, 211, 0.08)',
+                  color: 'var(--color-ice-light)',
+                  border: 'none',
+                  letterSpacing: '0.18em',
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                {activeSession.type === 'quest' ? 'QST' : activeSession.type === 'task' ? 'TSK' : 'RTN'}
               </span>
             </div>
             <div style={{
@@ -629,14 +925,18 @@ export default function App() {
               alignItems: 'flex-end', gap: 0,
               fontFamily: 'var(--font-mono)',
               fontVariantNumeric: 'tabular-nums',
+              position: 'relative', zIndex: 1,
             }}
           >
             <span style={{
               fontSize: 'var(--text-xl)',
               fontWeight: 700,
               color: activeSession.is_active
-                ? 'var(--color-text-primary)'
+                ? 'var(--color-ice-light)'
                 : 'var(--color-text-secondary)',
+              textShadow: activeSession.is_active
+                ? '0 0 16px var(--color-ice-glow)'
+                : 'none',
               lineHeight: 1,
               letterSpacing: '-0.02em',
             }}>
@@ -661,7 +961,7 @@ export default function App() {
           </button>
 
           {/* Controls — minimais, icon-only */}
-          <div style={{ display: 'flex', gap: 'var(--space-1)' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-1)', position: 'relative', zIndex: 1 }}>
             <button
               type="button"
               className="hq-icon-btn"
@@ -754,12 +1054,14 @@ export default function App() {
         minHeight: '100vh',
         background: 'transparent',
       }}>
-        {/* Wrapper com key={pathname} re-anima conteúdo a cada navegação.
-            Usa fade-in (só opacity, SEM transform) pra não quebrar
-            `position: fixed` de modais filhos — transform num ancestral
-            redefine o containing block. Cards individuais continuam com
-            fade-up porque estão isolados na árvore. */}
-        <div key={location.pathname} className="hq-animate-fade-in">
+        {/* Sem fade global entre rotas — quem dá a sensação "premium"
+            agora é o stagger dos cards/listas montando dentro da rota
+            nova (Framer Motion StaggerList). Linear/Vercel/Raycast fazem
+            assim: rota troca instant, conteúdo da rota nova entra com
+            spring próprio. Antes tínhamos fade global de ~280ms que
+            empilhava com refetch do HubFinanceProvider — gerava
+            sensação de lentidão entre subpáginas do Hub Finance. */}
+        <div>
         <Routes>
           <Route path="/" element={<Navigate to="/dia" replace />} />
           <Route path="/dashboard" element={<DashboardView projects={projects} quests={quests} areas={areas} profile={profile} onProfileUpdate={setProfile} onSelectProject={setSelectedProjectId} />} />

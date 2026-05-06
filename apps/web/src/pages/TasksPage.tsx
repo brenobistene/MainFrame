@@ -3,12 +3,11 @@ import type { ActiveSession, Task } from '../types'
 import { fetchTasks, createTask, updateTask, toggleTask, deleteTask, reportApiError } from '../api'
 import type { DateRange } from '../utils/dateRange'
 import { computeRange, isInRange } from '../utils/dateRange'
-import { Label } from '../components/ui/Label'
 import { DateRangeFilter } from '../components/DateRangeFilter'
 import { TaskRow } from '../components/TaskRow'
 import { PrioritySelect } from '../components/PrioritySelect'
 import { parseTimeToMinutes, isValidDateInput } from '../utils/datetime'
-import { Card } from '../components/ui/Primitives'
+import { PageShell, TechId } from '../components/ui/CyberShell'
 
 type TaskFilter = 'all' | 'today' | 'no-date'
 
@@ -142,47 +141,30 @@ export function TasksView({ activeSession, onSessionUpdate, sessionUpdateTrigger
   } as any
 
   return (
-    <div style={{ color: 'var(--color-text-primary)' }}>
-    <Card padding="none" style={{
-      animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
-    }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
-      {/* Header com gradient sutil */}
-      <div style={{
-        padding: 'var(--space-5) var(--space-6) var(--space-4)',
-        background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
-          linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
-        `,
-        borderBottom: '1px solid var(--color-divider)',
-      }}>
-      <header style={{
-        display: 'flex', alignItems: 'flex-end', gap: 14,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 10, color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600,
-            marginBottom: 4,
-          }}>
-            Tarefas
-          </div>
-          <div style={{
-            fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em',
-            color: 'var(--color-text-primary)', lineHeight: 1.2,
-            fontFamily: 'var(--font-mono)',
+    <PageShell
+      headerLabel="TAREFAS"
+      headerLeftContent={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
           }}>
             {active.length} ativa{active.length !== 1 ? 's' : ''} · {doneAll.length} concluída{doneAll.length !== 1 ? 's' : ''}
-          </div>
+          </span>
+          <TechId>TASK.QUEUE</TechId>
         </div>
-      </header>
-      </div>
-      <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
+      }
+      footerCaption={
+        <>
+          <div>// TASK.PIPELINE · {active.length} ACTIVE / {doneAll.length} DONE</div>
+          <div style={{ opacity: 0.6, marginTop: 2 }}>TYPE: TACTICAL.TASKS</div>
+        </>
+      }
+    >
 
       {/* Criar tarefa — linha aberta tipo Notion */}
       <section style={{ marginTop: 36 }}>
@@ -359,9 +341,6 @@ export function TasksView({ activeSession, onSessionUpdate, sessionUpdateTrigger
         </section>
       )}
 
-      <div style={{ display: 'none' }}><Label>tarefas</Label></div>
-      </div>
-    </Card>
-    </div>
+    </PageShell>
   )
 }

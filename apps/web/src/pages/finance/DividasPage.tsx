@@ -21,6 +21,7 @@ import {
   cardLabel, listRow, listRowTitle, listRowSub,
 } from './components/styleHelpers'
 import { Card } from '../../components/ui/Primitives'
+import { StaggerList, StaggerItem, SkeletonStatCard, SkeletonRow } from '../../components/ui/Motion'
 import { DebtsManagerModal } from './components/DebtsManagerModal'
 
 export function DividasPage() {
@@ -29,7 +30,14 @@ export function DividasPage() {
   } = useHubFinance()
   const [showManager, setShowManager] = useState(false)
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Carregando…</p>
+  if (loading) return (
+    <div className="hq-glass" style={{ padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <SkeletonStatCard labelWidth={100} numberWidth={200} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+        {Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} />)}
+      </div>
+    </div>
+  )
 
   const ativas = debts.filter(d => d.status === 'active')
   const totalDevedor = ativas.reduce((s, d) => s + d.saldo_devedor, 0)
@@ -46,20 +54,17 @@ export function DividasPage() {
       <Card padding="none" style={{
         animation: 'hq-fade-up var(--motion-base) var(--ease-emphasis) both',
       }}>
-        {/* Hairline accent — linha sutil oxblood no topo */}
-        <div style={{
-          height: 1,
-          background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-          opacity: 0.5,
-        }} />
-        {/* Header com gradient sutil */}
+        {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+        <div className="hq-hairline-ice" />
+        {/* Header com atmosphere ice/fog */}
         <div style={{
           padding: 'var(--space-5) var(--space-6) var(--space-4)',
           background: `
-            radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+            radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+            radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
             linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
           `,
-          borderBottom: '1px solid var(--color-divider)',
+          borderBottom: '1px solid var(--color-ice-deep)',
         }}>
           <div style={{
             display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)',
@@ -160,16 +165,15 @@ export function DividasPage() {
             }}>
               Próximas a quitar
             </div>
-            <div className="hq-stagger" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-              {sortedAtivas.map((d, i) => (
+            <StaggerList style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              {sortedAtivas.map((d) => (
+                <StaggerItem key={d.id} layout>
                 <div
-                  key={d.id}
-                  className="hq-row-hoverable hq-animate-fade-up"
+                  className="hq-row-hoverable"
                   style={{
                     ...listRow,
                     padding: 'var(--space-2) var(--space-3)',
                     borderRadius: 'var(--radius-sm)',
-                    ['--stagger-i' as any]: i,
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
@@ -188,8 +192,9 @@ export function DividasPage() {
                     {formatBRL(d.saldo_devedor)}
                   </span>
                 </div>
+                </StaggerItem>
               ))}
-            </div>
+            </StaggerList>
           </>
         )}
         </div>

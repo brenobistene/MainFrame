@@ -16,6 +16,7 @@ import {
   cardLabel, listRow, listRowTitle, listRowSub,
 } from './components/styleHelpers'
 import { Card, EmptyState } from '../../components/ui/Primitives'
+import { AnimatedNumber, StaggerList, StaggerItem, SkeletonStatCard, SkeletonCardGrid } from '../../components/ui/Motion'
 import { InvoicesManagerModal } from './components/InvoicesManagerModal'
 import { MonthPicker } from './components/MonthPicker'
 
@@ -31,7 +32,16 @@ export function VisaoGeralPage() {
   // Modal de gerenciamento de faturas (substituiu a aba "Cartões")
   const [showInvoicesManager, setShowInvoicesManager] = useState(false)
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Carregando…</p>
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <SkeletonStatCard />
+        <SkeletonStatCard labelWidth={60} numberWidth={120} />
+      </div>
+      <SkeletonCardGrid count={3} height={140} />
+      <SkeletonCardGrid count={2} height={220} />
+    </div>
+  )
   if (accounts.length === 0) return <NoAccountsState />
 
   return (
@@ -111,16 +121,13 @@ function TopBar({ summary, selectedMonth, onMonthChange }: {
       position: 'relative',
       zIndex: 20,
     }}>
-      {/* Hairline accent — linha sutil oxblood no topo (inline, não absolute) */}
-      <div style={{
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
-      }} />
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" />
       <div style={{
         padding: 'var(--space-5) var(--space-6)',
         background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
           linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
         `,
         display: 'grid',
@@ -147,19 +154,22 @@ function TopBar({ summary, selectedMonth, onMonthChange }: {
             />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <span style={{
-                fontSize: 'var(--text-xs)', color: 'var(--color-text-tertiary)',
-                letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9, color: 'var(--color-text-muted)',
+                letterSpacing: '0.22em', textTransform: 'uppercase', fontWeight: 700,
               }}>
-                Saldo geral
+                <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+                BALANCE.TOTAL
               </span>
               <span className="hq-money" style={{
                 fontSize: 'var(--text-2xl)', fontWeight: 700,
                 fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
                 letterSpacing: '-0.02em',
-                color: isNeg ? 'var(--color-accent-light)' : 'var(--color-text-primary)',
+                color: isNeg ? 'var(--color-accent-light)' : 'var(--color-ice)',
                 lineHeight: 1.1,
+                textShadow: isNeg ? 'none' : '0 0 16px var(--color-ice-glow)',
               }}>
-                {formatBRL(saldo)}
+                <AnimatedNumber value={saldo} format={n => formatBRL(n)} duration={0.9} />
               </span>
             </div>
             <span style={{
@@ -235,18 +245,16 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
       overflow: 'hidden',
       position: 'relative',
     }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" style={{
         position: 'absolute', top: 0, left: 0, right: 0,
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
       }} />
       {/* Header com gradient sutil — mancha oxblood top-left */}
       <div style={{
         padding: 'var(--space-5) var(--space-6) var(--space-4)',
         background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
           linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
         `,
         borderBottom: items.length > 0 ? '1px solid var(--color-divider)' : 'none',
@@ -291,11 +299,13 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
             {/* Coluna planejado */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{
-                fontSize: 9, color: 'var(--color-text-tertiary)',
-                letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600,
-                paddingBottom: 2, borderBottom: '1px solid var(--color-border)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9, color: 'var(--color-text-muted)',
+                letterSpacing: '0.22em', textTransform: 'uppercase', fontWeight: 700,
+                paddingBottom: 2, borderBottom: '1px solid var(--color-ice-deep)',
               }}>
-                Planejado
+                <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+                PLANEJADO
               </div>
               <PlanRealRow
                 label="A pagar"
@@ -317,11 +327,13 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
             {/* Coluna real */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{
-                fontSize: 9, color: 'var(--color-text-tertiary)',
-                letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 600,
-                paddingBottom: 2, borderBottom: '1px solid var(--color-border)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9, color: 'var(--color-text-muted)',
+                letterSpacing: '0.22em', textTransform: 'uppercase', fontWeight: 700,
+                paddingBottom: 2, borderBottom: '1px solid var(--color-ice-deep)',
               }}>
-                Real (Nubank)
+                <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+                REAL · NUBANK
               </div>
               <PlanRealRow
                 label="Pago"
@@ -341,9 +353,10 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
             </div>
           </div>
 
-          {/* Lista — top 6 + expand. hq-stagger faz cada row entrar com
-              delay incremental (variável CSS --stagger-i no item). */}
-          <div className="hq-stagger" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+          {/* Lista — top 6 + expand. StaggerList faz cada row entrar
+              em cascata via Framer Motion (substitui o antigo --stagger-i
+              CSS). Item leve com layout=true pra reorder smooth. */}
+          <StaggerList style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
             {visibleItems.map((item, i) => (
               <CompromissoRow
                 key={`${item.kind}:${item.id}`}
@@ -386,7 +399,7 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
                 {expanded ? '↑ ver menos' : `↓ ver mais ${hidden} ${hidden === 1 ? 'item' : 'itens'}`}
               </button>
             )}
-          </div>
+          </StaggerList>
         </>
       )}
       </div>
@@ -448,18 +461,16 @@ function CardOutrasTransacoes({ transactions, commitments, onSeeAll }: {
       overflow: 'hidden',
       position: 'relative',
     }}>
-      {/* Hairline accent — linha sutil oxblood no topo */}
-      <div style={{
+      {/* Hairline ice elétrica — assinatura HUD CP2077 */}
+      <div className="hq-hairline-ice" style={{
         position: 'absolute', top: 0, left: 0, right: 0,
-        height: 1,
-        background: 'linear-gradient(90deg, transparent, var(--color-accent-primary), transparent)',
-        opacity: 0.5,
       }} />
       {/* Header com gradient sutil */}
       <div style={{
         padding: 'var(--space-5) var(--space-6) var(--space-4)',
         background: `
-          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(159, 18, 57, 0.06), transparent 60%),
+          radial-gradient(ellipse 100% 80% at 0% 0%, rgba(143, 191, 211, 0.05), transparent 60%),
+          radial-gradient(ellipse 60% 80% at 100% 0%, rgba(50, 62, 73, 0.20), transparent 65%),
           linear-gradient(180deg, rgba(236, 232, 227, 0.02), transparent)
         `,
         borderBottom: outras.length > 0 ? '1px solid var(--color-divider)' : 'none',
@@ -534,18 +545,17 @@ function CardOutrasTransacoes({ transactions, commitments, onSeeAll }: {
           nenhuma transação avulsa este mês — tudo bateu com um compromisso.
         </div>
       ) : (
-        <div className="hq-stagger" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-          {visibleItems.map((tx, i) => {
+        <StaggerList style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+          {visibleItems.map((tx) => {
             const isReceita = tx.valor >= 0
             return (
+              <StaggerItem key={tx.id}>
               <div
-                key={tx.id}
-                className="hq-row-hoverable hq-animate-fade-up"
+                className="hq-row-hoverable"
                 style={{
                   ...listRow,
                   padding: 'var(--space-2) var(--space-3)',
                   borderRadius: 'var(--radius-sm)',
-                  ['--stagger-i' as any]: i,
                 }}
               >
                 <div style={{ minWidth: 0 }}>
@@ -568,6 +578,7 @@ function CardOutrasTransacoes({ transactions, commitments, onSeeAll }: {
                   {formatBRL(Math.abs(tx.valor))}
                 </span>
               </div>
+              </StaggerItem>
             )
           })}
           {(hidden > 0 || expanded) && outras.length > 5 && (
@@ -594,7 +605,7 @@ function CardOutrasTransacoes({ transactions, commitments, onSeeAll }: {
               {expanded ? '↑ ver menos' : `↓ ver mais ${hidden} item${hidden === 1 ? '' : 'ns'}`}
             </button>
           )}
-        </div>
+        </StaggerList>
       )}
       </div>
     </Card>
@@ -658,16 +669,17 @@ function CompromissoRow({ item, onClick, index = 0 }: {
     subText = 'sem data fixa'
   }
 
+  void index
   return (
+    <StaggerItem>
     <div
       onClick={onClick}
-      className="hq-row-hoverable hq-animate-fade-up"
+      className="hq-row-hoverable"
       style={{
         ...listRow,
         cursor: 'pointer',
         padding: 'var(--space-2) var(--space-3)',
         borderRadius: 'var(--radius-sm)',
-        ['--stagger-i' as any]: index,
       }}
       title={
         item.kind === 'bill' ? 'abrir contas/receitas fixas' :
@@ -719,6 +731,7 @@ function CompromissoRow({ item, onClick, index = 0 }: {
           : formatBRL(item.valor)}
       </span>
     </div>
+    </StaggerItem>
   )
 }
 

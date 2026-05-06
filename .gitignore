@@ -33,6 +33,7 @@ venv/
 *.db
 *.sqlite
 *.db.bak
+*.db.bak.*
 *.db.pre-refactor*.bak
 
 # Google OAuth2 - NEVER commit these
