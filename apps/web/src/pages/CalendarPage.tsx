@@ -138,20 +138,31 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
   // o tempo passa.
   const [currentTime, setCurrentTime] = useState(new Date())
 
-  // Schedule de rituais no mês visível — só carregado quando viewMode === 'mês'.
-  // Renderiza marcadores nas células dos dias com ritual agendado.
-  const monthRange = useMemo(() => {
-    if (viewMode !== 'mês') return { from: null, to: null }
-    const y = currentDate.getFullYear()
-    const m = currentDate.getMonth()
-    const lastDay = new Date(y, m + 1, 0).getDate()
+  // Schedule de rituais no intervalo visível — carregado quando viewMode é
+  // 'mês' ou 'semana'. Renderiza marcadores nas células dos dias.
+  const scheduleRange = useMemo(() => {
     const pad = (n: number) => String(n).padStart(2, '0')
-    return {
-      from: `${y}-${pad(m + 1)}-01`,
-      to: `${y}-${pad(m + 1)}-${pad(lastDay)}`,
+    const isoOf = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    if (viewMode === 'mês') {
+      const y = currentDate.getFullYear()
+      const m = currentDate.getMonth()
+      const lastDay = new Date(y, m + 1, 0).getDate()
+      return {
+        from: `${y}-${pad(m + 1)}-01`,
+        to: `${y}-${pad(m + 1)}-${pad(lastDay)}`,
+      }
     }
+    if (viewMode === 'semana') {
+      const weekStart = new Date(
+        currentDate.getTime() - ((currentDate.getDay() - 1 + 7) % 7) * 86400000,
+      )
+      const weekEnd = new Date(weekStart.getTime() + 6 * 86400000)
+      return { from: isoOf(weekStart), to: isoOf(weekEnd) }
+    }
+    return { from: null, to: null }
   }, [viewMode, currentDate])
-  const { data: ritualSchedule = [] } = useRitualSchedule(monthRange.from, monthRange.to)
+  const { data: ritualSchedule = [] } = useRitualSchedule(scheduleRange.from, scheduleRange.to)
   const ritualsByDate = useMemo(() => {
     const map = new Map<string, BuildRitualCadencia[]>()
     for (const item of ritualSchedule) {
@@ -1497,6 +1508,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
               const dayNum = dayDate.getDate()
               const dayRoutines = routinesForDay(dayIso)
               const isToday = dayIso === todayIso
+              const dayRituals = ritualsByDate.get(dayIso) ?? []
 
               return (
                 <div
@@ -1560,6 +1572,32 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                     }}>
                       {dayNum}
                     </div>
+                    {/* Marcadores de ritual — bolinhas vermelhas no header
+                        do dia. Hover via title nativo. */}
+                    {dayRituals.length > 0 && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 2,
+                          justifyContent: 'center',
+                          marginTop: 4,
+                        }}
+                        title={`Ritual${dayRituals.length === 1 ? '' : 'is'}: ${dayRituals.join(', ')}`}
+                      >
+                        {dayRituals.map((c) => (
+                          <span
+                            key={c}
+                            style={{
+                              width: 5,
+                              height: 5,
+                              borderRadius: '50%',
+                              background: '#dc2531',
+                              boxShadow: '0 0 4px rgba(220, 37, 49, 0.6)',
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </button>
 
                   {(() => {
