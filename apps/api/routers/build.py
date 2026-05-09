@@ -22,6 +22,7 @@ from models.build import (
     GoalDependencyCreate,
     GoalDependencyOut,
     GoalOut,
+    GoalProgressResolved,
     GoalProgressUpdate,
     GoalUpdate,
     GuardrailCreate,
@@ -293,13 +294,14 @@ GOAL_COLUMNS = (
 
 
 def _hydrate_goal(conn, row) -> dict:
-    """Adiciona lista de áreas + converte bool fields. Conexão reaproveitada
-    pra evitar overhead em listagens."""
+    """Adiciona lista de áreas + converte bool fields + resolve progresso.
+    Conexão reaproveitada pra evitar overhead em listagens."""
     areas = conn.execute(
         "SELECT area_slug, is_primary FROM build_goal_area WHERE goal_id = ? "
         "ORDER BY is_primary DESC, area_slug ASC",
         (row["id"],),
     ).fetchall()
+    progress = _resolve_goal_progress(conn, row)
     return {
         **dict(row),
         "is_foundational": bool(row["is_foundational"]),
@@ -307,6 +309,54 @@ def _hydrate_goal(conn, row) -> dict:
             {"area_slug": a["area_slug"], "is_primary": bool(a["is_primary"])}
             for a in areas
         ],
+        "progress_resolved": progress,
+    }
+
+
+def _resolve_goal_progress(conn, row) -> Optional[dict]:
+    """v2.1: resolve progresso da Meta numérica.
+
+    Lógica:
+    - Meta booleana → None
+    - Meta numérica + metric_slug setado → puxa de Health
+    - Meta numérica sem metric_slug → usa criterion_current_value (manual)
+    """
+    if row["criterion_type"] != "numeric":
+        return None
+
+    metric_slug = row["criterion_metric_slug"]
+    if not metric_slug:
+        # Manual
+        return {
+            "valor": row["criterion_current_value"],
+            "fonte": "manual",
+            "ultima_atualizacao": row["atualizada_em"],
+            "detalhe": None,
+        }
+
+    # Vem de Health
+    meta = get_metric_meta(metric_slug)
+    if meta is None:
+        return {
+            "valor": None,
+            "fonte": "metrica_sumiu",
+            "ultima_atualizacao": None,
+            "detalhe": f"Métrica '{metric_slug}' não existe mais em Hub Health",
+        }
+    result = calculate_metric(conn, metric_slug, row["criterion_metric_item_id"])
+    valor = result.get("valor")
+    if not result.get("dados_disponiveis") or not isinstance(valor, (int, float)):
+        return {
+            "valor": None,
+            "fonte": "sem_dados",
+            "ultima_atualizacao": result.get("ultima_atualizacao"),
+            "detalhe": result.get("erro") or "Sem dados registrados ainda",
+        }
+    return {
+        "valor": float(valor),
+        "fonte": "health",
+        "ultima_atualizacao": result.get("ultima_atualizacao"),
+        "detalhe": None,
     }
 
 
@@ -380,6 +430,15 @@ def create_goal(body: GoalCreate):
                 detail="Critério numérico exige criterion_target_value",
             )
 
+        # v2.1: se Meta numérica aponta pra Métrica de Health, valida o slug
+        # (e item_id se a métrica precisa). Boolean ignora esses campos.
+        metric_slug: Optional[str] = None
+        metric_item_id: Optional[int] = None
+        if body.criterion_type == "numeric" and body.criterion_metric_slug:
+            _validate_metric_slug(body.criterion_metric_slug, body.criterion_metric_item_id)
+            metric_slug = body.criterion_metric_slug
+            metric_item_id = body.criterion_metric_item_id
+
         # requires_threshold_pct: snapshot do default das settings se não passou
         threshold = body.requires_threshold_pct
         if threshold is None:
@@ -392,9 +451,10 @@ def create_goal(body: GoalCreate):
         conn.execute(
             "INSERT INTO build_goal("
             "id, titulo, descricao, horizon, data_inicio, data_alvo, status, "
-            "criterion_type, criterion_target_value, is_foundational, "
+            "criterion_type, criterion_target_value, criterion_metric_slug, "
+            "criterion_metric_item_id, is_foundational, "
             "requires_threshold_pct, criada_em, atualizada_em"
-            ") VALUES (?, ?, ?, ?, ?, ?, 'ativa', ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, 'ativa', ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 goal_id,
                 body.titulo,
@@ -404,6 +464,8 @@ def create_goal(body: GoalCreate):
                 body.data_alvo,
                 body.criterion_type,
                 body.criterion_target_value,
+                metric_slug,
+                metric_item_id,
                 int(body.is_foundational),
                 threshold,
                 now,
@@ -425,11 +487,29 @@ def create_goal(body: GoalCreate):
 
 @router.patch("/goals/{goal_id}", response_model=GoalOut)
 def update_goal(goal_id: str, body: GoalUpdate):
-    """Edita Meta. Não mexe nas áreas — pra isso, use PUT /goals/{id}/areas."""
+    """Edita Meta. Não mexe nas áreas — pra isso, use PUT /goals/{id}/areas.
+
+    v2.1: aceita criterion_metric_slug. Passar string vazia "" desvincula
+    (volta progresso pra modo manual via criterion_current_value).
+    """
     fields: dict = {}
     for name in body.model_fields_set:
         val = getattr(body, name)
         fields[name] = int(val) if isinstance(val, bool) else val
+
+    # v2.1: tratamento especial pra metric_slug
+    # - "" ou None → desvincula (NULL no banco)
+    # - string não-vazia → valida com Health
+    if "criterion_metric_slug" in fields:
+        slug = fields["criterion_metric_slug"]
+        if slug == "" or slug is None:
+            fields["criterion_metric_slug"] = None
+            # Limpa item_id também ao desvincular (a menos que esteja sendo setado explicitamente)
+            if "criterion_metric_item_id" not in fields:
+                fields["criterion_metric_item_id"] = None
+        else:
+            item_id = fields.get("criterion_metric_item_id")
+            _validate_metric_slug(slug, item_id)
 
     if not fields:
         raise HTTPException(400, detail="Nothing to update")
@@ -925,13 +1005,15 @@ def remove_goal_dependency(goal_id: str, requires_goal_id: str):
 
 @router.patch("/goals/{goal_id}/progress", response_model=GoalOut)
 def update_goal_progress(goal_id: str, body: GoalProgressUpdate):
-    """Atualiza criterion_current_value manualmente (v1, pré-Health).
+    """Atualiza criterion_current_value manualmente.
 
-    Só faz sentido pra Meta com criterion_type='numeric'.
+    v2.1: rejeita se a Meta está vinculada a uma Métrica de Hub Health
+    (`criterion_metric_slug` setado) — nesse caso o progresso vem auto.
     """
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT criterion_type FROM build_goal WHERE id = ?", (goal_id,)
+            "SELECT criterion_type, criterion_metric_slug FROM build_goal WHERE id = ?",
+            (goal_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, detail="Meta não encontrada")
@@ -939,6 +1021,14 @@ def update_goal_progress(goal_id: str, body: GoalProgressUpdate):
             raise HTTPException(
                 422,
                 detail="Progresso digitado só se aplica a Meta com critério numérico",
+            )
+        if row["criterion_metric_slug"]:
+            raise HTTPException(
+                422,
+                detail=(
+                    "Meta vinculada a Métrica de Hub Health — progresso vem auto. "
+                    "Pra digitar manualmente, desvincule (PATCH com criterion_metric_slug='')."
+                ),
             )
         conn.execute(
             "UPDATE build_goal SET criterion_current_value = ?, "

@@ -100,6 +100,15 @@ class GoalAreaLink(BaseModel):
     is_primary: bool = False
 
 
+class GoalProgressResolved(BaseModel):
+    """Progresso resolvido da Meta numérica. Inclui qual fonte (manual ou
+    Hub Health) e timestamp. None pra Meta booleana."""
+    valor: Optional[float] = None
+    fonte: str                                        # 'manual' | 'health' | 'sem_dados' | 'metrica_sumiu'
+    ultima_atualizacao: Optional[str] = None
+    detalhe: Optional[str] = None
+
+
 class GoalOut(BaseModel):
     id: str
     titulo: str
@@ -110,7 +119,7 @@ class GoalOut(BaseModel):
     status: str                                      # 'ativa' | 'concluida' | 'abandonada' | 'pausada'
     criterion_type: str                              # 'boolean' | 'numeric'
     criterion_target_value: Optional[float] = None
-    criterion_current_value: Optional[float] = None  # v1: digitado manual; v2: vem de Health
+    criterion_current_value: Optional[float] = None  # v1: digitado manual; v2.1: ainda usado se metric_slug NULL
     criterion_metric_slug: Optional[str] = None
     criterion_metric_item_id: Optional[int] = None
     is_foundational: bool
@@ -120,6 +129,8 @@ class GoalOut(BaseModel):
     concluida_em: Optional[str] = None
     abandonada_em: Optional[str] = None
     areas: list[GoalAreaLink]                         # vem populado no GET
+    # v2.1: progresso resolvido (vem auto de Health se metric_slug setado)
+    progress_resolved: Optional[GoalProgressResolved] = None
 
 
 class GoalCreate(BaseModel):
@@ -130,6 +141,10 @@ class GoalCreate(BaseModel):
     data_alvo: str                                    # YYYY-MM-DD obrigatório
     criterion_type: str = Field(..., pattern="^(boolean|numeric)$")
     criterion_target_value: Optional[float] = None
+    # v2.1: opcional. Se setado pra Meta numérica, progresso vem de Health
+    # (criterion_current_value digitado manual fica ignorado).
+    criterion_metric_slug: Optional[str] = Field(None, max_length=200)
+    criterion_metric_item_id: Optional[int] = None
     is_foundational: bool = False
     requires_threshold_pct: Optional[int] = Field(None, ge=0, le=100)
     areas: list[GoalAreaLink] = Field(..., min_length=1)
@@ -146,6 +161,9 @@ class GoalUpdate(BaseModel):
     )
     criterion_type: Optional[str] = Field(None, pattern="^(boolean|numeric)$")
     criterion_target_value: Optional[float] = None
+    # v2.1: passar string vazia "" pra desvincular Meta de Health (volta pra manual).
+    criterion_metric_slug: Optional[str] = Field(None, max_length=200)
+    criterion_metric_item_id: Optional[int] = None
     is_foundational: Optional[bool] = None
     requires_threshold_pct: Optional[int] = Field(None, ge=0, le=100)
 

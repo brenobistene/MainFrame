@@ -576,6 +576,17 @@ export interface BuildGoalAreaLink {
   is_primary: boolean
 }
 
+// v2.1: progresso resolvido pelo backend. Pra Meta booleana = null.
+// Pra numérica: vem auto se metric_slug setado, manual se não.
+export type BuildGoalProgressFonte = 'manual' | 'health' | 'sem_dados' | 'metrica_sumiu'
+
+export interface BuildGoalProgressResolved {
+  valor: number | null
+  fonte: BuildGoalProgressFonte
+  ultima_atualizacao: string | null
+  detalhe: string | null
+}
+
 export interface BuildGoal {
   id: string
   titulo: string
@@ -596,6 +607,8 @@ export interface BuildGoal {
   concluida_em: string | null
   abandonada_em: string | null
   areas: BuildGoalAreaLink[]
+  // v2.1: vem populado no GET. Null pra Meta booleana.
+  progress_resolved: BuildGoalProgressResolved | null
 }
 
 export interface BuildGoalCreate {
@@ -606,6 +619,9 @@ export interface BuildGoalCreate {
   data_alvo: string
   criterion_type: BuildGoalCriterionType
   criterion_target_value?: number | null
+  // v2.1: se setado, progresso vem auto de Hub Health
+  criterion_metric_slug?: string | null
+  criterion_metric_item_id?: number | null
   is_foundational?: boolean
   requires_threshold_pct?: number | null
   areas: BuildGoalAreaLink[]
@@ -620,6 +636,9 @@ export type BuildGoalUpdate = Partial<{
   status: BuildGoalStatus
   criterion_type: BuildGoalCriterionType
   criterion_target_value: number | null
+  // v2.1: passar "" pra desvincular Meta de Health
+  criterion_metric_slug: string | null
+  criterion_metric_item_id: number | null
   is_foundational: boolean
   requires_threshold_pct: number
 }>

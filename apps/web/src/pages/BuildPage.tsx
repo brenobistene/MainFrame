@@ -373,9 +373,16 @@ function GoalProgressBar({ goal }: { goal: BuildGoal }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
 
+  // v2.1: progresso vem do backend resolvido. Se metric_slug setado, fonte='health'.
+  const resolved = goal.progress_resolved
   const target = goal.criterion_target_value ?? 0
-  const current = goal.criterion_current_value ?? 0
+  const current = resolved?.valor ?? 0
   const pct = target > 0 ? Math.max(0, Math.min(100, (current / target) * 100)) : 0
+
+  const fonteHealth = resolved?.fonte === 'health'
+  const fonteSemDados = resolved?.fonte === 'sem_dados'
+  const fonteMetricaSumiu = resolved?.fonte === 'metrica_sumiu'
+  const isHealthLinked = goal.criterion_metric_slug != null
 
   function startEdit() {
     setDraft(String(current))
@@ -389,6 +396,15 @@ function GoalProgressBar({ goal }: { goal: BuildGoal }) {
       { onSuccess: () => setEditing(false) },
     )
   }
+
+  // Cor da barra varia com a fonte
+  const barColor = fonteMetricaSumiu
+    ? '#ffb300'
+    : fonteSemDados
+    ? NEO.textMuted
+    : fonteHealth
+    ? NEO.cyan
+    : NEO.accent
 
   return (
     <div style={{ marginTop: 6 }}>
@@ -404,40 +420,71 @@ function GoalProgressBar({ goal }: { goal: BuildGoal }) {
       >
         <span style={{ flex: 1 }}>
           progresso:{' '}
-          <span style={{ color: NEO.textPrimary, fontWeight: 700 }}>
-            {current.toLocaleString('pt-BR')}
-          </span>{' '}
-          / {target.toLocaleString('pt-BR')}{' '}
-          <span style={{ color: NEO.cyan, marginLeft: 4 }}>{pct.toFixed(0)}%</span>
-        </span>
-        {editing ? (
-          <span style={{ display: 'flex', gap: 4 }}>
-            <input
-              type="number"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') save()
-                if (e.key === 'Escape') setEditing(false)
-              }}
-              autoFocus
+          {fonteSemDados || fonteMetricaSumiu ? (
+            <span
+              style={{ color: barColor, fontStyle: 'italic' }}
+              title={resolved?.detalhe ?? undefined}
+            >
+              {fonteMetricaSumiu ? 'métrica sumiu' : 'esperando dados…'}
+            </span>
+          ) : (
+            <>
+              <span style={{ color: NEO.textPrimary, fontWeight: 700 }}>
+                {current.toLocaleString('pt-BR')}
+              </span>{' '}
+              / {target.toLocaleString('pt-BR')}{' '}
+              <span style={{ color: NEO.cyan, marginLeft: 4 }}>{pct.toFixed(0)}%</span>
+            </>
+          )}
+          {fonteHealth && (
+            <span
               style={{
-                background: NEO.bg,
-                color: NEO.textPrimary,
-                border: `1px solid ${NEO.accent}`,
-                padding: '2px 6px',
-                fontFamily: MONO,
-                fontSize: 11,
-                width: 80,
-                outline: 'none',
+                marginLeft: 8,
+                fontSize: 9,
+                color: NEO.cyan,
+                letterSpacing: '0.15em',
+                textTransform: 'uppercase',
+                fontWeight: 700,
               }}
-            />
-            <MicroBtn onClick={save} label="ok" />
-            <MicroBtn onClick={() => setEditing(false)} label="x" />
-          </span>
-        ) : (
-          <MicroBtn onClick={startEdit} label="↻ atualizar" />
-        )}
+              title={
+                resolved?.ultima_atualizacao
+                  ? `última atualização: ${resolved.ultima_atualizacao}`
+                  : undefined
+              }
+            >
+              ◉ via Health
+            </span>
+          )}
+        </span>
+        {!isHealthLinked &&
+          (editing ? (
+            <span style={{ display: 'flex', gap: 4 }}>
+              <input
+                type="number"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') save()
+                  if (e.key === 'Escape') setEditing(false)
+                }}
+                autoFocus
+                style={{
+                  background: NEO.bg,
+                  color: NEO.textPrimary,
+                  border: `1px solid ${NEO.accent}`,
+                  padding: '2px 6px',
+                  fontFamily: MONO,
+                  fontSize: 11,
+                  width: 80,
+                  outline: 'none',
+                }}
+              />
+              <MicroBtn onClick={save} label="ok" />
+              <MicroBtn onClick={() => setEditing(false)} label="x" />
+            </span>
+          ) : (
+            <MicroBtn onClick={startEdit} label="↻ atualizar" />
+          ))}
       </div>
       {/* Barra fina */}
       <div
@@ -455,7 +502,7 @@ function GoalProgressBar({ goal }: { goal: BuildGoal }) {
             top: 0,
             bottom: 0,
             width: `${pct}%`,
-            background: NEO.accent,
+            background: barColor,
             transition: 'width 0.3s ease',
           }}
         />
@@ -2271,22 +2318,56 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
   const [descricao, setDescricao] = useState('')
   const [horizon, setHorizon] = useState<BuildGoalHorizon>('anual')
   const [isFoundational, setIsFoundational] = useState(false)
+  // v2.1: origem do valor (Meta numérica) — manual ou puxa de Health
+  const [valorOrigem, setValorOrigem] = useState<'manual' | 'health'>('manual')
+  const [metricSlug, setMetricSlug] = useState('')
+  const [metricItemId, setMetricItemId] = useState('')
   // Áreas — UX nova: Set de slugs selecionados + qual é primária.
   // Primária é sempre a primeira selecionada (auto), mas pode ser trocada.
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set())
   const [primarySlug, setPrimarySlug] = useState<string | null>(null)
 
+  // Catálogo de métricas pra dropdown (só carregado quando usuário escolhe Health)
+  const { data: metricsCatalog = [] } = useHealthMetricsCatalog()
+  const selectedMetric: HealthMetricMeta | undefined = metricsCatalog.find(
+    (m) => m.slug === metricSlug,
+  )
+  const { data: metricItems = [] } = useHealthItems(
+    selectedMetric?.domain_slug ?? '',
+    false,
+  )
+  const groupedMetrics = useMemo(() => {
+    const g: Record<string, HealthMetricMeta[]> = {}
+    for (const m of metricsCatalog) {
+      if (!g[m.domain_slug]) g[m.domain_slug] = []
+      g[m.domain_slug].push(m)
+    }
+    return g
+  }, [metricsCatalog])
+
   const [error, setError] = useState<string | null>(null)
 
   const canSubmit = useMemo(
-    () =>
-      titulo.trim() !== '' &&
-      dataAlvo !== '' &&
-      primarySlug !== null &&
-      selectedSlugs.size >= 1 &&
-      (criterionType === 'boolean' ||
-        (criterionType === 'numeric' && criterionTarget.trim() !== '')),
-    [titulo, dataAlvo, primarySlug, selectedSlugs, criterionType, criterionTarget],
+    () => {
+      const baseOK =
+        titulo.trim() !== '' &&
+        dataAlvo !== '' &&
+        primarySlug !== null &&
+        selectedSlugs.size >= 1
+      if (!baseOK) return false
+      if (criterionType === 'boolean') return true
+      if (criterionTarget.trim() === '') return false
+      // v2.1: se origem é health, exige metric_slug + (item_id se necessário)
+      if (valorOrigem === 'health') {
+        if (!metricSlug) return false
+        if (selectedMetric?.precisa_item && !metricItemId) return false
+      }
+      return true
+    },
+    [
+      titulo, dataAlvo, primarySlug, selectedSlugs, criterionType,
+      criterionTarget, valorOrigem, metricSlug, metricItemId, selectedMetric,
+    ],
   )
 
   function toggleArea(slug: string) {
@@ -2336,6 +2417,14 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
       criterion_type: criterionType,
       criterion_target_value:
         criterionType === 'numeric' ? Number(criterionTarget) : null,
+      criterion_metric_slug:
+        criterionType === 'numeric' && valorOrigem === 'health' ? metricSlug : null,
+      criterion_metric_item_id:
+        criterionType === 'numeric' &&
+        valorOrigem === 'health' &&
+        selectedMetric?.precisa_item
+          ? Number(metricItemId)
+          : null,
       is_foundational: isFoundational,
       areas: allAreas,
     }
@@ -2461,13 +2550,102 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
           />
         </div>
         {criterionType === 'numeric' && (
-          <input
-            type="number"
-            value={criterionTarget}
-            onChange={(e) => setCriterionTarget(e.target.value)}
-            placeholder="valor alvo (ex.: 5000)"
-            style={{ ...inputBlockStyle, marginTop: 10, width: 220 }}
-          />
+          <>
+            <input
+              type="number"
+              value={criterionTarget}
+              onChange={(e) => setCriterionTarget(e.target.value)}
+              placeholder="valor alvo (ex.: 5000)"
+              style={{ ...inputBlockStyle, marginTop: 10, width: 220 }}
+            />
+
+            {/* v2.1: Origem do valor — manual ou Hub Health */}
+            <div style={{ marginTop: 14 }}>
+              <Label>DE ONDE VEM O VALOR ATUAL</Label>
+              <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+                <RadioOpt
+                  checked={valorOrigem === 'manual'}
+                  onClick={() => setValorOrigem('manual')}
+                  label="Eu digito"
+                  sub="atualizo manualmente quando muda"
+                />
+                <RadioOpt
+                  checked={valorOrigem === 'health'}
+                  onClick={() => setValorOrigem('health')}
+                  label="Vem de Hub Health"
+                  sub="puxa de uma Métrica automaticamente"
+                />
+              </div>
+
+              {valorOrigem === 'health' && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: 10,
+                    border: `1px solid ${NEO.cyanDim}`,
+                    background: `${NEO.cyan}05`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <select
+                    value={metricSlug}
+                    onChange={(e) => {
+                      setMetricSlug(e.target.value)
+                      setMetricItemId('')
+                    }}
+                    style={{
+                      background: NEO.bg,
+                      color: NEO.textPrimary,
+                      border: `1px solid ${NEO.cyanDim}`,
+                      padding: '6px 10px',
+                      fontFamily: MONO,
+                      fontSize: 12,
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="">— escolha uma Métrica —</option>
+                    {Object.entries(groupedMetrics).map(([domain, metrics]) => (
+                      <optgroup key={domain} label={domain}>
+                        {metrics.map((m) => (
+                          <option key={m.slug} value={m.slug}>
+                            {m.nome}
+                            {m.precisa_item ? ' (precisa item)' : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  {selectedMetric?.precisa_item && (
+                    <select
+                      value={metricItemId}
+                      onChange={(e) => setMetricItemId(e.target.value)}
+                      style={{
+                        background: NEO.bg,
+                        color: NEO.textPrimary,
+                        border: `1px solid ${NEO.cyanDim}`,
+                        padding: '6px 10px',
+                        fontFamily: MONO,
+                        fontSize: 12,
+                        outline: 'none',
+                      }}
+                    >
+                      <option value="">— item de {selectedMetric.domain_slug} —</option>
+                      {metricItems.map((it) => (
+                        <option key={it.id} value={it.id}>
+                          {it.nome}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div style={{ fontSize: 10, color: NEO.textMuted, fontStyle: 'italic' }}>
+                    O valor atual será puxado direto de Hub Health — não precisa atualizar manualmente.
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {/* Pergunta 3 */}
