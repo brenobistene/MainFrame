@@ -735,3 +735,223 @@ export interface BuildRitualScheduleItem {
   cadencia: BuildRitualCadencia
   datas: string[]                     // YYYY-MM-DD
 }
+
+// ─── Guardrail (v2 — pontes Hub Health) ───────────────────────────────────
+
+export type BuildGuardrailOperador = '>=' | '<=' | '>' | '<' | '==' | '!='
+
+export type BuildGuardrailEstado =
+  | 'OK'
+  | 'VIOLADO'
+  | 'ESPERANDO_DADOS'
+  | 'METRICA_NAO_ENCONTRADA'
+
+export interface BuildGuardrail {
+  id: number
+  goal_id: string
+  metric_slug: string
+  item_id: number | null
+  operador: BuildGuardrailOperador
+  valor_alvo: number
+  descricao: string | null
+  ordem: number
+  criado_em: string
+  atualizado_em: string
+}
+
+export interface BuildGuardrailCreate {
+  metric_slug: string
+  item_id?: number | null
+  operador: BuildGuardrailOperador
+  valor_alvo: number
+  descricao?: string | null
+  ordem?: number | null
+}
+
+export type BuildGuardrailUpdate = Partial<{
+  metric_slug: string
+  item_id: number | null
+  operador: BuildGuardrailOperador
+  valor_alvo: number
+  descricao: string | null
+  ordem: number
+}>
+
+export interface BuildGuardrailEvaluation {
+  id: number
+  metric_slug: string
+  item_id: number | null
+  operador: BuildGuardrailOperador
+  valor_alvo: number
+  descricao: string | null
+  estado: BuildGuardrailEstado
+  valor_atual: number | null
+  unidade: string | null
+  ultima_atualizacao: string | null
+  detalhe: string | null
+}
+
+// ─── Hub Health ───────────────────────────────────────────────────────────
+// Módulo de saúde como prática contínua observada. Tabelas health_* no DB.
+// Schema completo em docs/hub-health/PLAN.md.
+
+export type HealthTemplate =
+  | 'janela_qualidade'      // Sono: hora_inicio + hora_fim + qualidade + tipo
+  | 'atividade_tipo'        // Exercício: item + duracao_min + intensidade
+  | 'refeicao_2modos'       // Alimentação: item+comeu OU descricao livre
+  | 'consumo_vontade'       // Vícios: item + quantidade + vontade
+  | 'metrica_simples'       // Medidas Corporais: item + valor
+  | 'evento_escala'         // Genérico: escala 1-5 (Humor, Energia, etc.)
+
+export interface HealthDomain {
+  slug: string
+  nome: string
+  cor: string | null
+  icone: string | null
+  template: HealthTemplate
+  usa_itens: boolean
+  lembrete_ativo: boolean
+  ausencia_threshold_dias: number | null
+  ordem: number
+  ativo: boolean
+  /** Métrica primária a exibir no Dashboard. Null = sistema escolhe um
+   *  default razoável baseado no template. Configurável pelo usuário via
+   *  PATCH /domains/{slug}. */
+  metric_primary_slug: string | null
+  criado_em: string
+  atualizado_em: string
+}
+
+export interface HealthDomainCreate {
+  slug: string
+  nome: string
+  template: HealthTemplate
+  usa_itens?: boolean
+  cor?: string | null
+  icone?: string | null
+  lembrete_ativo?: boolean
+  ausencia_threshold_dias?: number | null
+  ordem?: number
+}
+
+export type HealthDomainUpdate = Partial<{
+  nome: string
+  cor: string | null
+  icone: string | null
+  lembrete_ativo: boolean
+  ausencia_threshold_dias: number | null
+  ordem: number
+  ativo: boolean
+}>
+
+export interface HealthItem {
+  id: number
+  domain_slug: string
+  nome: string
+  unidade: string | null
+  horario_esperado: string | null     // HH:MM
+  descricao: string | null
+  cor: string | null
+  arquivado: boolean
+  arquivado_em: string | null
+  ordem: number
+  criado_em: string
+  atualizado_em: string
+}
+
+export interface HealthItemCreate {
+  nome: string
+  unidade?: string | null
+  horario_esperado?: string | null
+  descricao?: string | null
+  cor?: string | null
+  ordem?: number
+}
+
+export type HealthItemUpdate = Partial<HealthItemCreate>
+
+// Payload de Registro varia por template. Mantemos como `Record<string, unknown>`
+// no TypeScript — validação real do formato fica no backend.
+export type HealthRecordPayload = Record<string, unknown>
+
+export interface HealthRecord {
+  id: number
+  domain_slug: string
+  item_id: number | null
+  data: string                        // YYYY-MM-DD
+  horario: string | null              // HH:MM
+  payload: HealthRecordPayload
+  notas: string | null
+  criado_em: string
+  atualizado_em: string
+}
+
+export interface HealthRecordCreate {
+  item_id?: number | null
+  data?: string                       // default: hoje no backend
+  horario?: string | null
+  payload: HealthRecordPayload
+  notas?: string | null
+}
+
+export type HealthRecordUpdate = Partial<HealthRecordCreate>
+
+export interface HealthSettings {
+  hora_lembrete_sono: string             // HH:MM, quando lembrete de sono dispara
+  dashboard_card_visivel: boolean
+  atualizado_em: string
+}
+
+export type HealthSettingsUpdate = Partial<{
+  hora_lembrete_sono: string
+  dashboard_card_visivel: boolean
+}>
+
+// Métricas — cidadãs de primeira classe (decisão #4 do PLAN.md de Health).
+// Catálogo retornado por GET /api/health/metrics; valores via GET
+// /api/health/metrics/{slug}?item_id=X (item_id obrigatório se precisa_item).
+
+export type HealthMetricReturnType =
+  | 'float'
+  | 'int'
+  | 'string'
+  | 'date'
+  | 'enum'
+  | 'dict'
+
+export interface HealthMetricMeta {
+  slug: string                        // ex: 'sono_duracao_media_30d'
+  nome: string                        // human-readable
+  domain_slug: string                 // ex: 'sono'
+  tipo_retorno: HealthMetricReturnType
+  unidade: string | null              // ex: 'h', '%', null pra enum/dict
+  precisa_item: boolean
+}
+
+export interface HealthMetricValue {
+  slug: string
+  valor: number | string | Record<string, number> | null
+  unidade: string | null
+  tipo_retorno: HealthMetricReturnType | null
+  dados_disponiveis: boolean
+  ultima_atualizacao: string | null
+  erro?: string                       // só presente em erros suaves
+}
+
+// Pendências do dia — lembretes proativos (passou do horário, sem registro)
+// e ausências retroativas (passou do threshold de dias). Vícios e Medidas
+// Corporais NÃO geram ausência (ausencia_threshold_dias=null). Filosofia
+// em RASCUNHO §3.2.
+
+export type HealthPendingTipo = 'lembrete' | 'ausencia'
+
+export interface HealthPendingItem {
+  tipo: HealthPendingTipo
+  domain_slug: string
+  domain_nome: string
+  item_id: number | null
+  item_nome: string | null
+  descricao: string
+  horario_esperado: string | null     // HH:MM (só pra lembrete)
+  dias: number | null                 // só pra ausência
+}

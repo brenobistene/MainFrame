@@ -295,3 +295,55 @@ class RitualScheduleItem(BaseModel):
     renderizar marcadores no Calendar."""
     cadencia: str
     datas: list[str]                                   # ["YYYY-MM-DD", ...]
+
+
+# ─── Guardrail (v2 — pontes Hub Health) ───────────────────────────────────
+
+OPERADORES_VALIDOS = {">=", "<=", ">", "<", "==", "!="}
+
+
+class GuardrailOut(BaseModel):
+    id: int
+    goal_id: str
+    metric_slug: str
+    item_id: Optional[int] = None
+    operador: str
+    valor_alvo: float
+    descricao: Optional[str] = None
+    ordem: int
+    criado_em: str
+    atualizado_em: str
+
+
+class GuardrailCreate(BaseModel):
+    metric_slug: str = Field(..., min_length=1, max_length=200)
+    item_id: Optional[int] = None
+    operador: str = Field(..., pattern=r"^(>=|<=|>|<|==|!=)$")
+    valor_alvo: float
+    descricao: Optional[str] = Field(None, max_length=500)
+    ordem: Optional[int] = None
+
+
+class GuardrailUpdate(BaseModel):
+    metric_slug: Optional[str] = Field(None, min_length=1, max_length=200)
+    item_id: Optional[int] = None
+    operador: Optional[str] = Field(None, pattern=r"^(>=|<=|>|<|==|!=)$")
+    valor_alvo: Optional[float] = None
+    descricao: Optional[str] = Field(None, max_length=500)
+    ordem: Optional[int] = None
+
+
+class GuardrailEvaluation(BaseModel):
+    """Snapshot do estado de um guardrail. Calculado on-the-fly chamando
+    a Métrica de Hub Health correspondente."""
+    id: int
+    metric_slug: str
+    item_id: Optional[int] = None
+    operador: str
+    valor_alvo: float
+    descricao: Optional[str] = None
+    estado: str                                         # OK | VIOLADO | ESPERANDO_DADOS | METRICA_NAO_ENCONTRADA
+    valor_atual: Optional[float] = None
+    unidade: Optional[str] = None
+    ultima_atualizacao: Optional[str] = None
+    detalhe: Optional[str] = None                       # mensagem human-readable opcional

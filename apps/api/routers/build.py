@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from db import get_conn
+from services.health_metrics import calculate_metric, get_metric_meta
 from models.build import (
     ClassifyProjectBody,
     GoalAreaLink,
@@ -23,6 +24,10 @@ from models.build import (
     GoalOut,
     GoalProgressUpdate,
     GoalUpdate,
+    GuardrailCreate,
+    GuardrailEvaluation,
+    GuardrailOut,
+    GuardrailUpdate,
     LinkProjectGoalBody,
     PrincipleCreate,
     PrincipleOut,
@@ -1276,6 +1281,267 @@ def create_ritual_session(cadencia: str, body: RitualSessionCreate):
             (session_id,),
         ).fetchone()
     return dict(row)
+
+
+# ─── Guardrail (v2 — pontes Hub Health) ───────────────────────────────────
+
+
+GUARDRAIL_COLUMNS = (
+    "id, goal_id, metric_slug, item_id, operador, valor_alvo, "
+    "descricao, ordem, criado_em, atualizado_em"
+)
+
+
+def _validate_metric_slug(metric_slug: str, item_id: Optional[int]) -> None:
+    """Valida que o slug existe no catálogo de Hub Health e que item_id
+    é fornecido se a métrica precisa.
+
+    Importante: slug é validado em runtime contra o catálogo do Health,
+    NUNCA contra const espelhada no /Build (princípio "sem hardcoded").
+    """
+    meta = get_metric_meta(metric_slug)
+    if meta is None:
+        raise HTTPException(
+            422,
+            detail=f"Métrica '{metric_slug}' não existe em Hub Health",
+        )
+    if meta["precisa_item"] and item_id is None:
+        raise HTTPException(
+            422,
+            detail=f"Métrica '{metric_slug}' precisa de item_id (varia por item)",
+        )
+
+
+@router.get("/goals/{goal_id}/guardrails", response_model=list[GuardrailOut])
+def list_goal_guardrails(goal_id: str):
+    with get_conn() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM build_goal WHERE id = ?", (goal_id,)
+        ).fetchone():
+            raise HTTPException(404, detail="Meta não encontrada")
+        rows = conn.execute(
+            f"SELECT {GUARDRAIL_COLUMNS} FROM build_goal_guardrail "
+            "WHERE goal_id = ? ORDER BY ordem ASC, id ASC",
+            (goal_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post(
+    "/goals/{goal_id}/guardrails", response_model=GuardrailOut, status_code=201
+)
+def create_guardrail(goal_id: str, body: GuardrailCreate):
+    """Cria guardrail apontando pra Métrica de Hub Health. Valida slug."""
+    with get_conn() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM build_goal WHERE id = ?", (goal_id,)
+        ).fetchone():
+            raise HTTPException(404, detail="Meta não encontrada")
+
+        _validate_metric_slug(body.metric_slug, body.item_id)
+
+        # Auto-ordem: max+1
+        if body.ordem is None:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(ordem), -1) + 1 AS next_ordem "
+                "FROM build_goal_guardrail WHERE goal_id = ?",
+                (goal_id,),
+            ).fetchone()
+            ordem = row["next_ordem"]
+        else:
+            ordem = body.ordem
+
+        cursor = conn.execute(
+            "INSERT INTO build_goal_guardrail("
+            "goal_id, metric_slug, item_id, operador, valor_alvo, "
+            "descricao, ordem) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                goal_id,
+                body.metric_slug,
+                body.item_id,
+                body.operador,
+                body.valor_alvo,
+                body.descricao,
+                ordem,
+            ),
+        )
+        new_id = cursor.lastrowid
+        conn.commit()
+        row = conn.execute(
+            f"SELECT {GUARDRAIL_COLUMNS} FROM build_goal_guardrail WHERE id = ?",
+            (new_id,),
+        ).fetchone()
+    return dict(row)
+
+
+@router.patch(
+    "/goals/{goal_id}/guardrails/{guardrail_id}", response_model=GuardrailOut
+)
+def update_guardrail(goal_id: str, guardrail_id: int, body: GuardrailUpdate):
+    fields: dict = {}
+    for name in body.model_fields_set:
+        fields[name] = getattr(body, name)
+    if not fields:
+        raise HTTPException(400, detail="Nothing to update")
+
+    # Se mudou metric_slug ou item_id, revalida
+    if "metric_slug" in fields or "item_id" in fields:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT metric_slug, item_id FROM build_goal_guardrail WHERE id = ?",
+                (guardrail_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, detail="Guardrail não encontrado")
+            new_slug = fields.get("metric_slug", row["metric_slug"])
+            new_item = fields.get("item_id", row["item_id"])
+            _validate_metric_slug(new_slug, new_item)
+
+    fields["atualizado_em"] = utcnow_iso_z()
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE build_goal_guardrail SET {set_clause} "
+            "WHERE id = ? AND goal_id = ?",
+            [*fields.values(), guardrail_id, goal_id],
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="Guardrail não encontrado")
+        conn.commit()
+        row = conn.execute(
+            f"SELECT {GUARDRAIL_COLUMNS} FROM build_goal_guardrail WHERE id = ?",
+            (guardrail_id,),
+        ).fetchone()
+    return dict(row)
+
+
+@router.delete(
+    "/goals/{goal_id}/guardrails/{guardrail_id}", status_code=204
+)
+def delete_guardrail(goal_id: str, guardrail_id: int):
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM build_goal_guardrail "
+            "WHERE id = ? AND goal_id = ?",
+            (guardrail_id, goal_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="Guardrail não encontrado")
+        conn.commit()
+
+
+def _evaluate_condition(operador: str, valor_atual: float, valor_alvo: float) -> bool:
+    if operador == ">=": return valor_atual >= valor_alvo
+    if operador == "<=": return valor_atual <= valor_alvo
+    if operador == ">": return valor_atual > valor_alvo
+    if operador == "<": return valor_atual < valor_alvo
+    if operador == "==": return valor_atual == valor_alvo
+    if operador == "!=": return valor_atual != valor_alvo
+    return False
+
+
+def _is_data_too_old(ultima_atualizacao: Optional[str], threshold_days: int) -> bool:
+    """Verifica se a Métrica tem dados mas eles estão velhos demais."""
+    if not ultima_atualizacao:
+        return False
+    try:
+        # Formato esperado: ISO 8601 (UTC ou local)
+        ts = ultima_atualizacao.replace("Z", "+00:00")
+        from datetime import datetime
+        dt = datetime.fromisoformat(ts)
+        idade = (datetime.now(dt.tzinfo) - dt).days
+        return idade > threshold_days
+    except Exception:
+        return False
+
+
+@router.get(
+    "/goals/{goal_id}/guardrails/evaluate",
+    response_model=list[GuardrailEvaluation],
+)
+def evaluate_goal_guardrails(goal_id: str):
+    """Avalia todos os guardrails da Meta. Calcula estado on-the-fly chamando
+    `calculate_metric` de Hub Health in-process (sem HTTP overhead)."""
+    with get_conn() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM build_goal WHERE id = ?", (goal_id,)
+        ).fetchone():
+            raise HTTPException(404, detail="Meta não encontrada")
+
+        guardrails = conn.execute(
+            f"SELECT {GUARDRAIL_COLUMNS} FROM build_goal_guardrail "
+            "WHERE goal_id = ? ORDER BY ordem ASC, id ASC",
+            (goal_id,),
+        ).fetchall()
+
+        # Threshold de dados antigos vem das settings
+        settings_row = conn.execute(
+            "SELECT metric_data_age_threshold_days FROM build_settings WHERE id = 1"
+        ).fetchone()
+        threshold_days = (
+            settings_row["metric_data_age_threshold_days"] if settings_row else 60
+        )
+
+        out: list[dict] = []
+        for g in guardrails:
+            metric_meta = get_metric_meta(g["metric_slug"])
+            if metric_meta is None:
+                # Slug deletado ou renomeado em Hub Health — alerta
+                out.append({
+                    "id": g["id"],
+                    "metric_slug": g["metric_slug"],
+                    "item_id": g["item_id"],
+                    "operador": g["operador"],
+                    "valor_alvo": g["valor_alvo"],
+                    "descricao": g["descricao"],
+                    "estado": "METRICA_NAO_ENCONTRADA",
+                    "valor_atual": None,
+                    "unidade": None,
+                    "ultima_atualizacao": None,
+                    "detalhe": (
+                        f"Métrica '{g['metric_slug']}' não existe mais em Hub Health"
+                    ),
+                })
+                continue
+
+            result = calculate_metric(conn, g["metric_slug"], g["item_id"])
+            valor_atual = result.get("valor")
+            dados_ok = result.get("dados_disponiveis", False)
+            ultima = result.get("ultima_atualizacao")
+
+            if not dados_ok or valor_atual is None:
+                estado = "ESPERANDO_DADOS"
+                detalhe = result.get("erro") or "Sem dados registrados ainda"
+            elif _is_data_too_old(ultima, threshold_days):
+                estado = "ESPERANDO_DADOS"
+                detalhe = f"Dados antigos (>{threshold_days}d sem atualização)"
+            else:
+                # Avalia condição. Só funciona pra valores numéricos.
+                if not isinstance(valor_atual, (int, float)):
+                    estado = "ESPERANDO_DADOS"
+                    detalhe = "Métrica não-numérica não suporta condição"
+                else:
+                    ok = _evaluate_condition(
+                        g["operador"], float(valor_atual), g["valor_alvo"]
+                    )
+                    estado = "OK" if ok else "VIOLADO"
+                    detalhe = None
+
+            out.append({
+                "id": g["id"],
+                "metric_slug": g["metric_slug"],
+                "item_id": g["item_id"],
+                "operador": g["operador"],
+                "valor_alvo": g["valor_alvo"],
+                "descricao": g["descricao"],
+                "estado": estado,
+                "valor_atual": valor_atual if isinstance(valor_atual, (int, float)) else None,
+                "unidade": result.get("unidade"),
+                "ultima_atualizacao": ultima,
+                "detalhe": detalhe,
+            })
+
+    return out
 
 
 # ─── Settings (continuação) ───────────────────────────────────────────────

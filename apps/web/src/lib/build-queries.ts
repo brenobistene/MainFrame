@@ -19,9 +19,12 @@ import {
   createBuildPrinciple,
   createBuildRitualSession,
   createBuildSprint,
+  createGoalGuardrail,
   deleteBuildGoal,
   deleteBuildPrinciple,
   deleteBuildSprint,
+  deleteGoalGuardrail,
+  evaluateGoalGuardrails,
   fetchBuildGoals,
   fetchBuildPrinciples,
   fetchBuildPurpose,
@@ -33,6 +36,7 @@ import {
   fetchBuildVision,
   fetchBuildVisionHistory,
   fetchGoalDependencies,
+  fetchGoalGuardrails,
   fetchProjectsAlignment,
   linkProjectToGoal,
   removeGoalDependency,
@@ -45,6 +49,7 @@ import {
   updateBuildSettings,
   updateBuildSprint,
   updateBuildVision,
+  updateGoalGuardrail,
   updateGoalProgress,
   versionBuildVision,
 } from '../api'
@@ -53,6 +58,8 @@ import type {
   BuildGoalCreate,
   BuildGoalStatus,
   BuildGoalUpdate,
+  BuildGuardrailCreate,
+  BuildGuardrailUpdate,
   BuildPrinciple,
   BuildProjectClassification,
   BuildRitualCadencia,
@@ -92,6 +99,10 @@ export const buildKeys = {
     [...buildKeys.all, 'ritual-sessions', cadencia] as const,
   ritualSchedule: (from: string, to: string) =>
     [...buildKeys.all, 'ritual-schedule', { from, to }] as const,
+  guardrails: (goalId: string) =>
+    [...buildKeys.all, 'guardrails', goalId] as const,
+  guardrailsEval: (goalId: string) =>
+    [...buildKeys.all, 'guardrails-eval', goalId] as const,
 }
 
 // ─── Propósito ────────────────────────────────────────────────────────────
@@ -498,5 +509,69 @@ export function useRitualSchedule(from: string | null, to: string | null) {
     queryFn: () => fetchBuildRitualSchedule(from!, to!),
     enabled: from !== null && to !== null,
     staleTime: 15 * 60 * 1000,
+  })
+}
+
+// ─── Guardrails (v2 — pontes Hub Health) ──────────────────────────────────
+
+export function useGoalGuardrails(goalId: string) {
+  return useQuery({
+    queryKey: buildKeys.guardrails(goalId),
+    queryFn: () => fetchGoalGuardrails(goalId),
+  })
+}
+
+/**
+ * Avaliação dos guardrails: chama Hub Health e calcula estado de cada um.
+ * TTL de 5min — alinhado com decisão #15 do PLAN (cache leve no frontend).
+ */
+export function useGoalGuardrailsEval(goalId: string) {
+  return useQuery({
+    queryKey: buildKeys.guardrailsEval(goalId),
+    queryFn: () => evaluateGoalGuardrails(goalId),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function useCreateGoalGuardrail() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ goalId, body }: { goalId: string; body: BuildGuardrailCreate }) =>
+      createGoalGuardrail(goalId, body),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: buildKeys.guardrails(vars.goalId) })
+      qc.invalidateQueries({ queryKey: buildKeys.guardrailsEval(vars.goalId) })
+    },
+  })
+}
+
+export function useUpdateGoalGuardrail() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      goalId,
+      guardrailId,
+      patch,
+    }: {
+      goalId: string
+      guardrailId: number
+      patch: BuildGuardrailUpdate
+    }) => updateGoalGuardrail(goalId, guardrailId, patch),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: buildKeys.guardrails(vars.goalId) })
+      qc.invalidateQueries({ queryKey: buildKeys.guardrailsEval(vars.goalId) })
+    },
+  })
+}
+
+export function useDeleteGoalGuardrail() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ goalId, guardrailId }: { goalId: string; guardrailId: number }) =>
+      deleteGoalGuardrail(goalId, guardrailId),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: buildKeys.guardrails(vars.goalId) })
+      qc.invalidateQueries({ queryKey: buildKeys.guardrailsEval(vars.goalId) })
+    },
   })
 }

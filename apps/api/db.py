@@ -569,6 +569,29 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_build_ritual_session
             ON build_ritual_session(cadencia, data_executado DESC);
 
+        -- v2 — Guardrail de Meta. Aponta pra Métrica de Hub Health + condição.
+        -- "Espírito" da Meta: Meta pode bater o número principal mas violar
+        -- o guardrail (ex.: 5k/mês AND sono médio ≥ 7h — bate 5k mas dorme 5h).
+        -- Estado calculado on-the-fly: OK / VIOLADO / ESPERANDO_DADOS /
+        -- METRICA_NAO_ENCONTRADA. Sem cache materializado no MVP.
+        --
+        -- metric_slug é validado contra GET /api/health/metrics em runtime
+        -- (princípio "sem hardcoded" — sem const espelhada no /Build).
+        CREATE TABLE IF NOT EXISTS build_goal_guardrail (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            goal_id         TEXT NOT NULL REFERENCES build_goal(id) ON DELETE CASCADE,
+            metric_slug     TEXT NOT NULL,
+            item_id         INTEGER,
+            operador        TEXT NOT NULL,
+            valor_alvo      REAL NOT NULL,
+            descricao       TEXT,
+            ordem           INTEGER NOT NULL DEFAULT 0,
+            criado_em       TEXT DEFAULT (datetime('now')),
+            atualizado_em   TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_build_goal_guardrail_goal
+            ON build_goal_guardrail(goal_id, ordem);
+
         -- ─── Hub Health ───────────────────────────────────────────────────
         -- Módulo de saúde como prática contínua observada. Tabelas com
         -- prefixo `health_`. Schema em docs/hub-health/PLAN.md §3.
@@ -640,9 +663,13 @@ def init_db() -> None:
             ON health_record(item_id, data DESC);
 
         -- Settings do módulo (linha única id=1).
+        -- `lembrete_horas_apos_acordar` ficou deprecado em 2026-05-09 — usar
+        -- `hora_lembrete_sono` (HH:MM) que tem semântica clara. Coluna antiga
+        -- mantida pra compat com bancos existentes (DROP COLUMN só em SQLite ≥3.35).
         CREATE TABLE IF NOT EXISTS health_settings (
             id                              INTEGER PRIMARY KEY CHECK (id = 1),
             lembrete_horas_apos_acordar     INTEGER NOT NULL DEFAULT 4,
+            hora_lembrete_sono              TEXT NOT NULL DEFAULT '10:00',
             dashboard_card_visivel          INTEGER NOT NULL DEFAULT 1,
             atualizado_em                   TEXT DEFAULT (datetime('now'))
         );
@@ -652,6 +679,17 @@ def init_db() -> None:
         # em v1 (pré-Health). Em v2, quando Meta aponta pra metric_slug, esse
         # valor passa a ser puxado automaticamente do Hub Health.
         _try_add_column(conn, "ALTER TABLE build_goal ADD COLUMN criterion_current_value REAL")
+
+        # Hub Health — coluna `hora_lembrete_sono` (HH:MM) substituindo a antiga
+        # `lembrete_horas_apos_acordar` (INT) que tinha semântica confusa.
+        # Default '10:00'. Coluna antiga fica no schema por compat (SQLite não
+        # suporta DROP COLUMN antes de 3.35), mas ignorada pelo backend.
+        _try_add_column(conn, "ALTER TABLE health_settings ADD COLUMN hora_lembrete_sono TEXT NOT NULL DEFAULT '10:00'")
+
+        # Hub Health — coluna `metric_primary_slug` em health_domain pra
+        # configurar qual métrica aparece como vital no Dashboard. Null =
+        # sistema escolhe um default razoável (ver health_metrics).
+        _try_add_column(conn, "ALTER TABLE health_domain ADD COLUMN metric_primary_slug TEXT")
 
         # Garante que existe 1 linha de profile. Nome default é piada — o usuário
         # edita pelo ProfileEditModal no primeiro uso. INSERT OR IGNORE =

@@ -18,7 +18,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Pencil, Plus, X, Check, Archive, History, Star, Target, AlertTriangle, Calendar,
   Link2, ChevronDown, ChevronRight, Wrench, Zap, Compass, Pause, Trash2,
-  Clock, Activity, Settings as SettingsIcon,
+  Clock, Activity, Settings as SettingsIcon, Shield, ShieldAlert, ShieldQuestion,
 } from 'lucide-react'
 
 import { fetchAreas } from '../api'
@@ -26,12 +26,15 @@ import {
   useAddGoalDependency,
   useClassifyProject,
   useCreateGoal,
+  useCreateGoalGuardrail,
   useCreatePrinciple,
   useCreateRitualSession,
   useCreateSprint,
+  useDeleteGoalGuardrail,
   useDeletePrinciple,
   useDeleteSprint,
   useGoalDependencies,
+  useGoalGuardrailsEval,
   useGoals,
   useLinkProjectToGoal,
   usePrinciples,
@@ -49,6 +52,7 @@ import {
   useVision,
   useUpdateVision,
 } from '../lib/build-queries'
+import { useHealthMetricsCatalog, useHealthItems } from '../lib/health-queries'
 import type {
   Area,
   BuildGoal,
@@ -56,11 +60,14 @@ import type {
   BuildGoalCreate,
   BuildGoalCriterionType,
   BuildGoalHorizon,
+  BuildGuardrailEvaluation,
+  BuildGuardrailOperador,
   BuildProjectAlignment,
   BuildProjectClassification,
   BuildRitual,
   BuildRitualCadencia,
   BuildSprint,
+  HealthMetricMeta,
 } from '../types'
 
 // ─── Tokens visuais (Neomilitarism — calibrado em 2026-05-09 com refs CP2077) ──
@@ -328,10 +335,11 @@ function GoalRow({ goal }: { goal: BuildGoal }) {
         </div>
       )}
 
-      {/* Sub-painéis: progresso (numérico) + sprints (anual) + deps */}
+      {/* Sub-painéis: progresso (numérico) + sprints (anual) + deps + guardrails */}
       {goal.criterion_type === 'numeric' && <GoalProgressBar goal={goal} />}
       {goal.horizon === 'anual' && <SprintsInline goal={goal} />}
       <DependenciesInline goal={goal} />
+      <GuardrailsInline goal={goal} />
 
       {/* Ações rápidas */}
       <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
@@ -1845,6 +1853,378 @@ function RitualConfigModal({
             disabled={updateRitual.isPending}
           />
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Guardrails (v2 — pontes Hub Health) ──────────────────────────────────
+
+const GUARDRAIL_STATE_STYLE: Record<
+  BuildGuardrailEvaluation['estado'],
+  { color: string; icon: React.ReactNode; label: string }
+> = {
+  OK: {
+    color: NEO.cyan,
+    icon: <Shield size={11} />,
+    label: 'OK',
+  },
+  VIOLADO: {
+    color: NEO.accent,
+    icon: <ShieldAlert size={11} />,
+    label: 'VIOLADO',
+  },
+  ESPERANDO_DADOS: {
+    color: NEO.textMuted,
+    icon: <ShieldQuestion size={11} />,
+    label: 'ESPERANDO DADOS',
+  },
+  METRICA_NAO_ENCONTRADA: {
+    color: '#ffb300',  // âmbar (alinhado com Hub Health)
+    icon: <AlertTriangle size={11} />,
+    label: 'MÉTRICA SUMIU',
+  },
+}
+
+function GuardrailsInline({ goal }: { goal: BuildGoal }) {
+  const { data: guardrails = [] } = useGoalGuardrailsEval(goal.id)
+  const removeGuardrail = useDeleteGoalGuardrail()
+  const [adding, setAdding] = useState(false)
+
+  if (guardrails.length === 0 && !adding) {
+    return (
+      <div style={{ marginTop: 4 }}>
+        <MicroBtn onClick={() => setAdding(true)} label="+ guardrail (espírito)" />
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      {guardrails.length > 0 && (
+        <>
+          <div
+            style={{
+              fontSize: 9,
+              color: NEO.textMuted,
+              letterSpacing: '0.2em',
+              textTransform: 'uppercase',
+              marginBottom: 4,
+            }}
+          >
+            Guardrails · Espírito da Meta
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {guardrails.map((g) => (
+              <GuardrailRow
+                key={g.id}
+                ev={g}
+                onRemove={() =>
+                  removeGuardrail.mutate({ goalId: goal.id, guardrailId: g.id })
+                }
+              />
+            ))}
+          </div>
+        </>
+      )}
+      {adding ? (
+        <GuardrailAddForm
+          goalId={goal.id}
+          onClose={() => setAdding(false)}
+        />
+      ) : (
+        <div style={{ marginTop: 4 }}>
+          <MicroBtn onClick={() => setAdding(true)} label="+ guardrail" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GuardrailRow({
+  ev,
+  onRemove,
+}: {
+  ev: BuildGuardrailEvaluation
+  onRemove: () => void
+}) {
+  const style = GUARDRAIL_STATE_STYLE[ev.estado]
+  const fmtVal = (v: number | null) =>
+    v === null
+      ? '—'
+      : Number.isInteger(v)
+      ? String(v)
+      : v.toFixed(2).replace(/\.?0+$/, '')
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '3px 8px',
+        background: 'transparent',
+        border: `1px solid ${style.color}55`,
+        borderLeft: `2px solid ${style.color}`,
+        fontSize: 11,
+      }}
+      title={ev.detalhe ?? undefined}
+    >
+      <span style={{ color: style.color, display: 'flex' }}>{style.icon}</span>
+      <span
+        style={{
+          flex: 1,
+          color: NEO.textPrimary,
+          fontFamily: MONO,
+        }}
+      >
+        <span style={{ color: NEO.textMuted }}>{ev.metric_slug}</span>{' '}
+        <span style={{ color: NEO.cyan }}>{ev.operador}</span>{' '}
+        <span style={{ color: NEO.textPrimary, fontWeight: 700 }}>
+          {fmtVal(ev.valor_alvo)}
+          {ev.unidade ? ` ${ev.unidade}` : ''}
+        </span>
+        {ev.estado === 'OK' || ev.estado === 'VIOLADO' ? (
+          <span style={{ color: NEO.textMuted, marginLeft: 8 }}>
+            atual: <span style={{ color: style.color }}>{fmtVal(ev.valor_atual)}</span>
+          </span>
+        ) : null}
+      </span>
+      <span
+        style={{
+          fontSize: 9,
+          color: style.color,
+          letterSpacing: '0.1em',
+          fontWeight: 700,
+        }}
+      >
+        {style.label}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remover guardrail"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: NEO.textMuted,
+          cursor: 'pointer',
+          padding: 2,
+          display: 'flex',
+        }}
+      >
+        <X size={10} />
+      </button>
+    </div>
+  )
+}
+
+function GuardrailAddForm({
+  goalId,
+  onClose,
+}: {
+  goalId: string
+  onClose: () => void
+}) {
+  const { data: catalog = [] } = useHealthMetricsCatalog()
+  const createGuardrail = useCreateGoalGuardrail()
+  const [metricSlug, setMetricSlug] = useState('')
+  const [itemId, setItemId] = useState<string>('')
+  const [operador, setOperador] = useState<BuildGuardrailOperador>('>=')
+  const [valorAlvo, setValorAlvo] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const selectedMeta: HealthMetricMeta | undefined = catalog.find((m) => m.slug === metricSlug)
+  // Items só carregados quando a métrica selecionada precisa de item
+  const { data: items = [] } = useHealthItems(selectedMeta?.domain_slug ?? '', false)
+  const needsItem = selectedMeta?.precisa_item ?? false
+
+  // Agrupa catálogo por domínio pra select organizado
+  const grouped = useMemo(() => {
+    const g: Record<string, HealthMetricMeta[]> = {}
+    for (const m of catalog) {
+      if (!g[m.domain_slug]) g[m.domain_slug] = []
+      g[m.domain_slug].push(m)
+    }
+    return g
+  }, [catalog])
+
+  function submit() {
+    if (!metricSlug || !valorAlvo.trim()) {
+      setError('Preencha métrica e valor alvo')
+      return
+    }
+    if (needsItem && !itemId) {
+      setError('Essa métrica precisa de um item específico')
+      return
+    }
+    setError(null)
+    createGuardrail.mutate(
+      {
+        goalId,
+        body: {
+          metric_slug: metricSlug,
+          item_id: needsItem ? Number(itemId) : null,
+          operador,
+          valor_alvo: Number(valorAlvo),
+        },
+      },
+      {
+        onSuccess: onClose,
+        onError: (err) => setError(err instanceof Error ? err.message : 'Erro'),
+      },
+    )
+  }
+
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        padding: 10,
+        border: `1px dashed ${NEO.borderHot}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 9,
+          color: NEO.textMuted,
+          letterSpacing: '0.2em',
+          textTransform: 'uppercase',
+        }}
+      >
+        Adicionar guardrail (Hub Health)
+      </div>
+
+      {/* Select de métrica */}
+      <select
+        value={metricSlug}
+        onChange={(e) => {
+          setMetricSlug(e.target.value)
+          setItemId('')
+        }}
+        style={{
+          background: NEO.bg,
+          color: NEO.textPrimary,
+          border: `1px solid ${NEO.border}`,
+          padding: '4px 8px',
+          fontFamily: MONO,
+          fontSize: 11,
+          outline: 'none',
+        }}
+      >
+        <option value="">— escolha uma métrica —</option>
+        {Object.entries(grouped).map(([domain, metrics]) => (
+          <optgroup key={domain} label={domain}>
+            {metrics.map((m) => (
+              <option key={m.slug} value={m.slug}>
+                {m.nome}
+                {m.precisa_item ? ' (precisa item)' : ''}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+
+      {/* Select de item — só se métrica precisa */}
+      {needsItem && (
+        <select
+          value={itemId}
+          onChange={(e) => setItemId(e.target.value)}
+          style={{
+            background: NEO.bg,
+            color: NEO.textPrimary,
+            border: `1px solid ${NEO.border}`,
+            padding: '4px 8px',
+            fontFamily: MONO,
+            fontSize: 11,
+            outline: 'none',
+          }}
+        >
+          <option value="">— escolha um item de {selectedMeta?.domain_slug} —</option>
+          {items.map((it) => (
+            <option key={it.id} value={it.id}>
+              {it.nome}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Operador + valor alvo */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <select
+          value={operador}
+          onChange={(e) => setOperador(e.target.value as BuildGuardrailOperador)}
+          style={{
+            background: NEO.bg,
+            color: NEO.cyan,
+            border: `1px solid ${NEO.border}`,
+            padding: '4px 8px',
+            fontFamily: MONO,
+            fontSize: 11,
+            fontWeight: 700,
+            outline: 'none',
+          }}
+        >
+          <option value=">=">≥</option>
+          <option value="<=">≤</option>
+          <option value=">">&gt;</option>
+          <option value="<">&lt;</option>
+          <option value="==">=</option>
+          <option value="!=">≠</option>
+        </select>
+        <input
+          type="number"
+          value={valorAlvo}
+          onChange={(e) => setValorAlvo(e.target.value)}
+          placeholder="valor alvo"
+          step="any"
+          style={{
+            flex: 1,
+            background: NEO.bg,
+            color: NEO.textPrimary,
+            border: `1px solid ${NEO.border}`,
+            padding: '4px 8px',
+            fontFamily: MONO,
+            fontSize: 11,
+            outline: 'none',
+          }}
+        />
+        {selectedMeta?.unidade && (
+          <span style={{ fontSize: 10, color: NEO.textMuted }}>
+            {selectedMeta.unidade}
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ fontSize: 10, color: NEO.accent }}>{error}</div>
+      )}
+
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <MicroBtn onClick={onClose} label="cancelar" />
+        <button
+          type="button"
+          onClick={submit}
+          disabled={createGuardrail.isPending}
+          style={{
+            background: NEO.accent,
+            color: '#000',
+            border: `1px solid ${NEO.accent}`,
+            padding: '3px 10px',
+            fontFamily: MONO,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            cursor: createGuardrail.isPending ? 'wait' : 'pointer',
+            opacity: createGuardrail.isPending ? 0.6 : 1,
+          }}
+        >
+          adicionar
+        </button>
       </div>
     </div>
   )

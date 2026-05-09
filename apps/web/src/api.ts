@@ -13,6 +13,13 @@ import type {
   BuildSprint, BuildSprintCreate, BuildSprintUpdate, BuildGoalDependency,
   BuildRitual, BuildRitualCadencia, BuildRitualUpdate, BuildRitualSession,
   BuildRitualSessionCreate, BuildRitualScheduleItem,
+  BuildGuardrail, BuildGuardrailCreate, BuildGuardrailUpdate, BuildGuardrailEvaluation,
+  HealthDomain, HealthDomainCreate, HealthDomainUpdate,
+  HealthItem, HealthItemCreate, HealthItemUpdate,
+  HealthRecord, HealthRecordCreate, HealthRecordUpdate,
+  HealthSettings, HealthSettingsUpdate,
+  HealthMetricMeta, HealthMetricValue,
+  HealthPendingItem,
 } from './types'
 
 // URL base do backend. Default aponta pro backend local padrão; pode ser
@@ -1344,3 +1351,158 @@ export const fetchBuildRitualSchedule = (from: string, to: string) =>
   get<BuildRitualScheduleItem[]>(
     `/api/build/rituals/schedule?from=${from}&to=${to}`,
   )
+
+// Guardrails (v2 — pontes Hub Health)
+export const fetchGoalGuardrails = (goalId: string) =>
+  get<BuildGuardrail[]>(`/api/build/goals/${goalId}/guardrails`)
+
+export const evaluateGoalGuardrails = (goalId: string) =>
+  get<BuildGuardrailEvaluation[]>(
+    `/api/build/goals/${goalId}/guardrails/evaluate`,
+  )
+
+export const createGoalGuardrail = (
+  goalId: string,
+  body: BuildGuardrailCreate,
+) =>
+  jsonFetch<BuildGuardrail>(`/api/build/goals/${goalId}/guardrails`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const updateGoalGuardrail = (
+  goalId: string,
+  guardrailId: number,
+  patch: BuildGuardrailUpdate,
+) =>
+  jsonFetch<BuildGuardrail>(
+    `/api/build/goals/${goalId}/guardrails/${guardrailId}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  )
+
+export const deleteGoalGuardrail = (goalId: string, guardrailId: number) =>
+  jsonFetch<void>(
+    `/api/build/goals/${goalId}/guardrails/${guardrailId}`,
+    { method: 'DELETE' },
+  )
+
+// ─── Hub Health ────────────────────────────────────────────────────────────
+// Endpoints documentados em docs/hub-health/PLAN.md.
+// Estrutura: Domínio → (Item) → Registro → Métrica.
+
+// Domínios
+export const fetchHealthDomains = (includeInactive = false) =>
+  get<HealthDomain[]>(
+    `/api/health/domains${includeInactive ? '?include_inactive=true' : ''}`,
+  )
+
+export const fetchHealthDomain = (slug: string) =>
+  get<HealthDomain>(`/api/health/domains/${slug}`)
+
+export const createHealthDomain = (body: HealthDomainCreate) =>
+  jsonFetch<HealthDomain>('/api/health/domains', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const updateHealthDomain = (slug: string, patch: HealthDomainUpdate) =>
+  jsonFetch<HealthDomain>(`/api/health/domains/${slug}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteHealthDomain = (slug: string) =>
+  jsonFetch<void>(`/api/health/domains/${slug}`, { method: 'DELETE' })
+
+// Itens
+export const fetchHealthItems = (domainSlug: string, includeArchived = false) =>
+  get<HealthItem[]>(
+    `/api/health/domains/${domainSlug}/items${
+      includeArchived ? '?include_archived=true' : ''
+    }`,
+  )
+
+export const createHealthItem = (domainSlug: string, body: HealthItemCreate) =>
+  jsonFetch<HealthItem>(`/api/health/domains/${domainSlug}/items`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const updateHealthItem = (id: number, patch: HealthItemUpdate) =>
+  jsonFetch<HealthItem>(`/api/health/items/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const archiveHealthItem = (id: number) =>
+  jsonFetch<HealthItem>(`/api/health/items/${id}/archive`, { method: 'POST' })
+
+export const unarchiveHealthItem = (id: number) =>
+  jsonFetch<HealthItem>(`/api/health/items/${id}/unarchive`, { method: 'POST' })
+
+export const deleteHealthItem = (id: number) =>
+  jsonFetch<void>(`/api/health/items/${id}`, { method: 'DELETE' })
+
+// Registros
+export interface HealthRecordsQuery {
+  from?: string         // YYYY-MM-DD
+  to?: string
+  itemId?: number
+  limit?: number
+}
+
+export const fetchHealthRecords = (
+  domainSlug: string,
+  query: HealthRecordsQuery = {},
+) => {
+  const params = new URLSearchParams()
+  if (query.from) params.set('from', query.from)
+  if (query.to) params.set('to', query.to)
+  if (query.itemId !== undefined) params.set('item_id', String(query.itemId))
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  const qs = params.toString()
+  return get<HealthRecord[]>(
+    `/api/health/domains/${domainSlug}/records${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export const createHealthRecord = (
+  domainSlug: string,
+  body: HealthRecordCreate,
+) =>
+  jsonFetch<HealthRecord>(`/api/health/domains/${domainSlug}/records`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const updateHealthRecord = (id: number, patch: HealthRecordUpdate) =>
+  jsonFetch<HealthRecord>(`/api/health/records/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteHealthRecord = (id: number) =>
+  jsonFetch<void>(`/api/health/records/${id}`, { method: 'DELETE' })
+
+// Settings
+export const fetchHealthSettings = () =>
+  get<HealthSettings>('/api/health/settings')
+
+export const updateHealthSettings = (patch: HealthSettingsUpdate) =>
+  jsonFetch<HealthSettings>('/api/health/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+// Métricas
+export const fetchHealthMetricsCatalog = () =>
+  get<HealthMetricMeta[]>('/api/health/metrics')
+
+export const fetchHealthMetricValue = (slug: string, itemId?: number) => {
+  const qs = itemId !== undefined ? `?item_id=${itemId}` : ''
+  return get<HealthMetricValue>(`/api/health/metrics/${slug}${qs}`)
+}
+
+// Pendências (lembretes + ausência)
+export const fetchHealthPending = () =>
+  get<HealthPendingItem[]>('/api/health/pending')
