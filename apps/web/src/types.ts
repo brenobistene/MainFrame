@@ -728,3 +728,10 @@ export interface BuildRitualSessionCreate {
   notas?: string | null
   foco_proxima_periodo?: string | null
 }
+
+// Lista de datas de cada cadência ativa num intervalo. Usado pra renderizar
+// marcadores no Calendar.
+export interface BuildRitualScheduleItem {
+  cadencia: BuildRitualCadencia
+  datas: string[]                     // YYYY-MM-DD
+}

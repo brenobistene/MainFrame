@@ -10,7 +10,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from db import get_conn
 from models.build import (
@@ -31,6 +31,7 @@ from models.build import (
     PurposeOut,
     PurposeUpdate,
     RitualOut,
+    RitualScheduleItem,
     RitualSessionCreate,
     RitualSessionOut,
     RitualUpdate,
@@ -1101,6 +1102,59 @@ def _hydrate_ritual(conn, row) -> dict:
         "ultima_execucao": ultima,
         "dias_atraso": dias_atraso,
     }
+
+
+def _generate_schedule_dates(
+    cadencia: str, cfg: dict, d_from: date, d_to: date
+) -> list[date]:
+    """Gera todas as ocorrências de uma cadência num intervalo [d_from, d_to].
+
+    Reusa _calc_proxima_data iterativamente: pega a próxima a partir de
+    d_from, depois "avança 1 dia" e pede a próxima de novo, até passar de
+    d_to. Cap de 1000 datas por segurança (intervalo absurdo + cadência
+    semanal daria ~52/ano).
+    """
+    out: list[date] = []
+    cursor = d_from
+    while cursor <= d_to and len(out) < 1000:
+        nxt = _calc_proxima_data(cadencia, cfg, cursor)
+        if not nxt or nxt > d_to:
+            break
+        out.append(nxt)
+        cursor = nxt + timedelta(days=1)
+    return out
+
+
+@router.get("/rituals/schedule", response_model=list[RitualScheduleItem])
+def list_rituals_schedule(
+    from_: str = Query(..., alias="from"),
+    to: str = Query(...),
+):
+    """Datas agendadas de cada cadência no intervalo. Usado pra renderizar
+    marcadores no Calendar (mês/semana). Só rituais ativos entram."""
+    try:
+        d_from = date.fromisoformat(from_)
+        d_to = date.fromisoformat(to)
+    except ValueError:
+        raise HTTPException(422, detail="Datas inválidas (use YYYY-MM-DD)")
+    if d_to < d_from:
+        raise HTTPException(422, detail="`to` deve ser >= `from`")
+    if (d_to - d_from).days > 730:
+        raise HTTPException(422, detail="Intervalo máximo: 2 anos")
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT cadencia, schedule_config FROM build_ritual WHERE ativo = 1"
+        ).fetchall()
+
+    out = []
+    for row in rows:
+        cfg = json.loads(row["schedule_config"]) if row["schedule_config"] else {}
+        datas = _generate_schedule_dates(row["cadencia"], cfg, d_from, d_to)
+        out.append(
+            {"cadencia": row["cadencia"], "datas": [d.isoformat() for d in datas]}
+        )
+    return out
 
 
 @router.get("/rituals", response_model=list[RitualOut])

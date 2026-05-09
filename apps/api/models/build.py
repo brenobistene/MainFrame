@@ -288,3 +288,10 @@ class RitualSessionCreate(BaseModel):
     duracao_min: Optional[int] = Field(None, ge=1)
     notas: Optional[str] = Field(None, max_length=10000)
     foco_proxima_periodo: Optional[str] = Field(None, max_length=2000)
+
+
+class RitualScheduleItem(BaseModel):
+    """Datas agendadas de uma cadência num intervalo de tempo. Usado pra
+    renderizar marcadores no Calendar."""
+    cadencia: str
+    datas: list[str]                                   # ["YYYY-MM-DD", ...]

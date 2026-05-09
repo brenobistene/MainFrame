@@ -12,7 +12,7 @@ import type {
   BuildProjectAlignment, BuildProjectClassification,
   BuildSprint, BuildSprintCreate, BuildSprintUpdate, BuildGoalDependency,
   BuildRitual, BuildRitualCadencia, BuildRitualUpdate, BuildRitualSession,
-  BuildRitualSessionCreate,
+  BuildRitualSessionCreate, BuildRitualScheduleItem,
 } from './types'
 
 // URL base do backend. Default aponta pro backend local padrão; pode ser
@@ -1339,3 +1339,8 @@ export const createBuildRitualSession = (
     method: 'POST',
     body: JSON.stringify(body),
   })
+
+export const fetchBuildRitualSchedule = (from: string, to: string) =>
+  get<BuildRitualScheduleItem[]>(
+    `/api/build/rituals/schedule?from=${from}&to=${to}`,
+  )

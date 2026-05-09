@@ -25,6 +25,7 @@ import {
   fetchBuildGoals,
   fetchBuildPrinciples,
   fetchBuildPurpose,
+  fetchBuildRitualSchedule,
   fetchBuildRitualSessions,
   fetchBuildRituals,
   fetchBuildSettings,
@@ -89,6 +90,8 @@ export const buildKeys = {
   rituals: () => [...buildKeys.all, 'rituals'] as const,
   ritualSessions: (cadencia: BuildRitualCadencia) =>
     [...buildKeys.all, 'ritual-sessions', cadencia] as const,
+  ritualSchedule: (from: string, to: string) =>
+    [...buildKeys.all, 'ritual-schedule', { from, to }] as const,
 }
 
 // ─── Propósito ────────────────────────────────────────────────────────────
@@ -481,5 +484,19 @@ export function useCreateRitualSession() {
       })
       qc.invalidateQueries({ queryKey: buildKeys.rituals() })
     },
+  })
+}
+
+/**
+ * Schedule de cada cadência num intervalo de datas. Usado pra renderizar
+ * marcadores no Calendar (mês/semana). TTL longo porque o agendamento muda
+ * raramente (só quando usuário edita schedule_config) — 15min.
+ */
+export function useRitualSchedule(from: string | null, to: string | null) {
+  return useQuery({
+    queryKey: buildKeys.ritualSchedule(from ?? '', to ?? ''),
+    queryFn: () => fetchBuildRitualSchedule(from!, to!),
+    enabled: from !== null && to !== null,
+    staleTime: 15 * 60 * 1000,
   })
 }

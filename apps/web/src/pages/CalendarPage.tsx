@@ -10,6 +10,8 @@ import { getAllBlockRangesForDay } from '../utils/blocks'
 import { Card } from '../components/ui/Primitives'
 import { alertDialog } from '../lib/dialog'
 import { RitualNextCard } from '../components/RitualNextCard'
+import { useRitualSchedule } from '../lib/build-queries'
+import type { BuildRitualCadencia } from '../types'
 
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                      'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
@@ -135,6 +137,33 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
   // congelado no instante do mount, o que dava sensação de atraso conforme
   // o tempo passa.
   const [currentTime, setCurrentTime] = useState(new Date())
+
+  // Schedule de rituais no mês visível — só carregado quando viewMode === 'mês'.
+  // Renderiza marcadores nas células dos dias com ritual agendado.
+  const monthRange = useMemo(() => {
+    if (viewMode !== 'mês') return { from: null, to: null }
+    const y = currentDate.getFullYear()
+    const m = currentDate.getMonth()
+    const lastDay = new Date(y, m + 1, 0).getDate()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return {
+      from: `${y}-${pad(m + 1)}-01`,
+      to: `${y}-${pad(m + 1)}-${pad(lastDay)}`,
+    }
+  }, [viewMode, currentDate])
+  const { data: ritualSchedule = [] } = useRitualSchedule(monthRange.from, monthRange.to)
+  const ritualsByDate = useMemo(() => {
+    const map = new Map<string, BuildRitualCadencia[]>()
+    for (const item of ritualSchedule) {
+      for (const dt of item.datas) {
+        const arr = map.get(dt) ?? []
+        arr.push(item.cadencia)
+        map.set(dt, arr)
+      }
+    }
+    return map
+  }, [ritualSchedule])
+
   useEffect(() => {
     const update = () => setCurrentTime(new Date())
     update()
@@ -1970,6 +1999,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                 const dayQuests = questsForDay(dayIso)
                 const dayRoutines = routinesForDay(dayIso)
                 const isToday = dayIso === todayIso
+                const dayRituals = ritualsByDate.get(dayIso) ?? []
 
                 cells.push(
                   <div key={day} style={{
@@ -1981,14 +2011,41 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                     minHeight: 80, display: 'flex', flexDirection: 'column',
                   }}>
                     <div style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 11, fontWeight: 700,
-                      color: isToday ? 'var(--color-ice-light)' : 'var(--color-text-primary)',
-                      letterSpacing: '0.04em',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
                       marginBottom: 6,
-                      textShadow: isToday ? '0 0 6px rgba(143, 191, 211, 0.45)' : 'none',
                     }}>
-                      {day}
+                      <div style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 11, fontWeight: 700,
+                        color: isToday ? 'var(--color-ice-light)' : 'var(--color-text-primary)',
+                        letterSpacing: '0.04em',
+                        textShadow: isToday ? '0 0 6px rgba(143, 191, 211, 0.45)' : 'none',
+                      }}>
+                        {day}
+                      </div>
+                      {/* Marcadores de ritual — bolinha vermelha por cadência
+                          agendada nesse dia. Hover mostra quais (title nativo). */}
+                      {dayRituals.length > 0 && (
+                        <div
+                          style={{ display: 'flex', gap: 2 }}
+                          title={`Ritual${dayRituals.length === 1 ? '' : 'is'}: ${dayRituals.join(', ')}`}
+                        >
+                          {dayRituals.map((c) => (
+                            <span
+                              key={c}
+                              style={{
+                                width: 5,
+                                height: 5,
+                                borderRadius: '50%',
+                                background: '#dc2531',
+                                boxShadow: '0 0 4px rgba(220, 37, 49, 0.6)',
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div style={{
                       flex: 1,
