@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 
 import { fetchAreas } from '../api'
+import { confirmDialog } from '../lib/dialog'
 import {
   useAddGoalDependency,
   useClassifyProject,
@@ -361,9 +362,19 @@ function GoalRow({ goal }: { goal: BuildGoal }) {
           label="∥ pausar"
         />
         <MicroBtn
-          onClick={() =>
+          onClick={async () => {
+            const ok = await confirmDialog({
+              title: 'Abandonar Meta',
+              message:
+                `Vai abandonar "${goal.titulo}"? A Meta sai da lista de ativas mas o ` +
+                'histórico fica preservado (não deleta nada). Você pode reativá-la ' +
+                'depois editando o status.',
+              confirmLabel: 'ABANDONAR',
+              danger: true,
+            })
+            if (!ok) return
             updateGoal.mutate({ id: goal.id, patch: { status: 'abandonada' } })
-          }
+          }}
           label="× abandonar"
         />
       </div>
@@ -4041,7 +4052,21 @@ function VisionPanel() {
     setVersioning(true)
   }
 
-  function commitVersion() {
+  async function commitVersion() {
+    // Só pede confirmação se já existe Visão atual (vai arquivar). Primeira
+    // criação não precisa.
+    if (vision) {
+      const ok = await confirmDialog({
+        title: 'Versionar Visão',
+        message:
+          `A Visão atual será arquivada (preservada no histórico) e a nova ` +
+          `entra como ativa. Use isso quando sua direção mudou de verdade — ` +
+          `pra ajustes pequenos use 'Editar'. Continuar?`,
+        confirmLabel: 'VERSIONAR',
+        danger: true,
+      })
+      if (!ok) return
+    }
     versionVision.mutate(
       {
         texto: draftTexto.trim(),
