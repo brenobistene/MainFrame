@@ -42,6 +42,7 @@ import {
   useProjectsAlignment,
   usePurpose,
   useRemoveGoalDependency,
+  useReplaceGoalAreas,
   useRituals,
   useRitualSessions,
   useSprints,
@@ -3007,6 +3008,12 @@ function GoalEditModal({
   onClose: () => void
 }) {
   const updateGoal = useUpdateGoal()
+  const replaceAreas = useReplaceGoalAreas()
+  const { data: areasList = [] } = useQuery({
+    queryKey: ['areas-list'],
+    queryFn: fetchAreas,
+    staleTime: 5 * 60 * 1000,
+  })
   const [titulo, setTitulo] = useState(goal.titulo)
   const [descricao, setDescricao] = useState(goal.descricao ?? '')
   const [horizon, setHorizon] = useState<BuildGoalHorizon>(goal.horizon)
@@ -3023,6 +3030,13 @@ function GoalEditModal({
     goal.criterion_metric_item_id !== null
       ? String(goal.criterion_metric_item_id)
       : '',
+  )
+  // Áreas — inicializa do goal atual. Set selecionados + primária.
+  const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(
+    () => new Set(goal.areas.map((a) => a.area_slug)),
+  )
+  const [primarySlug, setPrimarySlug] = useState<string | null>(
+    () => goal.areas.find((a) => a.is_primary)?.area_slug ?? null,
   )
   const [error, setError] = useState<string | null>(null)
 
@@ -3045,9 +3059,54 @@ function GoalEditModal({
 
   const isNumeric = goal.criterion_type === 'numeric'
 
+  // Helpers de seleção de áreas — mesmo padrão do GoalCreateModal
+  function toggleArea(slug: string) {
+    setSelectedSlugs((prev) => {
+      const next = new Set(prev)
+      if (next.has(slug)) {
+        next.delete(slug)
+        if (primarySlug === slug) {
+          const replacement = next.values().next().value ?? null
+          setPrimarySlug(replacement)
+        }
+      } else {
+        next.add(slug)
+        if (primarySlug === null) setPrimarySlug(slug)
+      }
+      return next
+    })
+  }
+  function makePrimary(slug: string) {
+    setSelectedSlugs((prev) => {
+      if (prev.has(slug)) return prev
+      const next = new Set(prev)
+      next.add(slug)
+      return next
+    })
+    setPrimarySlug(slug)
+  }
+
+  // Detecta se a lista de áreas mudou vs goal atual
+  const areasChanged = useMemo(() => {
+    const currentSet = new Set(goal.areas.map((a) => a.area_slug))
+    if (currentSet.size !== selectedSlugs.size) return true
+    for (const s of selectedSlugs) if (!currentSet.has(s)) return true
+    const currentPrimary = goal.areas.find((a) => a.is_primary)?.area_slug ?? null
+    return currentPrimary !== primarySlug
+  }, [goal.areas, selectedSlugs, primarySlug])
+
   function submit() {
     if (!titulo.trim() || !dataAlvo) {
       setError('Título e data alvo são obrigatórios')
+      return
+    }
+    // Validações de áreas
+    if (selectedSlugs.size === 0) {
+      setError('Meta precisa de pelo menos 1 área')
+      return
+    }
+    if (!primarySlug || !selectedSlugs.has(primarySlug)) {
+      setError('Marque uma área como primária (★)')
       return
     }
     if (isNumeric && !criterionTarget.trim()) {
@@ -3097,18 +3156,46 @@ function GoalEditModal({
       }
     }
 
-    if (Object.keys(patch).length === 0) {
+    const hasPatch = Object.keys(patch).length > 0
+    if (!hasPatch && !areasChanged) {
       onClose()
       return
     }
 
-    updateGoal.mutate(
-      { id: goal.id, patch: patch as any },
-      {
-        onSuccess: () => onClose(),
-        onError: (err) => setError(err instanceof Error ? err.message : 'Erro'),
-      },
-    )
+    // Salva primeiro o patch de campos (se houver), depois áreas (se mudaram).
+    // Sequencial pra reportar erro do primeiro que falhar sem confundir UI.
+    const saveAreasThenClose = () => {
+      if (!areasChanged) {
+        onClose()
+        return
+      }
+      const allAreas: BuildGoalAreaLink[] = [
+        { area_slug: primarySlug!, is_primary: true },
+        ...Array.from(selectedSlugs)
+          .filter((s) => s !== primarySlug)
+          .map((s) => ({ area_slug: s, is_primary: false })),
+      ]
+      replaceAreas.mutate(
+        { id: goal.id, areas: allAreas },
+        {
+          onSuccess: () => onClose(),
+          onError: (err) =>
+            setError(err instanceof Error ? err.message : 'Erro nas áreas'),
+        },
+      )
+    }
+
+    if (hasPatch) {
+      updateGoal.mutate(
+        { id: goal.id, patch: patch as any },
+        {
+          onSuccess: () => saveAreasThenClose(),
+          onError: (err) => setError(err instanceof Error ? err.message : 'Erro'),
+        },
+      )
+    } else {
+      saveAreasThenClose()
+    }
   }
 
   return (
@@ -3183,7 +3270,7 @@ function GoalEditModal({
             textTransform: 'uppercase',
           }}
         >
-          // áreas e dependências têm fluxo próprio. critério (booleano/numérico) não muda.
+          // dependências têm fluxo próprio (no card). critério (booleano/numérico) não muda.
         </div>
 
         <Label>TÍTULO</Label>
@@ -3328,6 +3415,99 @@ function GoalEditModal({
             )}
           </>
         )}
+
+        {/* Áreas — seletor inline */}
+        <div style={{ marginBottom: 14 }}>
+          <Label>ÁREAS DA VIDA</Label>
+          <div
+            style={{
+              fontSize: 10,
+              color: NEO.textMuted,
+              marginTop: 4,
+              marginBottom: 8,
+            }}
+          >
+            Clique pra selecionar/desselecionar. ★ marca a área primária (cor).
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {areasList.map((a: Area) => {
+              const isSelected = selectedSlugs.has(a.slug)
+              const isPrimary = primarySlug === a.slug
+              return (
+                <div
+                  key={a.slug}
+                  onClick={() => toggleArea(a.slug)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '6px 10px',
+                    background: isSelected ? `${a.color}15` : 'transparent',
+                    border: `1px solid ${isSelected ? a.color : NEO.border}`,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 12,
+                      height: 12,
+                      border: `1.5px solid ${isSelected ? a.color : NEO.textMuted}`,
+                      background: isSelected ? a.color : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {isSelected && <Check size={9} color={NEO.bg} strokeWidth={3} />}
+                  </span>
+                  <span
+                    style={{
+                      color: isSelected ? NEO.textPrimary : NEO.textSecondary,
+                      fontSize: 12,
+                      flex: 1,
+                    }}
+                  >
+                    {a.name}
+                  </span>
+                  <button
+                    type="button"
+                    title={isPrimary ? 'Área primária' : 'Tornar primária'}
+                    disabled={!isSelected}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (isSelected) makePrimary(a.slug)
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: isPrimary ? a.color : NEO.textMuted,
+                      cursor: isSelected ? 'pointer' : 'not-allowed',
+                      padding: 4,
+                      display: 'flex',
+                      opacity: isSelected ? 1 : 0.3,
+                    }}
+                  >
+                    <Star size={13} fill={isPrimary ? a.color : 'transparent'} />
+                  </button>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: isPrimary ? a.color : NEO.textMuted,
+                      letterSpacing: '0.15em',
+                      textTransform: 'uppercase',
+                      minWidth: 55,
+                      textAlign: 'right',
+                    }}
+                  >
+                    {isPrimary ? 'PRIMÁRIA' : isSelected ? 'cross' : ''}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
 
         <div
           style={{
