@@ -334,7 +334,7 @@ export function RulesModal({ categories, accounts, onClose }: {
               alertDialog({
                 title: 'Regra aplicada',
                 message: `${updated} ${updated === 1 ? 'transação foi categorizada' : 'transações foram categorizadas'} retroativamente.`,
-                variant: 'info',
+                variant: 'success',
               })
             }
             refresh()

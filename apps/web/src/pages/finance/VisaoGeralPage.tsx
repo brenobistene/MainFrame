@@ -13,7 +13,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useHubFinance } from './HubFinanceContext'
 import {
   formatBRL, ICON_SIZE, ICON_STROKE,
-  cardLabel, listRow, listRowTitle, listRowSub,
+  listRowTitle, listRowSub,
 } from './components/styleHelpers'
 import { Card, EmptyState } from '../../components/ui/Primitives'
 import { AnimatedNumber, StaggerList, StaggerItem, SkeletonStatCard, SkeletonCardGrid } from '../../components/ui/Motion'

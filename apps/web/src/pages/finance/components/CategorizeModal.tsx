@@ -222,7 +222,7 @@ export function CategorizeModal({ tx, categories, accounts, onClose, onSaved }: 
               alertDialog({
                 title: 'Regra aplicada',
                 message: `${updated} ${updated === 1 ? 'transação foi categorizada' : 'transações foram categorizadas'} retroativamente.`,
-                variant: 'info',
+                variant: 'success',
               })
             }
             onSaved()

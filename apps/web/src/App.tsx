@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ChevronsLeft, ChevronsRight, Pause, Play, CheckCircle2,
 } from 'lucide-react'
+import { version as APP_VERSION } from '../package.json'
 /* Phosphor duotone — substitui os Lucide simples do sidebar pra dar
    peso visual + suporte a duotone (corpo cinza + accent ice quando
    ativo). Vibe Hell Is Us / Cron Calendar / Things 3. */
@@ -811,7 +812,7 @@ export default function App() {
           {sidebarCollapsed ? (
             <span
               aria-hidden="true"
-              title="Backend conectado · v0.5.0"
+              title={`Backend conectado · v${APP_VERSION}`}
               style={{
                 width: 6, height: 6,
                 background: 'var(--color-success)',
@@ -854,7 +855,7 @@ export default function App() {
                   color: 'var(--color-text-muted)',
                 }}
               >
-                v0.5.1
+                v{APP_VERSION}
               </span>
             </>
           )}

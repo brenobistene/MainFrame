@@ -784,6 +784,9 @@ export async function createFinTransaction(body: {
   categoria_id?: string | null
   origem?: 'manual' | 'pynubank'
   notas?: string | null
+  /** Vínculo opcional na criação: usado pelo flow "marcar bill como paga →
+   *  criar novo lançamento" pra já registrar o FK sem PATCH extra. */
+  recurring_bill_id?: string | null
 }): Promise<FinTransaction> {
   return jsonOrThrow<FinTransaction>(await fetch(`${BASE}/api/finance/transactions`, {
     method: 'POST',

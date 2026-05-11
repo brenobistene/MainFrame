@@ -570,7 +570,8 @@ function ProjectCard({ projeto: p, hourlyStats }: {
       localStorage.setItem('hq-navigation', JSON.stringify(nav))
     } catch {}
     window.dispatchEvent(new CustomEvent('hq-select-project', { detail: { projectId: p.id } }))
-    navigate(`/areas/${p.area_slug ?? 'freelas'}`)
+    // Esta página lista projetos da área "freelas" — fallback seguro.
+    navigate('/areas/freelas')
   }
 
   // Border-left semantic baseado no progresso (consistente com Dividas):
