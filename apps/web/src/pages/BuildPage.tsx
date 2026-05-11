@@ -48,6 +48,7 @@ import {
   useSprints,
   useUpdateGoal,
   useUpdateGoalProgress,
+  useUpdatePrinciple,
   useUpdateRitual,
   useUpdateSprint,
   useUpdatePurpose,
@@ -66,6 +67,7 @@ import type {
   BuildGoalHorizon,
   BuildGuardrailEvaluation,
   BuildGuardrailOperador,
+  BuildPrinciple,
   BuildProjectAlignment,
   BuildProjectClassification,
   BuildRitual,
@@ -3843,10 +3845,98 @@ function PurposePanel() {
 
 // ─── Princípios negativos (anti-metas) ────────────────────────────────────
 
+function PrincipleRow({ principle }: { principle: BuildPrinciple }) {
+  const updatePrinciple = useUpdatePrinciple()
+  const deletePrinciple = useDeletePrinciple()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(principle.texto)
+
+  function save() {
+    const texto = draft.trim()
+    if (!texto || texto === principle.texto) {
+      setEditing(false)
+      setDraft(principle.texto)
+      return
+    }
+    updatePrinciple.mutate(
+      { id: principle.id, patch: { texto } },
+      { onSuccess: () => setEditing(false) },
+    )
+  }
+
+  return (
+    <li
+      style={{
+        display: 'flex',
+        gap: 10,
+        alignItems: 'flex-start',
+        padding: '6px 0',
+        fontSize: 13,
+        color: NEO.textPrimary,
+        fontStyle: 'italic',
+      }}
+    >
+      <span style={{ color: NEO.accent, flexShrink: 0 }}>·</span>
+      {editing ? (
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') save()
+            if (e.key === 'Escape') {
+              setDraft(principle.texto)
+              setEditing(false)
+            }
+          }}
+          autoFocus
+          style={{
+            flex: 1,
+            background: NEO.bg,
+            color: NEO.textPrimary,
+            border: `1px solid ${NEO.accent}`,
+            padding: '3px 8px',
+            fontFamily: MONO,
+            fontSize: 13,
+            fontStyle: 'italic',
+            outline: 'none',
+          }}
+        />
+      ) : (
+        <span
+          style={{ flex: 1, lineHeight: 1.5, cursor: 'pointer' }}
+          onClick={() => {
+            setDraft(principle.texto)
+            setEditing(true)
+          }}
+          title="Click pra editar"
+        >
+          {principle.texto}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => deletePrinciple.mutate(principle.id)}
+        title="Arquivar princípio"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: NEO.textMuted,
+          cursor: 'pointer',
+          padding: 4,
+          display: 'flex',
+          alignItems: 'center',
+        }}
+      >
+        <Archive size={12} />
+      </button>
+    </li>
+  )
+}
+
 function PrinciplesSection() {
   const { data: principles = [], isLoading } = usePrinciples()
   const createPrinciple = useCreatePrinciple()
-  const deletePrinciple = useDeletePrinciple()
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState('')
 
@@ -3905,37 +3995,7 @@ function PrinciplesSection() {
       {principles.length > 0 && (
         <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
           {principles.map((p) => (
-            <li
-              key={p.id}
-              style={{
-                display: 'flex',
-                gap: 10,
-                alignItems: 'flex-start',
-                padding: '6px 0',
-                fontSize: 13,
-                color: NEO.textPrimary,
-                fontStyle: 'italic',
-              }}
-            >
-              <span style={{ color: NEO.accent, flexShrink: 0 }}>·</span>
-              <span style={{ flex: 1, lineHeight: 1.5 }}>{p.texto}</span>
-              <button
-                type="button"
-                onClick={() => deletePrinciple.mutate(p.id)}
-                title="Arquivar princípio"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: NEO.textMuted,
-                  cursor: 'pointer',
-                  padding: 4,
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <Archive size={12} />
-              </button>
-            </li>
+            <PrincipleRow key={p.id} principle={p} />
           ))}
         </ul>
       )}
