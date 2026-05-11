@@ -5,6 +5,7 @@ import {
 } from '../../../api'
 import type {
   FinTransaction, FinAccount, FinCategory, FinDebt, FinParcela, FinInvoice,
+  FinRecurringBill,
 } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton, modalOverlay,
@@ -12,6 +13,7 @@ import {
   modalShell, modalHairline, modalHeader, modalBody,
 } from './styleHelpers'
 import { alertDialog } from '../../../lib/dialog'
+import { useHubFinance } from '../HubFinanceContext'
 
 export function TransactionEditModal({ tx, accounts, categories, debts, invoices, onClose, onSaved }: {
   tx: FinTransaction
@@ -22,6 +24,7 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
   onClose: () => void
   onSaved: () => void
 }) {
+  const { recurringBills } = useHubFinance()
   const [data, setData] = useState(tx.data)
   const [tipo, setTipo] = useState<'entrada' | 'saida'>(tx.valor >= 0 ? 'entrada' : 'saida')
   const [valor, setValor] = useState(String(Math.abs(tx.valor)))
@@ -32,6 +35,7 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
   const [parcelaId, setParcelaId] = useState<string>(tx.parcela_id ?? '')
   const [dividaId, setDividaId] = useState<string>(tx.divida_id ?? '')
   const [pagamentoFaturaId, setPagamentoFaturaId] = useState<string>(tx.pagamento_fatura_id ?? '')
+  const [recurringBillId, setRecurringBillId] = useState<string>(tx.recurring_bill_id ?? '')
   const [parcelas, setParcelas] = useState<FinParcela[]>([])
   const [busy, setBusy] = useState(false)
 
@@ -72,6 +76,16 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
   const linkedParcela = parcelas.find(p => p.id === tx.parcela_id) ?? null
   const linkedDivida = debts.find(d => d.id === tx.divida_id) ?? null
   const linkedInvoice = invoices.find(i => i.id === tx.pagamento_fatura_id) ?? null
+  const linkedBill = recurringBills.find(b => b.id === tx.recurring_bill_id) ?? null
+
+  // Bills compatíveis com o sinal da tx (entrada → receita, saída → despesa).
+  // Inclui a já linkada mesmo se inativa pra permitir ver/desvincular.
+  const billOptions = useMemo(() => {
+    const wantedTipo = isEntry ? 'receita' : 'despesa'
+    return recurringBills.filter(b =>
+      (b.ativa && b.tipo === wantedTipo) || b.id === recurringBillId
+    )
+  }, [recurringBills, isEntry, recurringBillId])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -92,6 +106,8 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
         parcela_id: isEntry ? (parcelaId || null) : null,
         divida_id: !isEntry ? (dividaId || null) : null,
         pagamento_fatura_id: !isEntry ? (pagamentoFaturaId || null) : null,
+        // Conta fixa: pode estar em qualquer sinal (salário=entrada, casa=saída).
+        recurring_bill_id: recurringBillId || null,
       })
       onSaved()
     } catch (err) {
@@ -135,7 +151,27 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
               value={data} onChange={e => setData(e.target.value)}
               style={inputStyle()}
             />
-            <select value={tipo} onChange={e => { setTipo(e.target.value as any); setCategoriaId('') }} style={inputStyle()}>
+            <select
+              value={tipo}
+              onChange={e => {
+                const newTipo = e.target.value as 'entrada' | 'saida'
+                setTipo(newTipo)
+                // Reseta categoria — tipos têm conjuntos de categoria distintos
+                setCategoriaId('')
+                // Limpa FKs incompatíveis pro novo tipo: parcela só faz sentido
+                // em entrada (recebimento freela); divida + pagamento_fatura só
+                // em saída. Manter o FK depois de trocar tipo deixa estado
+                // inconsistente que o backend ignora silenciosamente — melhor
+                // limpar visualmente pro user ver que perdeu o vínculo.
+                if (newTipo === 'entrada') {
+                  setDividaId('')
+                  setPagamentoFaturaId('')
+                } else {
+                  setParcelaId('')
+                }
+              }}
+              style={inputStyle()}
+            >
               <option value="saida">saída</option>
               <option value="entrada">entrada</option>
             </select>
@@ -166,10 +202,11 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
           />
 
           {/* Vínculos — parcela pra entradas; dívida + pagamento-de-fatura
-              pra saídas. Bloco só aparece quando há opção relevante. */}
+              pra saídas; conta fixa pra ambos. Bloco só aparece quando há
+              opção relevante. */}
           {(isEntry
-            ? (parcelaOptions.length > 0 || linkedParcela)
-            : (dividaOptions.length > 0 || linkedDivida || invoiceOptions.length > 0 || linkedInvoice)
+            ? (parcelaOptions.length > 0 || linkedParcela || billOptions.length > 0 || linkedBill)
+            : (dividaOptions.length > 0 || linkedDivida || invoiceOptions.length > 0 || linkedInvoice || billOptions.length > 0 || linkedBill)
           ) && (
             <div style={{
               marginTop: 6, padding: 12,
@@ -214,6 +251,16 @@ export function TransactionEditModal({ tx, accounts, categories, debts, invoices
                     />
                   )}
                 </>
+              )}
+
+              {/* Conta fixa — disponível em entrada (receita fixa) e saída
+                  (despesa fixa). Permite desvincular via botão Unlink. */}
+              {(billOptions.length > 0 || linkedBill) && (
+                <RecurringBillPicker
+                  billId={recurringBillId}
+                  setBillId={setRecurringBillId}
+                  options={billOptions}
+                />
               )}
             </div>
           )}
@@ -393,6 +440,49 @@ function DividaPicker({ dividaId, setDividaId, options, linkedDivida }: {
           vínculo anterior será substituído ao salvar.
         </div>
       )}
+    </div>
+  )
+}
+
+function RecurringBillPicker({ billId, setBillId, options }: {
+  billId: string
+  setBillId: (v: string) => void
+  options: FinRecurringBill[]
+}) {
+  return (
+    <div>
+      <label style={fieldLabel()}>Conta fixa</label>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <select
+          value={billId}
+          onChange={e => setBillId(e.target.value)}
+          style={{ ...inputStyle(), flex: 1 }}
+        >
+          <option value="">— sem vínculo —</option>
+          {options.map(b => (
+            <option key={b.id} value={b.id}>
+              {b.descricao} · {formatBRL(b.valor_estimado)}
+              {b.dia_vencimento ? ` (dia ${b.dia_vencimento})` : ''}
+              {!b.ativa ? ' [pausada]' : ''}
+            </option>
+          ))}
+        </select>
+        {billId && (
+          <button
+            type="button"
+            onClick={() => setBillId('')}
+            title="desvincular (bill volta a aparecer como pendente)"
+            style={{
+              ...ghostButton(),
+              padding: '6px 10px',
+              color: 'var(--color-accent-primary)',
+              borderColor: 'var(--color-accent-primary)',
+            }}
+          >
+            <Unlink size={11} strokeWidth={1.8} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }

@@ -295,14 +295,6 @@ export function parseBRL(input: string | null | undefined): number | null {
 // glass. Border-left customizável pelos consumers (cor da entidade — ex:
 // success pra entrada, oxblood pra dívida, ice pra neutro).
 
-export const cardBase: React.CSSProperties = {
-  background: 'rgba(8, 12, 18, 0.55)',
-  border: '1px solid rgba(143, 191, 211, 0.22)',
-  borderRadius: 0,
-  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%)',
-  padding: '14px 16px',
-}
-
 export const cardLabel: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 9, fontWeight: 700,

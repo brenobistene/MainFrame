@@ -115,6 +115,11 @@ class TransactionOut(BaseModel):
     # Quando setado: esta tx é o pagamento da fatura X (não uma compra dela).
     # Setar via PATCH marca a fatura como `paga` automaticamente.
     pagamento_fatura_id: Optional[str] = None
+    # Quando setado: esta tx paga a recurring_bill X. Usado pra reconciliar
+    # uma tx já importada do banco com uma bill cadastrada (evita duplicar
+    # o pagamento no mês). recurring_bills_status prioriza esse FK sobre o
+    # match heurístico por descrição.
+    recurring_bill_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -127,6 +132,9 @@ class TransactionCreate(BaseModel):
     categoria_id: Optional[str] = None
     origem: str = "manual"
     notas: Optional[str] = None
+    # Vínculo opcional na criação: usado pelo flow "marcar bill como paga →
+    # criar novo lançamento" pra já registrar o link FK sem PATCH extra.
+    recurring_bill_id: Optional[str] = None
 
     @field_validator("origem")
     @classmethod
@@ -555,3 +563,4 @@ class TransactionUpdate(BaseModel):
     parcela_id: Optional[str] = None
     fatura_id: Optional[str] = None
     pagamento_fatura_id: Optional[str] = None
+    recurring_bill_id: Optional[str] = None

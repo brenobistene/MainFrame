@@ -979,6 +979,20 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
+        # Vínculo "esta transação paga a conta recorrente X". Usado pra
+        # conciliação: ao linkar uma tx já importada do extrato com a bill
+        # cadastrada em fin_recurring_bill (luz, aluguel, etc), evita duplicar
+        # a saída no mês. Sem isso, marcar "como paga" sempre criava uma
+        # transação nova mesmo quando a real já existia importada do banco.
+        _try_add_column(conn, "ALTER TABLE fin_transaction ADD COLUMN recurring_bill_id TEXT")
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fin_tx_recurring_bill ON fin_transaction(recurring_bill_id)"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         # Auto-link de pagamento de fatura via regra de categorização.
         # Quando regra com `link_cartao_id` bate numa tx, o sistema procura
         # fatura aberta/fechada do cartão com total ≈ valor da tx; se exatamente

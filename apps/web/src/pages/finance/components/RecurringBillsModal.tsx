@@ -12,12 +12,13 @@
 import { useMemo, useState } from 'react'
 import {
   CheckCircle2, ClipboardList, Pause, Pencil, Play,
-  Plus, Trash2, Wallet, X,
+  Plus, Trash2, Unlink, Wallet, X,
 } from 'lucide-react'
 import {
   createFinRecurringBill, updateFinRecurringBill, deleteFinRecurringBill,
-  createFinTransaction, reportApiError,
+  createFinTransaction, updateFinTransaction, reportApiError,
 } from '../../../api'
+import { LinkedTransactionPicker, PaymentModeToggle } from './LinkedTransactionPicker'
 import type {
   FinAccount, FinCategory, FinRecurringBill, FinRecurringBillStatusItem,
   FinRecurringBillStatusMonth,
@@ -84,6 +85,25 @@ export function RecurringBillsModal({
     } catch (err) {
       reportApiError('RecurringBillsModal.togglePause', err)
       alertDialog({ title: 'Erro', message: 'Erro ao alterar — veja o console.', variant: 'danger' })
+    }
+  }
+
+  async function handleUnlink(bill: FinRecurringBill) {
+    const s = statusById.get(bill.id)
+    if (!s?.transacao_id) return
+    const ok = await confirmDialog({
+      title: 'Desvincular pagamento',
+      message: `Remover o vínculo entre "${bill.descricao}" e o lançamento? A bill volta a aparecer como pendente. O lançamento NÃO é deletado — só perde a marcação.`,
+      confirmLabel: 'DESVINCULAR',
+      danger: false,
+    })
+    if (!ok) return
+    try {
+      await updateFinTransaction(s.transacao_id, { recurring_bill_id: null })
+      onChanged()
+    } catch (err) {
+      reportApiError('RecurringBillsModal.unlink', err)
+      alertDialog({ title: 'Erro', message: 'Erro ao desvincular — veja o console.', variant: 'danger' })
     }
   }
 
@@ -162,6 +182,7 @@ export function RecurringBillsModal({
                   onDelete={handleDelete}
                   onTogglePause={togglePause}
                   onMarkPaid={bill => setMarkingPaid(bill)}
+                  onUnlink={handleUnlink}
                 />
                 <BillsSection
                   title="Receitas fixas"
@@ -174,6 +195,7 @@ export function RecurringBillsModal({
                   onDelete={handleDelete}
                   onTogglePause={togglePause}
                   onMarkPaid={bill => setMarkingPaid(bill)}
+                  onUnlink={handleUnlink}
                 />
               </div>
             )}
@@ -197,6 +219,7 @@ export function RecurringBillsModal({
         <MarkPaidModal
           bill={markingPaid}
           accounts={accounts}
+          categories={categories}
           onClose={() => setMarkingPaid(null)}
           onPaid={() => { setMarkingPaid(null); onChanged() }}
         />
@@ -209,7 +232,7 @@ export function RecurringBillsModal({
 
 function BillsSection({
   title, tipo, bills, statusById, categories,
-  onAdd, onEdit, onDelete, onTogglePause, onMarkPaid,
+  onAdd, onEdit, onDelete, onTogglePause, onMarkPaid, onUnlink,
 }: {
   title: string
   tipo: 'despesa' | 'receita'
@@ -221,6 +244,7 @@ function BillsSection({
   onDelete: (bill: FinRecurringBill) => void
   onTogglePause: (bill: FinRecurringBill) => void
   onMarkPaid: (bill: FinRecurringBill) => void
+  onUnlink: (bill: FinRecurringBill) => void
 }) {
   return (
     <div>
@@ -286,6 +310,7 @@ function BillsSection({
                 onDelete={() => onDelete(bill)}
                 onTogglePause={() => onTogglePause(bill)}
                 onMarkPaid={() => onMarkPaid(bill)}
+                onUnlink={() => onUnlink(bill)}
               />
             )
           })}
@@ -299,7 +324,7 @@ function BillsSection({
 
 function BillRow({
   bill, status, categoryName, categoryColor,
-  onEdit, onDelete, onTogglePause, onMarkPaid,
+  onEdit, onDelete, onTogglePause, onMarkPaid, onUnlink,
 }: {
   bill: FinRecurringBill
   status: FinRecurringBillStatusItem | undefined
@@ -309,6 +334,7 @@ function BillRow({
   onDelete: () => void
   onTogglePause: () => void
   onMarkPaid: () => void
+  onUnlink: () => void
 }) {
   const inactive = !bill.ativa
   const isReceita = bill.tipo === 'receita'
@@ -431,6 +457,17 @@ function BillRow({
             variant="accent"
           >
             <Wallet size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
+          </IconButton>
+        )}
+        {/* Desvincular: só aparece quando tem tx vinculada via FK explícito.
+            Status inferido por descrição (sem transacao_id) não dá pra desfazer
+            por aqui — teria que renomear a bill. */}
+        {isCompleted && status?.transacao_id && (
+          <IconButton
+            label={`desvincular ${bill.descricao} do lançamento`}
+            onClick={onUnlink}
+          >
+            <Unlink size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
           </IconButton>
         )}
         <IconButton
@@ -767,13 +804,14 @@ function RecurringBillFormModal({
 
 /** Modal pequeno que cria uma transação real pré-preenchida com os dados
  *  da bill — economiza a digitação repetitiva de "Energia · 250 · Casa". */
-function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
+function MarkPaidModal({ bill, accounts, categories, onClose, onPaid }: {
   bill: FinRecurringBill
   accounts: FinAccount[]
+  categories: FinCategory[]
   onClose: () => void
   onPaid: () => void
 }) {
-  const { selectedMonth } = useHubFinance()
+  const { selectedMonth, transactions } = useHubFinance()
 
   // Default da data: dia_vencimento do mês selecionado, ou hoje se não tem
   // dia, ou último dia do mês se dia > último dia do mês
@@ -793,6 +831,32 @@ function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
     return `${selectedMonth.year}-${String(selectedMonth.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
   }, [bill.dia_vencimento, selectedMonth.year, selectedMonth.month])
 
+  const isReceita = bill.tipo === 'receita'
+
+  // Candidatos pra vincular: tx do mês selecionado, sinal compatível com a
+  // bill, ainda não linkadas a outra bill/parcela/dívida/fatura. Tx
+  // importadas (origem=nubank_csv) e manuais ambas entram.
+  const candidates = useMemo(() => {
+    return transactions.filter(tx => {
+      if (isReceita ? tx.valor <= 0 : tx.valor >= 0) return false
+      if (tx.recurring_bill_id && tx.recurring_bill_id !== bill.id) return false
+      if (tx.divida_id || tx.parcela_id || tx.fatura_id || tx.pagamento_fatura_id) return false
+      return true
+    }).sort((a, b) => {
+      // Match exato de valor primeiro, depois por data crescente
+      const aExact = Math.abs(Math.abs(a.valor) - bill.valor_estimado) < 0.005 ? 0 : 1
+      const bExact = Math.abs(Math.abs(b.valor) - bill.valor_estimado) < 0.005 ? 0 : 1
+      if (aExact !== bExact) return aExact - bExact
+      return a.data.localeCompare(b.data)
+    })
+  }, [transactions, isReceita, bill.id, bill.valor_estimado])
+
+  // Modo default: VINCULAR se tem candidatos, senão CRIAR
+  const [mode, setMode] = useState<'link' | 'create'>(
+    candidates.length > 0 ? 'link' : 'create'
+  )
+  const [selectedTxId, setSelectedTxId] = useState<string | null>(null)
+
   const [data, setData] = useState(defaultDate)
   const [valor, setValor] = useState(String(bill.valor_estimado).replace('.', ','))
   const [descricao, setDescricao] = useState(bill.descricao)
@@ -803,26 +867,49 @@ function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!descricao.trim() || !contaId) {
-      alertDialog({ title: 'Campos obrigatórios', message: 'Descrição e conta são obrigatórias.', variant: 'warning' })
-      return
-    }
-    const valorNum = parseBRL(valor)
-    if (valorNum == null || valorNum <= 0) {
-      alertDialog({ title: 'Valor inválido', message: 'Valor inválido.', variant: 'warning' })
-      return
-    }
     setBusy(true)
     try {
-      // Sinal do valor depende do tipo: despesa = negativo, receita = positivo.
-      // Categoria preserva pra inferência marcar como paga/recebida no refetch.
-      const isReceita = bill.tipo === 'receita'
+      if (mode === 'link') {
+        if (!selectedTxId) {
+          alertDialog({ title: 'Nenhum lançamento selecionado', message: 'Escolha um lançamento da lista pra vincular, ou troque pra "criar novo".', variant: 'warning' })
+          setBusy(false)
+          return
+        }
+        // Vincula a tx existente à bill — recurring_bills_status volta como
+        // "paga" automaticamente via prioridade do FK. Também propaga a
+        // categoria da bill pra tx (se ainda não categorizada) — mantém o
+        // fallback heurístico funcionando + dá categoria correta na lista
+        // de Lançamentos.
+        const selectedTx = candidates.find(t => t.id === selectedTxId)
+        const patch: Parameters<typeof updateFinTransaction>[1] = {
+          recurring_bill_id: bill.id,
+        }
+        if (bill.categoria_id && selectedTx && !selectedTx.categoria_id) {
+          patch.categoria_id = bill.categoria_id
+        }
+        await updateFinTransaction(selectedTxId, patch)
+        onPaid()
+        return
+      }
+      // mode === 'create' — fluxo antigo
+      if (!descricao.trim() || !contaId) {
+        alertDialog({ title: 'Campos obrigatórios', message: 'Descrição e conta são obrigatórias.', variant: 'warning' })
+        setBusy(false)
+        return
+      }
+      const valorNum = parseBRL(valor)
+      if (valorNum == null || valorNum <= 0) {
+        alertDialog({ title: 'Valor inválido', message: 'Valor inválido.', variant: 'warning' })
+        setBusy(false)
+        return
+      }
       await createFinTransaction({
         data,
         valor: isReceita ? Math.abs(valorNum) : -Math.abs(valorNum),
         descricao: descricao.trim(),
         conta_id: contaId,
         categoria_id: bill.categoria_id ?? null,
+        recurring_bill_id: bill.id,
       })
       onPaid()
     } catch (err) {
@@ -857,9 +944,9 @@ function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
         <div style={modalBody()}>
 
         <div style={hintText()}>
-          {bill.tipo === 'receita'
-            ? <>Cria uma transação de receita pré-preenchida com os dados de <strong>{bill.descricao}</strong>. Ajuste valor real se diferente do estimado. A bill vira "recebida" automaticamente.</>
-            : <>Cria uma transação de despesa pré-preenchida com os dados de <strong>{bill.descricao}</strong>. Ajuste valor real se diferente do estimado. A bill vira "paga" automaticamente.</>
+          {mode === 'link'
+            ? <>Escolha um lançamento do mês já importado pra vincular a <strong>{bill.descricao}</strong>. Evita duplicar a saída quando o extrato já foi importado.</>
+            : <>Cria uma transação nova pré-preenchida com os dados de <strong>{bill.descricao}</strong>. Use quando o pagamento ainda não está nos seus lançamentos.</>
           }
         </div>
 
@@ -868,74 +955,99 @@ function MarkPaidModal({ bill, accounts, onClose, onPaid }: {
           gap: 'var(--space-3)',
           marginTop: 'var(--space-4)',
         }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 'var(--space-3)' }}>
-            <div>
-              <label style={fieldLabel()}>
-                Data {bill.tipo === 'receita' ? 'do recebimento' : 'do pagamento'}
-              </label>
-              <input
-                type="date"
-                value={data}
-                onChange={e => setData(e.target.value)}
-                style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div>
-              <label style={fieldLabel()}>Valor real (R$)</label>
-              <input
-                autoFocus
-                type="text"
-                inputMode="decimal"
-                value={valor}
-                onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
-                style={{
-                  ...inputStyle(), width: '100%', boxSizing: 'border-box',
-                  fontFamily: 'var(--font-mono)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              />
-              <div style={{
-                fontSize: 'var(--text-xs)',
-                color: 'var(--color-text-muted)',
-                marginTop: 4,
-              }}>
-                estimado era {formatBRL(bill.valor_estimado)}
-              </div>
-            </div>
-          </div>
+          <PaymentModeToggle
+            mode={mode}
+            onChange={setMode}
+            candidateCount={candidates.length}
+          />
 
-          <div>
-            <label style={fieldLabel()}>Descrição</label>
-            <input
-              type="text"
-              value={descricao}
-              onChange={e => setDescricao(e.target.value)}
-              style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+          {mode === 'link' ? (
+            <LinkedTransactionPicker
+              candidates={candidates}
+              selectedTxId={selectedTxId}
+              onSelect={setSelectedTxId}
+              accounts={accounts}
+              categories={categories}
+              expectedValor={bill.valor_estimado}
             />
-          </div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 'var(--space-3)' }}>
+                <div>
+                  <label style={fieldLabel()}>
+                    Data {bill.tipo === 'receita' ? 'do recebimento' : 'do pagamento'}
+                  </label>
+                  <input
+                    type="date"
+                    value={data}
+                    onChange={e => setData(e.target.value)}
+                    style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={fieldLabel()}>Valor real (R$)</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    inputMode="decimal"
+                    value={valor}
+                    onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
+                    style={{
+                      ...inputStyle(), width: '100%', boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  />
+                  <div style={{
+                    fontSize: 'var(--text-xs)',
+                    color: 'var(--color-text-muted)',
+                    marginTop: 4,
+                  }}>
+                    estimado era {formatBRL(bill.valor_estimado)}
+                  </div>
+                </div>
+              </div>
 
-          <div>
-            <label style={fieldLabel()}>
-              {bill.tipo === 'receita' ? 'Conta de recebimento' : 'Conta de pagamento'}
-            </label>
-            <select
-              value={contaId}
-              onChange={e => setContaId(e.target.value)}
-              style={{ ...inputStyle(), width: '100%' }}
-            >
-              {accounts.map(a => (
-                <option key={a.id} value={a.id}>{a.nome}</option>
-              ))}
-            </select>
-          </div>
+              <div>
+                <label style={fieldLabel()}>Descrição</label>
+                <input
+                  type="text"
+                  value={descricao}
+                  onChange={e => setDescricao(e.target.value)}
+                  style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={fieldLabel()}>
+                  {bill.tipo === 'receita' ? 'Conta de recebimento' : 'Conta de pagamento'}
+                </label>
+                <select
+                  value={contaId}
+                  onChange={e => setContaId(e.target.value)}
+                  style={{ ...inputStyle(), width: '100%' }}
+                >
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>{a.nome}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
 
           <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
             <button type="button" onClick={onClose} style={ghostButton()}>cancelar</button>
-            <button type="submit" disabled={busy} style={primaryButton()}>
+            <button
+              type="submit"
+              disabled={busy || (mode === 'link' && !selectedTxId)}
+              style={primaryButton()}
+            >
               <CheckCircle2 size={ICON_SIZE.xs} strokeWidth={2} />
               {busy
                 ? 'registrando…'
-                : bill.tipo === 'receita' ? 'registrar recebimento' : 'registrar pagamento'}
+                : mode === 'link'
+                  ? (bill.tipo === 'receita' ? 'vincular recebimento' : 'vincular pagamento')
+                  : (bill.tipo === 'receita' ? 'registrar recebimento' : 'registrar pagamento')}
             </button>
           </div>
         </form>

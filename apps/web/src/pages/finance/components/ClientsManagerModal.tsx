@@ -172,11 +172,27 @@ function ClientFormModal({ client, onClose, onSaved, onDeleted }: {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!nome.trim()) { alertDialog({ title: 'Nome obrigatório', message: 'Nome é obrigatório.', variant: 'warning' }); return }
+    // Valida CPF/CNPJ se preenchido — sem isso o auto-vínculo por descrição
+    // nunca casa porque depende de match exato do formato.
+    const docTrim = cpfCnpj.trim()
+    if (docTrim) {
+      const stripped = docTrim.replace(/\D/g, '')
+      const isCpf = stripped.length === 11
+      const isCnpj = stripped.length === 14
+      if (!isCpf && !isCnpj) {
+        alertDialog({
+          title: 'CPF/CNPJ inválido',
+          message: 'Use formato com 11 dígitos (CPF) ou 14 dígitos (CNPJ). Pontuação opcional. Deixe em branco se não tiver.',
+          variant: 'warning',
+        })
+        return
+      }
+    }
     setBusy(true)
     try {
       const body = {
         nome: nome.trim(),
-        cpf_cnpj: cpfCnpj.trim() || null,
+        cpf_cnpj: docTrim || null,
         notas: notas.trim() || null,
       }
       if (isNew) await createFinClient(body)

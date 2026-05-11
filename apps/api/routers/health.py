@@ -27,6 +27,11 @@ from models.health import (
     SettingsOut,
     SettingsUpdate,
 )
+from services.health_metrics import (
+    calculate_metric,
+    list_metrics_catalog,
+)
+from services.health_pending import compute_pending
 from services.utils import utcnow_iso_z
 
 router = APIRouter(prefix="/api/health", tags=["health"])
@@ -44,12 +49,38 @@ VALID_TEMPLATES = {
 }
 
 
+def _is_int_like(v: Any) -> bool:
+    """True se v é int OU float que vale int exato (4.0). JSON pode mandar
+    `4.0` legitimamente — antes a validação rejeitava."""
+    if isinstance(v, bool):
+        return False                                  # bool é subclass de int em Python; rejeitar
+    if isinstance(v, int):
+        return True
+    if isinstance(v, float) and v.is_integer():
+        return True
+    return False
+
+
+def _coerce_int(v: Any) -> int:
+    """Coerção segura de int (após `_is_int_like`)."""
+    return int(v)
+
+
+def _validate_scale_1_5(v: Any, name: str) -> None:
+    """Escala inteira 1-5 (qualidade, intensidade, vontade, escala). Aceita
+    int ou float-que-é-int. Null já é tratado pelo caller."""
+    if not _is_int_like(v):
+        raise HTTPException(422, detail=f"{name} deve ser int 1-5 ou null")
+    n = _coerce_int(v)
+    if n < 1 or n > 5:
+        raise HTTPException(422, detail=f"{name} deve ser int 1-5 ou null")
+
+
 def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[int]) -> None:
     """Valida que o payload bate com o template do domínio. Lança 422 em erro.
 
     Mantém validação simples — só campos obrigatórios e formato básico.
-    Validações semânticas mais ricas (ranges, formatos custom) podem entrar
-    depois quando virarem necessidade real.
+    Aceita float-que-é-int (4.0) onde antes só aceitava int (4).
     """
     if template == "janela_qualidade":
         if "hora_inicio" not in payload or "hora_fim" not in payload:
@@ -59,8 +90,8 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
             if not isinstance(v, str) or len(v) != 5 or v[2] != ":":
                 raise HTTPException(422, detail=f"{k} deve ser HH:MM, recebido: {v!r}")
         q = payload.get("qualidade")
-        if q is not None and (not isinstance(q, int) or q < 1 or q > 5):
-            raise HTTPException(422, detail="qualidade deve ser int 1-5 ou null")
+        if q is not None:
+            _validate_scale_1_5(q, "qualidade")
         tipo = payload.get("tipo", "noturno")
         if tipo not in ("noturno", "cochilo"):
             raise HTTPException(422, detail="tipo deve ser 'noturno' ou 'cochilo'")
@@ -69,11 +100,11 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
         if item_id is None:
             raise HTTPException(422, detail="atividade_tipo exige item_id")
         d = payload.get("duracao_min")
-        if not isinstance(d, int) or d < 0:
+        if not _is_int_like(d) or _coerce_int(d) < 0:
             raise HTTPException(422, detail="duracao_min obrigatório (int ≥ 0)")
         i = payload.get("intensidade")
-        if i is not None and (not isinstance(i, int) or i < 1 or i > 5):
-            raise HTTPException(422, detail="intensidade deve ser int 1-5 ou null")
+        if i is not None:
+            _validate_scale_1_5(i, "intensidade")
 
     elif template == "refeicao_2modos":
         # 2 modos: dieta (item_id + comeu) ou livre (item_id null + descricao)
@@ -93,23 +124,24 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
         if item_id is None:
             raise HTTPException(422, detail="consumo_vontade exige item_id")
         q = payload.get("quantidade")
-        if not isinstance(q, (int, float)) or q < 0:
+        if not isinstance(q, (int, float)) or isinstance(q, bool) or q < 0:
             raise HTTPException(422, detail="quantidade obrigatória (≥ 0)")
         v = payload.get("vontade")
-        if v is not None and (not isinstance(v, int) or v < 1 or v > 5):
-            raise HTTPException(422, detail="vontade deve ser int 1-5 ou null")
+        if v is not None:
+            _validate_scale_1_5(v, "vontade")
 
     elif template == "metrica_simples":
         if item_id is None:
             raise HTTPException(422, detail="metrica_simples exige item_id")
         v = payload.get("valor")
-        if not isinstance(v, (int, float)):
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
             raise HTTPException(422, detail="valor obrigatório (numérico)")
 
     elif template == "evento_escala":
         e = payload.get("escala")
-        if not isinstance(e, int) or e < 1 or e > 5:
+        if e is None:
             raise HTTPException(422, detail="escala obrigatória (int 1-5)")
+        _validate_scale_1_5(e, "escala")
 
     else:
         raise HTTPException(422, detail=f"Template desconhecido: {template!r}")
@@ -139,7 +171,8 @@ def _hydrate_record(row) -> dict:
 
 DOMAIN_COLUMNS = (
     "slug, nome, cor, icone, template, usa_itens, lembrete_ativo, "
-    "ausencia_threshold_dias, ordem, ativo, criado_em, atualizado_em"
+    "ausencia_threshold_dias, ordem, ativo, metric_primary_slug, "
+    "criado_em, atualizado_em"
 )
 
 
@@ -190,8 +223,9 @@ def create_domain(body: DomainCreate):
         conn.execute(
             "INSERT INTO health_domain"
             "(slug, nome, cor, icone, template, usa_itens, lembrete_ativo,"
-            " ausencia_threshold_dias, ordem, criado_em, atualizado_em) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ausencia_threshold_dias, ordem, metric_primary_slug, "
+            " criado_em, atualizado_em) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.slug,
                 body.nome,
@@ -202,6 +236,7 @@ def create_domain(body: DomainCreate):
                 int(body.lembrete_ativo),
                 body.ausencia_threshold_dias,
                 ordem,
+                body.metric_primary_slug,
                 now,
                 now,
             ),
@@ -598,20 +633,22 @@ def delete_record(record_id: int):
 
 # ─── Settings ─────────────────────────────────────────────────────────────
 
+SETTINGS_COLUMNS = (
+    "hora_lembrete_sono, dashboard_card_visivel, atualizado_em"
+)
+
+
 @router.get("/settings", response_model=SettingsOut)
 def get_settings():
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT lembrete_horas_apos_acordar, dashboard_card_visivel, atualizado_em "
-            "FROM health_settings WHERE id = 1"
+            f"SELECT {SETTINGS_COLUMNS} FROM health_settings WHERE id = 1"
         ).fetchone()
         if not row:
-            now = utcnow_iso_z()
             conn.execute("INSERT INTO health_settings(id) VALUES (1)")
             conn.commit()
             row = conn.execute(
-                "SELECT lembrete_horas_apos_acordar, dashboard_card_visivel, atualizado_em "
-                "FROM health_settings WHERE id = 1"
+                f"SELECT {SETTINGS_COLUMNS} FROM health_settings WHERE id = 1"
             ).fetchone()
     return {
         **dict(row),
@@ -636,10 +673,64 @@ def update_settings(body: SettingsUpdate):
         )
         conn.commit()
         row = conn.execute(
-            "SELECT lembrete_horas_apos_acordar, dashboard_card_visivel, atualizado_em "
-            "FROM health_settings WHERE id = 1"
+            f"SELECT {SETTINGS_COLUMNS} FROM health_settings WHERE id = 1"
         ).fetchone()
     return {
         **dict(row),
         "dashboard_card_visivel": bool(row["dashboard_card_visivel"]),
     }
+
+
+# ─── Métricas (lazy on-read; ver services/health_metrics.py) ──────────────
+
+@router.get("/metrics")
+def list_metrics():
+    """Catálogo dinâmico das métricas disponíveis. Pra cada domínio ativo,
+    gera métricas baseadas no template do domínio. Domínios customizados
+    ganham métricas automaticamente."""
+    with get_conn() as conn:
+        return list_metrics_catalog(conn)
+
+
+@router.get("/metrics/{slug}")
+def get_metric(slug: str, item_id: Optional[int] = None):
+    """Calcula valor atual da métrica. `item_id` obrigatório pra métricas
+    parametrizadas (Vícios e Medidas)."""
+    with get_conn() as conn:
+        result = calculate_metric(conn, slug, item_id)
+    if "erro" in result and result.get("erro") == "Métrica desconhecida":
+        raise HTTPException(404, detail=f"Métrica '{slug}' não existe")
+    return result
+
+
+@router.post("/metrics/batch")
+def get_metrics_batch(body: list[dict]):
+    """Calcula múltiplas métricas numa request. Reduz round-trips quando
+    Frontend (MetricsPanel, Dashboard card) precisa ler N valores. Cada
+    item do body: `{slug: str, item_id?: int}`. Retorna lista paralela.
+    """
+    if not isinstance(body, list):
+        raise HTTPException(422, detail="Body deve ser lista de {slug, item_id?}")
+    out: list[dict] = []
+    with get_conn() as conn:
+        for q in body:
+            if not isinstance(q, dict) or "slug" not in q:
+                out.append({"erro": "Item inválido (precisa de 'slug')"})
+                continue
+            slug = q["slug"]
+            item_id = q.get("item_id")
+            out.append(calculate_metric(conn, slug, item_id))
+    return out
+
+
+# ─── Pendências (lembretes + ausência em âmbar) ───────────────────────────
+
+@router.get("/pending")
+def list_pending():
+    """Lista de pendências do dia: lembretes proativos + ausências retroativas.
+
+    Vícios e Medidas Corporais NÃO geram ausência (ausencia_threshold_dias=null
+    no seed) — coerente com filosofia "observação > julgamento".
+    """
+    with get_conn() as conn:
+        return compute_pending(conn)

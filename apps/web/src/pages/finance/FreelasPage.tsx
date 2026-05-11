@@ -561,10 +561,16 @@ function ProjectCard({ projeto: p, hourlyStats }: {
   const acimaMedia = diff >= 0
 
   function openInHubQuest() {
-    // Os projetos vivem em /areas/{slug}, com selectedProjectId controlado
-    // por App.tsx. Pra simplicidade, navegamos pra área Freelas — o user
-    // localiza o projeto na lista.
-    navigate('/areas/freelas')
+    // Persiste no localStorage (bootstrap do App.tsx) E dispara evento custom
+    // pra atualizar o estado React do selectedProjectId que já está montado.
+    // App.tsx tem listener pro evento que faz setSelectedProjectId.
+    try {
+      const nav = JSON.parse(localStorage.getItem('hq-navigation') || '{}')
+      nav.projectId = p.id
+      localStorage.setItem('hq-navigation', JSON.stringify(nav))
+    } catch {}
+    window.dispatchEvent(new CustomEvent('hq-select-project', { detail: { projectId: p.id } }))
+    navigate(`/areas/${p.area_slug ?? 'freelas'}`)
   }
 
   // Border-left semantic baseado no progresso (consistente com Dividas):

@@ -36,7 +36,11 @@ import { DividasPage } from './pages/finance/DividasPage'
 import { FreelasPage } from './pages/finance/FreelasPage'
 import { CategoriasPage } from './pages/finance/CategoriasPage'
 import BuildPage from './pages/BuildPage'
+import HealthLayout from './pages/health/HealthLayout'
+import BiomonitorPage from './pages/health/BiomonitorPage'
+import DomainPage from './pages/health/DomainPage'
 import { useRituals } from './lib/build-queries'
+import { useHealthPending } from './lib/health-queries'
 
 /** Item de navegação cyber HUD. `label` aparece quando expandido; `abbr`
  *  (3 letras mono uppercase) aparece quando colapsado — vibe CP2077. */
@@ -86,6 +90,12 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    label: 'HEALTH',
+    items: [
+      { path: '/health',      label: 'Hub Health',  abbr: 'HLT' },
+    ],
+  },
+  {
     label: 'ARCHIVE',
     items: [
       { path: '/arquivados',  label: 'Arquivados',  abbr: 'ARQ' },
@@ -127,6 +137,19 @@ export default function App() {
       return null
     }
   })
+
+  // Listener pra eventos de seleção de projeto vindos de fora (ex: clique
+  // em "ABRIR" num projeto na FreelasPage navega pra /areas/X e dispara
+  // este evento pra abrir o painel de detalhe direto). Sem isso, navegar
+  // pra /areas/X só atualiza a URL mas selectedProjectId permanece stale.
+  useEffect(() => {
+    function handler(e: Event) {
+      const detail = (e as CustomEvent).detail as { projectId?: string } | undefined
+      if (detail?.projectId) setSelectedProjectId(detail.projectId)
+    }
+    window.addEventListener('hq-select-project', handler)
+    return () => window.removeEventListener('hq-select-project', handler)
+  }, [])
   const [sessionUpdateTrigger, setSessionUpdateTrigger] = useState(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('hq-sidebar-collapsed')
@@ -447,6 +470,11 @@ export default function App() {
   const { data: rituais = [] } = useRituals()
   const ritualsAtrasados = rituais.filter(r => r.ativo && r.dias_atraso > 0).length
 
+  // Pendências do Hub Health (lembretes + ausência) → dot âmbar na sidebar.
+  // Refetch automático a cada minuto pra capturar mudanças temporais.
+  const { data: healthPending = [] } = useHealthPending()
+  const healthPendingCount = healthPending.length
+
   // Contadores ao vivo pros badges do sidebar — sinal de "produto vivo"
   // (Linear/Cron mostram # de unread/overdue ao lado dos itens). Apenas
   // overdue de Tarefas (urgência real) e ativas de Quests (volume geral).
@@ -461,7 +489,8 @@ export default function App() {
       '/tarefas': { count: overdueTasks, urgent: true },
       '/arquivados': { count: archived, urgent: false },
       '/build': { count: ritualsAtrasados, urgent: true },
-    } as Record<string, { count: number; urgent: boolean }>
+      '/health': { count: healthPendingCount, urgent: false, tone: 'amber' as const },
+    } as Record<string, { count: number; urgent: boolean; tone?: 'amber' }>
   })()
 
   return (
@@ -722,31 +751,44 @@ export default function App() {
                   ) : (
                     <span style={{ flex: 1 }}>{n.label.toUpperCase()}</span>
                   )}
-                  {/* Badge cyber chamferado mono. Urgent = oxblood + glow. */}
-                  {!sidebarCollapsed && sidebarBadges[n.path]?.count > 0 && (
-                    <span style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 9, fontWeight: 700,
-                      padding: '2px 7px',
-                      letterSpacing: '0.05em',
-                      borderRadius: 0,
-                      clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%)',
-                      background: sidebarBadges[n.path].urgent
-                        ? 'rgba(159, 18, 57, 0.18)'
-                        : 'rgba(8, 12, 18, 0.55)',
-                      color: sidebarBadges[n.path].urgent
-                        ? 'var(--color-accent-light)'
-                        : 'var(--color-text-tertiary)',
-                      border: sidebarBadges[n.path].urgent
-                        ? '1px solid var(--color-accent-primary)'
-                        : '1px solid var(--color-border)',
-                      boxShadow: sidebarBadges[n.path].urgent
-                        ? '0 0 8px rgba(159, 18, 57, 0.30)'
-                        : 'none',
-                    }}>
-                      {sidebarBadges[n.path].count.toString().padStart(2, '0')}
-                    </span>
-                  )}
+                  {/* Badge cyber chamferado mono.
+                      - tone='amber'  → âmbar (Hub Health pendente)
+                      - urgent=true   → oxblood + glow (Tarefas overdue, Build ritual atrasado)
+                      - default       → cinza neutro */}
+                  {!sidebarCollapsed && sidebarBadges[n.path]?.count > 0 && (() => {
+                    const b = sidebarBadges[n.path]
+                    const isAmber = b.tone === 'amber'
+                    return (
+                      <span style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 9, fontWeight: 700,
+                        padding: '2px 7px',
+                        letterSpacing: '0.05em',
+                        borderRadius: 0,
+                        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%)',
+                        background: isAmber
+                          ? 'rgba(255, 179, 0, 0.10)'
+                          : b.urgent
+                            ? 'rgba(159, 18, 57, 0.18)'
+                            : 'rgba(8, 12, 18, 0.55)',
+                        color: isAmber
+                          ? '#ffb300'
+                          : b.urgent
+                            ? 'var(--color-accent-light)'
+                            : 'var(--color-text-tertiary)',
+                        border: isAmber
+                          ? '1px solid rgba(255, 179, 0, 0.45)'
+                          : b.urgent
+                            ? '1px solid var(--color-accent-primary)'
+                            : '1px solid var(--color-border)',
+                        boxShadow: b.urgent && !isAmber
+                          ? '0 0 8px rgba(159, 18, 57, 0.30)'
+                          : 'none',
+                      }}>
+                        {b.count.toString().padStart(2, '0')}
+                      </span>
+                    )
+                  })()}
                 </NavLink>
               ))}
             </div>
@@ -1159,6 +1201,13 @@ export default function App() {
           <Route path="/rotinas" element={<RoutinesView />} />
           <Route path="/tarefas" element={<TasksView activeSession={activeSession} onSessionUpdate={onSessionUpdate} sessionUpdateTrigger={sessionUpdateTrigger} />} />
           <Route path="/build" element={<BuildPage />} />
+          {/* Hub Health — layout com tab bar (biomonitor + 1 tab por domínio).
+              `/health` redireciona pra `/health/biomonitor`. */}
+          <Route path="/health" element={<HealthLayout />}>
+            <Route index element={<Navigate to="biomonitor" replace />} />
+            <Route path="biomonitor" element={<BiomonitorPage />} />
+            <Route path=":slug" element={<DomainPage />} />
+          </Route>
           {/* Hub Finance — layout com sub-rotas (visão geral, lançamentos, etc).
               `/hub-finance` redireciona pra `/hub-finance/visao-geral`. */}
           <Route path="/hub-finance" element={<HubFinanceLayout />}>

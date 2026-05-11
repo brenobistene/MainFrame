@@ -106,7 +106,7 @@ export function CarteiraPage() {
             <AnimatedNumber
               value={summary?.saldo_total ?? 0}
               format={n => formatBRL(n)}
-              duration={1.0}
+              duration={0.4}
             />
           </div>
 

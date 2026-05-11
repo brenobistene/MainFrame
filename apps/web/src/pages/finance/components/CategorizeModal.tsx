@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
-  fetchAllFinParcelas, updateFinTransaction, createFinCategorizationRule,
+  updateFinTransaction, createFinCategorizationRule,
   previewBackfillRule, reportApiError,
 } from '../../../api'
 import type { FinRuleBackfillPreview } from '../../../api'
-import type { FinTransaction, FinCategory, FinDebt, FinParcela, FinAccount } from '../../../types'
+import type { FinTransaction, FinCategory, FinAccount } from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton,
   formatBRL, formatDate,
@@ -14,10 +14,9 @@ import { BackfillConfirmModal } from './BackfillConfirmModal'
 import { parseTxDescricao } from './parseTxDescricao'
 import { alertDialog } from '../../../lib/dialog'
 
-export function CategorizeModal({ tx, categories, debts, accounts, onClose, onSaved }: {
+export function CategorizeModal({ tx, categories, accounts, onClose, onSaved }: {
   tx: FinTransaction
   categories: FinCategory[]
-  debts: FinDebt[]
   accounts: FinAccount[]
   onClose: () => void
   onSaved: () => void
@@ -27,27 +26,13 @@ export function CategorizeModal({ tx, categories, debts, accounts, onClose, onSa
     if (isEntry) return categories.filter(c => c.tipo === 'receita' || c.tipo === 'estorno')
     return categories.filter(c => c.tipo === 'despesa')
   }, [categories, isEntry])
-  const eligibleDebts = useMemo(
-    () => (isEntry ? [] : debts.filter(d => d.status === 'active')),
-    [debts, isEntry],
-  )
   // Cartões de crédito disponíveis pra link de pagamento (só faz sentido em saídas)
   const cartoesCredito = useMemo(
     () => (isEntry ? [] : accounts.filter(a => a.tipo === 'credito')),
     [accounts, isEntry],
   )
 
-  const [pendingParcelas, setPendingParcelas] = useState<FinParcela[]>([])
-  useEffect(() => {
-    if (!isEntry) return
-    fetchAllFinParcelas('pendente')
-      .then(setPendingParcelas)
-      .catch(err => reportApiError('CategorizeModal.fetchParcelas', err))
-  }, [isEntry])
-
   const [categoriaId, setCategoriaId] = useState<string>(tx.categoria_id ?? filteredCats[0]?.id ?? '')
-  const [dividaId, setDividaId] = useState<string>(tx.divida_id ?? '')
-  const [parcelaId, setParcelaId] = useState<string>(tx.parcela_id ?? '')
   // Pré-marcado: a expectativa do usuário é que categorizar uma vez já cubra
   // todas as próximas transações da mesma contraparte.
   const [createRule, setCreateRule] = useState(true)
@@ -66,12 +51,19 @@ export function CategorizeModal({ tx, categories, debts, accounts, onClose, onSa
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!categoriaId) { alertDialog({ title: 'Categoria obrigatória', message: 'Escolha uma categoria.', variant: 'warning' }); return }
+    // Se user marcou "criar regra" mas esqueceu de preencher o pattern, avisa
+    // ao invés de silenciosamente skipar a criação da regra (bug antigo).
+    if (createRule && !pattern.trim()) {
+      alertDialog({
+        title: 'Texto da regra obrigatório',
+        message: 'Você marcou "criar regra automática" mas o texto está vazio. Preencha um padrão (ex: "amicom", "uber") ou desmarque a opção.',
+        variant: 'warning',
+      })
+      return
+    }
     setBusy(true)
     try {
-      const patch: Partial<FinTransaction> = { categoria_id: categoriaId }
-      if (!isEntry) patch.divida_id = dividaId || null
-      if (isEntry) patch.parcela_id = parcelaId || null
-      await updateFinTransaction(tx.id, patch)
+      await updateFinTransaction(tx.id, { categoria_id: categoriaId })
       if (createRule && pattern.trim()) {
         const rule = await createFinCategorizationRule({
           pattern: pattern.trim(),
@@ -139,36 +131,6 @@ export function CategorizeModal({ tx, categories, debts, accounts, onClose, onSa
               {filteredCats.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
             </select>
           </div>
-
-          {eligibleDebts.length > 0 && (
-            <div>
-              <label style={fieldLabel()}>Vincular a dívida (opcional)</label>
-              <select value={dividaId} onChange={e => setDividaId(e.target.value)} style={inputStyle()}>
-                <option value="">— não vincular —</option>
-                {eligibleDebts.map(d => (
-                  <option key={d.id} value={d.id}>
-                    {d.descricao} (saldo {formatBRL(d.saldo_devedor)})
-                  </option>
-                ))}
-              </select>
-              <div style={hintStyle}>vincular abate o saldo da dívida quando essa transação é uma saída.</div>
-            </div>
-          )}
-
-          {isEntry && pendingParcelas.length > 0 && (
-            <div>
-              <label style={fieldLabel()}>Vincular a parcela esperada (opcional)</label>
-              <select value={parcelaId} onChange={e => setParcelaId(e.target.value)} style={inputStyle()}>
-                <option value="">— não vincular —</option>
-                {pendingParcelas.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.projeto_titulo} — Parcela #{p.numero} ({formatBRL(p.valor)}{p.data_prevista ? `, vence ${formatDate(p.data_prevista)}` : ''})
-                  </option>
-                ))}
-              </select>
-              <div style={hintStyle}>vincular marca a parcela como "recebida" e contabiliza no R$/hora real do projeto.</div>
-            </div>
-          )}
 
           <label style={{
             display: 'flex', alignItems: 'flex-start', gap: 8,
@@ -254,7 +216,17 @@ export function CategorizeModal({ tx, categories, debts, accounts, onClose, onSa
           categoryName={backfillPrompt.categoryName}
           preview={backfillPrompt.preview}
           onClose={() => { setBackfillPrompt(null); onSaved() }}
-          onApplied={() => { setBackfillPrompt(null); onSaved() }}
+          onApplied={updated => {
+            setBackfillPrompt(null)
+            if (updated > 0) {
+              alertDialog({
+                title: 'Regra aplicada',
+                message: `${updated} ${updated === 1 ? 'transação foi categorizada' : 'transações foram categorizadas'} retroativamente.`,
+                variant: 'info',
+              })
+            }
+            onSaved()
+          }}
         />
       )}
     </div>

@@ -15,7 +15,7 @@ import {
 import {
   fetchFinDebtParcelas, createFinDebtParcela, updateFinDebtParcela,
   deleteFinDebtParcela, generateFinDebtParcelas, completeFinDebtParcelas,
-  createFinTransaction, reportApiError,
+  createFinTransaction, updateFinTransaction, reportApiError,
 } from '../../../api'
 import type {
   FinAccount, FinCategory, FinDebt, FinDebtParcela,
@@ -27,6 +27,8 @@ import {
 } from './styleHelpers'
 import { EmptyState, IconButton } from '../../../components/ui/Primitives'
 import { confirmDialog, alertDialog } from '../../../lib/dialog'
+import { useHubFinance } from '../HubFinanceContext'
+import { LinkedTransactionPicker, PaymentModeToggle } from './LinkedTransactionPicker'
 
 export function DebtParcelasModal({
   debt, accounts, categories, onClose, onChanged,
@@ -129,13 +131,22 @@ export function DebtParcelasModal({
   async function handleUnlinkPaid(p: FinDebtParcela) {
     const ok = await confirmDialog({
       title: 'Desvincular pagamento',
-      message: `Desvincular pagamento da parcela #${p.numero.toString().padStart(2, '0')}?\n\nA transação NÃO é apagada (segue em Lançamentos), só perde o vínculo. A parcela volta a "pendente".`,
+      message: `Desvincular pagamento da parcela #${p.numero.toString().padStart(2, '0')}?\n\nA transação NÃO é apagada (segue em Lançamentos), só perde o vínculo com a dívida. A parcela volta a "pendente".`,
       confirmLabel: 'DESVINCULAR',
     })
     if (!ok) return
     setBusy(true)
     try {
+      // Limpa AMBOS os lados do link: o lado da parcela (transacao_pagamento_id)
+      // e o lado da tx (divida_id). O linking original (em MarkParcelaPaidModal)
+      // seta os dois, então a desvinculação simétrica também limpa os dois.
+      // Sem isso, a tx ficaria "órfã" apontando pra dívida sem nenhuma parcela
+      // correspondente.
+      const txId = p.transacao_pagamento_id
       await updateFinDebtParcela(p.id, { transacao_pagamento_id: null })
+      if (txId) {
+        await updateFinTransaction(txId, { divida_id: null })
+      }
       refresh()
       onChanged()
     } catch (err) {
@@ -807,6 +818,34 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
   onPaid: () => void
 }) {
   const today = new Date().toISOString().slice(0, 10)
+  const { transactions } = useHubFinance()
+
+  // Candidatos pra vincular: tx do mês selecionado (já carregadas no context),
+  // despesa (valor < 0), e sem vínculo a OUTRA parcela/dívida/fatura. Tx
+  // que tem `recurring_bill_id` é OK — uma tx pode legitimamente pagar
+  // uma bill recorrente E quitar uma parcela de dívida ao mesmo tempo
+  // (raro mas possível). Já vinculada a OUTRA dívida sim deve sair.
+  const candidates = useMemo(() => {
+    return transactions.filter(tx => {
+      if (tx.valor >= 0) return false
+      if (tx.parcela_id || tx.fatura_id || tx.pagamento_fatura_id) return false
+      // Permite re-linkar tx já vinculada a ESTA dívida (idempotente)
+      if (tx.divida_id && tx.divida_id !== debt.id) return false
+      return true
+    }).sort((a, b) => {
+      const expected = parcela.valor_efetivo
+      const aExact = Math.abs(Math.abs(a.valor) - expected) < 0.005 ? 0 : 1
+      const bExact = Math.abs(Math.abs(b.valor) - expected) < 0.005 ? 0 : 1
+      if (aExact !== bExact) return aExact - bExact
+      return a.data.localeCompare(b.data)
+    })
+  }, [transactions, parcela.valor_efetivo, debt.id])
+
+  const [mode, setMode] = useState<'link' | 'create'>(
+    candidates.length > 0 ? 'link' : 'create'
+  )
+  const [selectedTxId, setSelectedTxId] = useState<string | null>(null)
+
   const [data, setData] = useState(parcela.data_prevista || today)
   const [valor, setValor] = useState(String(parcela.valor_efetivo).replace('.', ','))
   const [descricao, setDescricao] = useState(`${debt.descricao} · parcela ${parcela.numero}`)
@@ -818,24 +857,50 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!descricao.trim() || !contaId) {
-      alertDialog({ title: 'Campos obrigatórios', message: 'Descrição e conta são obrigatórias.', variant: 'warning' })
-      return
-    }
-    const valorNum = parseBRL(valor)
-    if (valorNum == null || valorNum < 0) {
-      alertDialog({ title: 'Valor inválido', message: 'Valor inválido.', variant: 'warning' })
-      return
-    }
-    // Aceita valor 0 SOMENTE se a parcela foi planejada como zero (carência,
-    // mês "pulado" do cronograma). Caso contrário, valor 0 é provável erro
-    // de digitação.
-    if (valorNum === 0 && (parcela.valor_planejado ?? 0) !== 0) {
-      alertDialog({ title: 'Valor inválido', message: 'Essa parcela não é zerada.', variant: 'warning' })
-      return
-    }
     setBusy(true)
     try {
+      if (mode === 'link') {
+        if (!selectedTxId) {
+          alertDialog({ title: 'Nenhum lançamento selecionado', message: 'Escolha um lançamento da lista pra vincular, ou troque pra "criar novo".', variant: 'warning' })
+          setBusy(false)
+          return
+        }
+        // Linka a tx existente: seta tx.divida_id pra rastrear no LancamentosPage
+        // E vincula a parcela à tx (idempotente, pode re-linkar).
+        // Propaga categoria da dívida se a tx ainda não tem categoria — mantém
+        // consistência pra relatórios e filtros de Lançamentos.
+        const selectedTx = candidates.find(t => t.id === selectedTxId)
+        const patch: Parameters<typeof updateFinTransaction>[1] = {
+          divida_id: debt.id,
+        }
+        if (debt.categoria_id && selectedTx && !selectedTx.categoria_id) {
+          patch.categoria_id = debt.categoria_id
+        }
+        await updateFinTransaction(selectedTxId, patch)
+        await updateFinDebtParcela(parcela.id, { transacao_pagamento_id: selectedTxId })
+        onPaid()
+        return
+      }
+      // mode === 'create' — fluxo antigo
+      if (!descricao.trim() || !contaId) {
+        alertDialog({ title: 'Campos obrigatórios', message: 'Descrição e conta são obrigatórias.', variant: 'warning' })
+        setBusy(false)
+        return
+      }
+      const valorNum = parseBRL(valor)
+      if (valorNum == null || valorNum < 0) {
+        alertDialog({ title: 'Valor inválido', message: 'Valor inválido.', variant: 'warning' })
+        setBusy(false)
+        return
+      }
+      // Aceita valor 0 SOMENTE se a parcela foi planejada como zero (carência,
+      // mês "pulado" do cronograma). Caso contrário, valor 0 é provável erro
+      // de digitação.
+      if (valorNum === 0 && (parcela.valor_planejado ?? 0) !== 0) {
+        alertDialog({ title: 'Valor inválido', message: 'Essa parcela não é zerada.', variant: 'warning' })
+        setBusy(false)
+        return
+      }
       // 1. Cria a transação como despesa (negativa) vinculada à dívida
       const tx = await createFinTransaction({
         data,
@@ -844,10 +909,9 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
         conta_id: contaId,
         categoria_id: categoriaId || null,
       })
-      // 2. Vincula a parcela à transação criada
-      await updateFinDebtParcela(parcela.id, {
-        transacao_pagamento_id: tx.id,
-      })
+      // 2. Linka tx → dívida e parcela → tx
+      await updateFinTransaction(tx.id, { divida_id: debt.id })
+      await updateFinDebtParcela(parcela.id, { transacao_pagamento_id: tx.id })
       onPaid()
     } catch (err) {
       reportApiError('MarkParcelaPaidModal.submit', err)
@@ -876,87 +940,114 @@ function MarkParcelaPaidModal({ debt, parcela, accounts, categories, onClose, on
         <div style={modalBody()}>
 
         <div style={hintText()}>
-          Cria transação de despesa vinculada à dívida e marca a parcela como paga.
-          Saldo da dívida abate automaticamente.
+          {mode === 'link'
+            ? <>Escolha um lançamento já importado pra vincular à parcela. A dívida abate sem criar duplicata.</>
+            : <>Cria transação de despesa nova vinculada à dívida e marca a parcela como paga. Use quando o pagamento ainda não está nos lançamentos.</>
+          }
         </div>
 
         <form onSubmit={submit} style={{
           display: 'flex', flexDirection: 'column',
           gap: 'var(--space-3)', marginTop: 'var(--space-4)',
         }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 'var(--space-3)' }}>
-            <div>
-              <label style={fieldLabel()}>Data</label>
-              <input
-                type="date"
-                value={data}
-                onChange={e => setData(e.target.value)}
-                style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div>
-              <label style={fieldLabel()}>Valor pago (R$)</label>
-              <input
-                autoFocus
-                type="text"
-                inputMode="decimal"
-                value={valor}
-                onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
-                style={{
-                  ...inputStyle(), width: '100%', boxSizing: 'border-box',
-                  fontFamily: 'var(--font-mono)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              />
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                planejado: {formatBRL(parcela.valor_efetivo)}
-              </div>
-            </div>
-          </div>
+          <PaymentModeToggle
+            mode={mode}
+            onChange={setMode}
+            candidateCount={candidates.length}
+          />
 
-          <div>
-            <label style={fieldLabel()}>Descrição</label>
-            <input
-              type="text"
-              value={descricao}
-              onChange={e => setDescricao(e.target.value)}
-              style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+          {mode === 'link' ? (
+            <LinkedTransactionPicker
+              candidates={candidates}
+              selectedTxId={selectedTxId}
+              onSelect={setSelectedTxId}
+              accounts={accounts}
+              categories={categories}
+              expectedValor={parcela.valor_efetivo}
             />
-          </div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 'var(--space-3)' }}>
+                <div>
+                  <label style={fieldLabel()}>Data</label>
+                  <input
+                    type="date"
+                    value={data}
+                    onChange={e => setData(e.target.value)}
+                    style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={fieldLabel()}>Valor pago (R$)</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    inputMode="decimal"
+                    value={valor}
+                    onChange={e => setValor(sanitizeMoneyInput(e.target.value))}
+                    style={{
+                      ...inputStyle(), width: '100%', boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  />
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                    planejado: {formatBRL(parcela.valor_efetivo)}
+                  </div>
+                </div>
+              </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-            <div>
-              <label style={fieldLabel()}>Conta de pagamento</label>
-              <select
-                value={contaId}
-                onChange={e => setContaId(e.target.value)}
-                style={{ ...inputStyle(), width: '100%' }}
-              >
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.nome}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={fieldLabel()}>Categoria</label>
-              <select
-                value={categoriaId}
-                onChange={e => setCategoriaId(e.target.value)}
-                style={{ ...inputStyle(), width: '100%' }}
-              >
-                <option value="">— sem —</option>
-                {filteredCats.map(c => (
-                  <option key={c.id} value={c.id}>{c.nome}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+              <div>
+                <label style={fieldLabel()}>Descrição</label>
+                <input
+                  type="text"
+                  value={descricao}
+                  onChange={e => setDescricao(e.target.value)}
+                  style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+                <div>
+                  <label style={fieldLabel()}>Conta de pagamento</label>
+                  <select
+                    value={contaId}
+                    onChange={e => setContaId(e.target.value)}
+                    style={{ ...inputStyle(), width: '100%' }}
+                  >
+                    {accounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.nome}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={fieldLabel()}>Categoria</label>
+                  <select
+                    value={categoriaId}
+                    onChange={e => setCategoriaId(e.target.value)}
+                    style={{ ...inputStyle(), width: '100%' }}
+                  >
+                    <option value="">— sem —</option>
+                    {filteredCats.map(c => (
+                      <option key={c.id} value={c.id}>{c.nome}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
 
           <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
             <button type="button" onClick={onClose} style={ghostButton()}>cancelar</button>
-            <button type="submit" disabled={busy} style={primaryButton()}>
+            <button
+              type="submit"
+              disabled={busy || (mode === 'link' && !selectedTxId)}
+              style={primaryButton()}
+            >
               <CheckCircle2 size={ICON_SIZE.xs} strokeWidth={2} />
-              {busy ? 'registrando…' : 'registrar pagamento'}
+              {busy
+                ? 'registrando…'
+                : mode === 'link' ? 'vincular pagamento' : 'registrar pagamento'}
             </button>
           </div>
         </form>

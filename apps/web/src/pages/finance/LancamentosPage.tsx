@@ -28,6 +28,7 @@ import {
 import { CategorizeModal } from './components/CategorizeModal'
 import { TransactionEditModal } from './components/TransactionEditModal'
 import { NewTransactionModal } from './components/NewTransactionModal'
+import { LinkTransactionModal } from './components/LinkTransactionModal'
 import { MonthPicker } from './components/MonthPicker'
 import { confirmDialog, alertDialog } from '../../lib/dialog'
 import { parseTxDescricao } from './components/parseTxDescricao'
@@ -43,6 +44,7 @@ export function LancamentosPage() {
   // Modais
   const [categorizingTx, setCategorizingTx] = useState<FinTransaction | null>(null)
   const [editingTx, setEditingTx] = useState<FinTransaction | null>(null)
+  const [linkingTx, setLinkingTx] = useState<FinTransaction | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
 
   // Filtros (client-side, lista do mês já tá carregada via context)
@@ -356,9 +358,10 @@ export function LancamentosPage() {
                       display: 'flex', alignItems: 'center', gap: 6,
                     }}
                   >
-                    {(tx.parcela_id || tx.divida_id || tx.fatura_id) && (
+                    {(tx.parcela_id || tx.divida_id || tx.fatura_id || tx.recurring_bill_id) && (
                       <span
                         title={
+                          tx.recurring_bill_id ? 'vinculada a conta fixa' :
                           tx.parcela_id ? 'vinculada a parcela de projeto' :
                           tx.divida_id ? 'vinculada a dívida' :
                           'parte de fatura de cartão'
@@ -467,6 +470,19 @@ export function LancamentosPage() {
                     {/* marginLeft: auto empurra o grupo de ações pra direita
                         mantendo o valor colado à esquerda. */}
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                      {/* Link só aparece quando a tx ainda não tá vinculada a
+                          nada — depois de vinculada, o Link2 ao lado da
+                          descrição já indica visualmente. */}
+                      {!(tx.parcela_id || tx.divida_id || tx.fatura_id
+                          || tx.pagamento_fatura_id || tx.recurring_bill_id) && (
+                        <button
+                          onClick={() => setLinkingTx(tx)}
+                          title="vincular a conta fixa ou parcela de dívida"
+                          style={iconBtnStyle}
+                        >
+                          <Link2 size={11} strokeWidth={1.8} />
+                        </button>
+                      )}
                       <button
                         onClick={() => setEditingTx(tx)}
                         title="editar"
@@ -587,7 +603,6 @@ export function LancamentosPage() {
         <CategorizeModal
           tx={categorizingTx}
           categories={categories}
-          debts={debts}
           accounts={accounts}
           onClose={() => setCategorizingTx(null)}
           onSaved={() => { setCategorizingTx(null); refreshAll() }}
@@ -611,6 +626,13 @@ export function LancamentosPage() {
           defaultDate={defaultDate}
           onClose={() => setShowNewModal(false)}
           onCreated={() => { setShowNewModal(false); refreshAll() }}
+        />
+      )}
+      {linkingTx && (
+        <LinkTransactionModal
+          tx={linkingTx}
+          onClose={() => setLinkingTx(null)}
+          onLinked={() => { setLinkingTx(null); refreshAll() }}
         />
       )}
     </Card>

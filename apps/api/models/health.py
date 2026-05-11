@@ -37,6 +37,7 @@ class DomainOut(BaseModel):
     ausencia_threshold_dias: Optional[int] = None
     ordem: int
     ativo: bool
+    metric_primary_slug: Optional[str] = None
     criado_em: str
     atualizado_em: str
 
@@ -51,6 +52,7 @@ class DomainCreate(BaseModel):
     lembrete_ativo: bool = False
     ausencia_threshold_dias: Optional[int] = Field(None, ge=1, le=365)
     ordem: Optional[int] = None
+    metric_primary_slug: Optional[str] = Field(None, max_length=120)
 
 
 class DomainUpdate(BaseModel):
@@ -61,6 +63,7 @@ class DomainUpdate(BaseModel):
     ausencia_threshold_dias: Optional[int] = Field(None, ge=1, le=365)
     ordem: Optional[int] = None
     ativo: Optional[bool] = None
+    metric_primary_slug: Optional[str] = Field(None, max_length=120)
 
 
 # ─── Item ─────────────────────────────────────────────────────────────────
@@ -137,11 +140,11 @@ class RecordUpdate(BaseModel):
 # ─── Settings ─────────────────────────────────────────────────────────────
 
 class SettingsOut(BaseModel):
-    lembrete_horas_apos_acordar: int
+    hora_lembrete_sono: str             # HH:MM, quando lembrete de sono dispara
     dashboard_card_visivel: bool
     atualizado_em: str
 
 
 class SettingsUpdate(BaseModel):
-    lembrete_horas_apos_acordar: Optional[int] = Field(None, ge=0, le=24)
+    hora_lembrete_sono: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
     dashboard_card_visivel: Optional[bool] = None

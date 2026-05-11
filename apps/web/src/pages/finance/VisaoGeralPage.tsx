@@ -169,7 +169,7 @@ function TopBar({ summary, selectedMonth, onMonthChange }: {
                 lineHeight: 1.1,
                 textShadow: isNeg ? 'none' : '0 0 16px var(--color-ice-glow)',
               }}>
-                <AnimatedNumber value={saldo} format={n => formatBRL(n)} duration={0.9} />
+                <AnimatedNumber value={saldo} format={n => formatBRL(n)} duration={0.4} />
               </span>
             </div>
             <span style={{

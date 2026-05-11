@@ -308,6 +308,10 @@ export interface FinTransaction {
    *  + `data_pagamento = data desta tx`. Usado pra reconciliar txs
    *  importadas do Nubank tipo "Pagamento de fatura" com a fatura. */
   pagamento_fatura_id: string | null
+  /** Vínculo opcional: esta tx paga a recurring_bill X no mês. Usado
+   *  pra conciliar uma tx já importada do banco com uma fixa cadastrada,
+   *  evitando duplicação no resumo mensal. */
+  recurring_bill_id: string | null
   created_at?: string
   updated_at?: string
 }
@@ -851,6 +855,7 @@ export interface HealthDomainCreate {
   lembrete_ativo?: boolean
   ausencia_threshold_dias?: number | null
   ordem?: number
+  metric_primary_slug?: string | null
 }
 
 export type HealthDomainUpdate = Partial<{
@@ -861,6 +866,7 @@ export type HealthDomainUpdate = Partial<{
   ausencia_threshold_dias: number | null
   ordem: number
   ativo: boolean
+  metric_primary_slug: string | null
 }>
 
 export interface HealthItem {

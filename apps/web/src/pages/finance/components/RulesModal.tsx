@@ -23,6 +23,13 @@ export function RulesModal({ categories, accounts, onClose }: {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftPattern, setDraftPattern] = useState('')
   const [draftCategoriaId, setDraftCategoriaId] = useState('')
+  const [draftLinkCartaoId, setDraftLinkCartaoId] = useState('')
+
+  // Cartões de crédito disponíveis pra auto-link de pagamento de fatura
+  const cartoesCredito = useMemo(
+    () => accounts.filter(a => a.tipo === 'credito'),
+    [accounts],
+  )
   const [busy, setBusy] = useState(false)
   const [backfillPrompt, setBackfillPrompt] = useState<{
     ruleId: string
@@ -70,10 +77,11 @@ export function RulesModal({ categories, accounts, onClose }: {
     setEditingId(r.id)
     setDraftPattern(r.pattern)
     setDraftCategoriaId(r.categoria_id)
+    setDraftLinkCartaoId(r.link_cartao_id ?? '')
   }
   function cancelEdit() {
     setEditingId(null)
-    setDraftPattern(''); setDraftCategoriaId('')
+    setDraftPattern(''); setDraftCategoriaId(''); setDraftLinkCartaoId('')
   }
 
   async function saveEdit(r: FinCategorizationRule) {
@@ -84,6 +92,7 @@ export function RulesModal({ categories, accounts, onClose }: {
       await updateFinCategorizationRule(r.id, {
         pattern: draftPattern.trim(),
         categoria_id: draftCategoriaId,
+        link_cartao_id: draftLinkCartaoId || null,
       })
       cancelEdit()
       refresh()
@@ -175,7 +184,7 @@ export function RulesModal({ categories, accounts, onClose }: {
               return (
                 <div key={r.id} style={{
                   display: 'grid',
-                  gridTemplateColumns: isEditing ? '1fr 180px auto' : '1fr 180px 70px auto',
+                  gridTemplateColumns: isEditing ? '1fr 140px 140px auto' : '1fr 180px 70px auto',
                   gap: 8, alignItems: 'center',
                   padding: '8px 10px',
                   background: 'var(--color-bg-secondary)',
@@ -199,6 +208,17 @@ export function RulesModal({ categories, accounts, onClose }: {
                       >
                         {categories.map(c => (
                           <option key={c.id} value={c.id}>{c.nome}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={draftLinkCartaoId}
+                        onChange={e => setDraftLinkCartaoId(e.target.value)}
+                        style={inputStyle()}
+                        title="Vincular como pagamento de fatura — só pra regras de despesa em cartão"
+                      >
+                        <option value="">— sem fatura —</option>
+                        {cartoesCredito.map(c => (
+                          <option key={c.id} value={c.id}>⚡ {c.nome}</option>
                         ))}
                       </select>
                       <span style={{ display: 'flex', gap: 6 }}>
@@ -308,7 +328,17 @@ export function RulesModal({ categories, accounts, onClose }: {
           categoryName={backfillPrompt.categoryName}
           preview={backfillPrompt.preview}
           onClose={() => setBackfillPrompt(null)}
-          onApplied={() => { setBackfillPrompt(null); refresh() }}
+          onApplied={updated => {
+            setBackfillPrompt(null)
+            if (updated > 0) {
+              alertDialog({
+                title: 'Regra aplicada',
+                message: `${updated} ${updated === 1 ? 'transação foi categorizada' : 'transações foram categorizadas'} retroativamente.`,
+                variant: 'info',
+              })
+            }
+            refresh()
+          }}
         />
       )}
     </div>

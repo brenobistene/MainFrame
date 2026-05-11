@@ -293,3 +293,22 @@ input[type="time"]::-webkit-datetime-edit-minute-field[aria-valuenow=""] {
   border: 1px solid rgba(143, 191, 211, 0.35) !important;
   box-shadow: 0 0 16px rgba(143, 191, 211, 0.15) !important;
 }
+
+/* ─── Hub Health — pulsação biomonitor pra leituras "ao vivo" ─────────────
+   Sinal sutil de "dado fresco" (registro de hoje). NÃO é gamificação —
+   é semântica visual, tipo pulso de monitor cardíaco. Filosofia em
+   docs/design-system/STYLES.md §3.4. */
+@keyframes hh-bio-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.85); }
+}
+
+.hh-live-pulse {
+  display: inline-block;
+  animation: hh-bio-pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hh-live-pulse { animation: none; }
+}

@@ -270,7 +270,7 @@ def delete_category(category_id: str):
 TRANSACTION_COLUMNS = (
     "id, data, valor, descricao, conta_id, categoria_id, origem, notas, "
     "nubank_id, divida_id, parcela_id, fatura_id, pagamento_fatura_id, "
-    "created_at, updated_at"
+    "recurring_bill_id, created_at, updated_at"
 )
 
 
@@ -320,6 +320,10 @@ def create_transaction(body: TransactionCreate):
             "SELECT 1 FROM fin_category WHERE id = ?", (body.categoria_id,)
         ).fetchone():
             raise HTTPException(422, detail="categoria_id não existe")
+        if body.recurring_bill_id and not conn.execute(
+            "SELECT 1 FROM fin_recurring_bill WHERE id = ?", (body.recurring_bill_id,)
+        ).fetchone():
+            raise HTTPException(422, detail="recurring_bill_id não existe")
         # Auto-vínculo a parcela: só se for entrada (valor > 0) e usuário não
         # passou parcela_id explícito. Helper devolve None se ambíguo.
         suggested_parcela = _suggest_parcela_by_descricao(conn, descricao, body.valor)
@@ -338,12 +342,12 @@ def create_transaction(body: TransactionCreate):
                 fatura_id = _ensure_open_invoice(conn, body.conta_id, body.data)
         conn.execute(
             "INSERT INTO fin_transaction(id, data, valor, descricao, conta_id, "
-            "categoria_id, origem, notas, parcela_id, fatura_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "categoria_id, origem, notas, parcela_id, fatura_id, recurring_bill_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 tx_id, body.data, body.valor, descricao, body.conta_id,
                 body.categoria_id, body.origem, body.notas, suggested_parcela,
-                fatura_id,
+                fatura_id, body.recurring_bill_id,
             ),
         )
         if suggested_parcela:
@@ -388,6 +392,10 @@ def update_transaction(tx_id: str, body: TransactionUpdate):
             "SELECT 1 FROM fin_invoice WHERE id = ?", (fields["fatura_id"],)
         ).fetchone():
             raise HTTPException(422, detail="fatura_id não existe")
+        if "recurring_bill_id" in fields and fields["recurring_bill_id"] and not conn.execute(
+            "SELECT 1 FROM fin_recurring_bill WHERE id = ?", (fields["recurring_bill_id"],)
+        ).fetchone():
+            raise HTTPException(422, detail="recurring_bill_id não existe")
         # Validar pagamento_fatura_id (link "esta tx é o pagamento da fatura X")
         if "pagamento_fatura_id" in fields and fields["pagamento_fatura_id"]:
             inv = conn.execute(
@@ -414,6 +422,27 @@ def update_transaction(tx_id: str, body: TransactionUpdate):
         new_divida = fields.get("divida_id", prev["divida_id"])
         if new_divida:
             affected_debts.add(new_divida)
+
+        # Quando divida_id muda na tx, parcelas que apontavam pra ela podem
+        # ficar órfãs (a tx saiu da dívida). Se a nova divida_id da tx ainda
+        # bate com a divida_id da parcela, mantém o link; senão, libera a
+        # parcela (volta a ser pendente) e marca a dívida pra recálculo.
+        # Sem isso, a parcela continuava marcada como "paga" apontando pra
+        # uma tx que já não a referencia mais — bug user-visible.
+        if "divida_id" in fields:
+            orphan_parcelas = list(conn.execute(
+                "SELECT id, divida_id FROM fin_debt_parcela WHERE transacao_pagamento_id = ?",
+                (tx_id,),
+            ).fetchall())
+            for p in orphan_parcelas:
+                if new_divida != p["divida_id"]:
+                    conn.execute(
+                        "UPDATE fin_debt_parcela SET transacao_pagamento_id = NULL "
+                        "WHERE id = ?",
+                        (p["id"],),
+                    )
+                    affected_debts.add(p["divida_id"])
+
         for did in affected_debts:
             _maybe_update_debt_status(conn, did)
         # Mesma lógica pras parcelas afetadas.
@@ -466,6 +495,19 @@ def delete_transaction(tx_id: str):
         prev_divida = row["divida_id"] if row else None
         prev_parcela = row["parcela_id"] if row else None
         prev_pag_fatura = row["pagamento_fatura_id"] if row else None
+        # Antes de deletar, libera quaisquer parcelas de dívida que apontavam
+        # pra esta tx (transacao_pagamento_id agora aponta pra nada). Sem isso,
+        # a parcela continuava marcada como paga após o usuário deletar a tx.
+        orphan_parcela_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM fin_debt_parcela WHERE transacao_pagamento_id = ?",
+            (tx_id,),
+        ).fetchall()]
+        if orphan_parcela_ids:
+            conn.execute(
+                "UPDATE fin_debt_parcela SET transacao_pagamento_id = NULL "
+                "WHERE transacao_pagamento_id = ?",
+                (tx_id,),
+            )
         conn.execute("DELETE FROM fin_transaction WHERE id = ?", (tx_id,))
         if prev_divida:
             # Saldo voltou a subir — se era 'paid_off', volta pra 'active'.
@@ -1651,12 +1693,41 @@ def recurring_bills_status(
             else:
                 despesa_estimado += valor_est
 
-            # Procura transação match: mesmo mês, mesma categoria (se bill tem),
-            # descrição contém alguma palavra ≥4 chars do nome da bill.
-            # Filtro de SINAL conforme tipo da bill.
-            words = [w.strip().lower() for w in bill_dict["descricao"].split() if len(w.strip()) >= 4]
+            # Procura transação match. Prioridade:
+            # 1) FK explícito `recurring_bill_id` setado via flow de
+            #    "vincular lançamento existente" (mais confiável).
+            # 2) Match heurístico por descrição (legado / fallback pra bills
+            #    que o usuário ainda não vinculou explicitamente).
             tx_match = None
-            if words:
+            sign_clause = "t.valor > 0" if tipo == "receita" else "t.valor < 0"
+            # Janela do mês conforme regra de competência (despesas pelo
+            # pagamento da fatura, receitas pela data da tx)
+            if tipo == "receita":
+                date_clause = "t.data >= ? AND t.data <= ?"
+                date_params: list = [data_de, data_ate]
+            else:
+                date_clause = (
+                    "((t.fatura_id IS NULL AND t.data >= ? AND t.data <= ?) "
+                    "OR (t.fatura_id IS NOT NULL AND EXISTS ("
+                    "  SELECT 1 FROM fin_invoice f WHERE f.id = t.fatura_id "
+                    "    AND f.status = 'paga' "
+                    "    AND f.data_pagamento >= ? AND f.data_pagamento <= ?"
+                    ")))"
+                )
+                date_params = [data_de, data_ate, data_de, data_ate]
+            # Prioridade 1: vínculo explícito
+            tx_match = conn.execute(
+                f"""SELECT t.id, t.data, t.valor
+                      FROM fin_transaction t
+                      WHERE t.recurring_bill_id = ?
+                        AND {sign_clause}
+                        AND {date_clause}
+                      ORDER BY t.data ASC LIMIT 1""",
+                (bill_dict["id"], *date_params),
+            ).fetchone()
+            # Prioridade 2: heurística por descrição (compat com bills antigas)
+            words = [w.strip().lower() for w in bill_dict["descricao"].split() if len(w.strip()) >= 4]
+            if not tx_match and words:
                 like_clauses = " OR ".join(["LOWER(t.descricao) LIKE ?" for _ in words])
                 like_params = [f"%{w}%" for w in words]
                 cat_clause = ""
@@ -1664,12 +1735,16 @@ def recurring_bills_status(
                 if bill_dict["categoria_id"]:
                     cat_clause = " AND t.categoria_id = ?"
                     cat_params = [bill_dict["categoria_id"]]
+                # Exclui txs já linkadas a OUTRA bill via FK explícito — evita
+                # double-attribute quando user já vinculou tx X à bill A e a
+                # heurística tentaria pegar a mesma tx pra bill B.
                 if tipo == "receita":
                     # Receitas: só transação direta (não passam por fatura).
                     tx_match = conn.execute(
                         f"""SELECT t.id, t.data, t.valor
                               FROM fin_transaction t
                               WHERE t.valor > 0
+                                AND t.recurring_bill_id IS NULL
                                 AND ({like_clauses})
                                 {cat_clause}
                                 AND t.data >= ? AND t.data <= ?
@@ -1683,6 +1758,7 @@ def recurring_bills_status(
                               FROM fin_transaction t
                               LEFT JOIN fin_invoice f ON f.id = t.fatura_id
                               WHERE t.valor < 0
+                                AND t.recurring_bill_id IS NULL
                                 AND ({like_clauses})
                                 {cat_clause}
                                 AND (
@@ -1788,10 +1864,38 @@ def month_commitments(
             bill = _bill_row_to_dict(b)
             tipo = bill.get("tipo") or "despesa"
 
-            # Inferência de match (reusa lógica de recurring_bills_status)
-            words = [w.strip().lower() for w in bill["descricao"].split() if len(w.strip()) >= 4]
+            # Match de tx que paga essa bill no mês. Prioridade:
+            # 1) FK explícito `recurring_bill_id` (vínculo manual confiável).
+            # 2) Heurística por descrição (legado).
             tx_match = None
-            if words:
+            sign_clause = "t.valor > 0" if tipo == "receita" else "t.valor < 0"
+            if tipo == "receita":
+                date_clause = "t.data >= ? AND t.data <= ?"
+                date_params: list = [data_de, data_ate]
+            else:
+                date_clause = (
+                    "((t.fatura_id IS NULL AND t.data >= ? AND t.data <= ?) "
+                    "OR (t.fatura_id IS NOT NULL AND EXISTS ("
+                    "  SELECT 1 FROM fin_invoice f WHERE f.id = t.fatura_id "
+                    "    AND f.status = 'paga' "
+                    "    AND f.data_pagamento >= ? AND f.data_pagamento <= ?"
+                    ")))"
+                )
+                date_params = [data_de, data_ate, data_de, data_ate]
+            # Prioridade 1: vínculo explícito
+            tx_match = conn.execute(
+                f"""SELECT t.id, t.data, t.valor
+                      FROM fin_transaction t
+                      WHERE t.recurring_bill_id = ?
+                        AND {sign_clause}
+                        AND {date_clause}
+                      ORDER BY t.data ASC LIMIT 1""",
+                (bill["id"], *date_params),
+            ).fetchone()
+            # Prioridade 2: heurística por descrição (compat com bills antigas
+            # sem FK explícito). Exclui txs já linkadas a OUTRA bill.
+            words = [w.strip().lower() for w in bill["descricao"].split() if len(w.strip()) >= 4]
+            if not tx_match and words:
                 like_clauses = " OR ".join(["LOWER(t.descricao) LIKE ?" for _ in words])
                 like_params = [f"%{w}%" for w in words]
                 cat_clause = ""
@@ -1804,6 +1908,7 @@ def month_commitments(
                         f"""SELECT t.id, t.data, t.valor
                               FROM fin_transaction t
                               WHERE t.valor > 0
+                                AND t.recurring_bill_id IS NULL
                                 AND ({like_clauses}) {cat_clause}
                                 AND t.data >= ? AND t.data <= ?
                               ORDER BY t.data ASC LIMIT 1""",
@@ -1815,6 +1920,7 @@ def month_commitments(
                               FROM fin_transaction t
                               LEFT JOIN fin_invoice f ON f.id = t.fatura_id
                               WHERE t.valor < 0
+                                AND t.recurring_bill_id IS NULL
                                 AND ({like_clauses}) {cat_clause}
                                 AND (
                                   (t.fatura_id IS NULL AND t.data >= ? AND t.data <= ?)

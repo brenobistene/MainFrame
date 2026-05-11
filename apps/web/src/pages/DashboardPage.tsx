@@ -8,6 +8,7 @@ import type { UnproductiveBlock } from '../utils/blocks'
 import { ProfileEditModal } from '../components/ProfileEditModal'
 import { AnimatedNumber, SkeletonBlock } from '../components/ui/Motion'
 import { RitualNextCard } from '../components/RitualNextCard'
+import HealthDashboardCard from '../components/health/HealthDashboardCard'
 
 // ─── Tipos e constantes ────────────────────────────────────────────────────
 
@@ -504,23 +505,23 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quests, delivsByProject, areas, todayIso, windowStartIso, windowEndIso])
 
-  // ─── PROJECT.MATRIX ─── grid de TODOS os projetos não-arquivados,
-  // agrupados por área (estilo skill tree CP2077). Diferente do
-  // PRESSURE.MATRIX (só os em risco) — esse é o portfolio inteiro.
+  // ─── PROJECT.MATRIX ─── grid dos projetos ATIVOS (não-arquivados, não
+  // finalizados, não cancelados), agrupados por área (estilo skill tree
+  // CP2077). Diferente do PRESSURE.MATRIX (só os em risco) — esse é o
+  // portfolio em execução. Done/cancelled saem da visão pra não poluir
+  // a matriz com cards "fantasma" de projetos já encerrados.
   const allProjectsByArea = useMemo(() => {
     const map: Record<string, { area: Area; projects: Project[] }> = {}
     for (const p of activeFromPortfolio) {
+      if (p.status === 'done' || p.status === 'cancelled') continue
       const area = areas.find(a => a.slug === p.area_slug)
       if (!area) continue
       if (!map[p.area_slug]) map[p.area_slug] = { area, projects: [] }
       map[p.area_slug].projects.push(p)
     }
-    // Sort projects: ativos primeiro (por deadline), done/cancelled ao fim
+    // Sort por deadline (sem deadline vai pro fim)
     for (const k of Object.keys(map)) {
       map[k].projects.sort((a, b) => {
-        const aActive = a.status !== 'done' && a.status !== 'cancelled'
-        const bActive = b.status !== 'done' && b.status !== 'cancelled'
-        if (aActive !== bActive) return aActive ? -1 : 1
         const aDl = a.deadline ?? '9999'
         const bDl = b.deadline ?? '9999'
         return aDl.localeCompare(bDl)
@@ -1299,6 +1300,12 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           )
         })()}
         </div>
+      </section>
+
+      {/* ─── HUB.HEALTH ─── Card vitals do Hub Health (1 leitura por domínio
+          + contagem de pendências). Clique leva pra /health/biomonitor. */}
+      <section style={{ marginBottom: 32 }}>
+        <HealthDashboardCard />
       </section>
 
       {/* ─── FOOTER CAPTION ─── disclaimer técnico mono no rodapé do panel,

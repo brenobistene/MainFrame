@@ -14,6 +14,7 @@
  * Doc: docs/hub-finance/PLAN.md
  */
 import { useState } from 'react'
+import { Plus } from 'lucide-react'
 import { useHubFinance } from './HubFinanceContext'
 import {
   formatBRL,
@@ -118,19 +119,55 @@ export function DividasPage() {
         <div style={{ padding: 'var(--space-5) var(--space-6)' }}>
 
         {ativas.length === 0 ? (
-          <div style={{
-            padding: '14px 16px',
-            border: '1px dashed rgba(143, 191, 211, 0.30)',
-            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 10, fontWeight: 700,
-            color: 'var(--color-text-muted)',
-            letterSpacing: '0.18em', textTransform: 'uppercase',
-            lineHeight: 1.7,
-          }}>
-            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
-            NENHUMA DÍVIDA ATIVA · CADASTRE FACULDADE / FINANCIAMENTO VIA GERENCIAR
-          </div>
+          /* Empty state clicável — abre o manager direto pra criar a primeira dívida. */
+          <button
+            type="button"
+            onClick={() => setShowManager(true)}
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+              gap: 8,
+              width: '100%',
+              padding: '18px 16px',
+              border: '1px dashed rgba(143, 191, 211, 0.30)',
+              background: 'transparent',
+              clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+              cursor: 'pointer',
+              textAlign: 'left',
+              color: 'inherit',
+              transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.55)'
+              e.currentTarget.style.background = 'rgba(143, 191, 211, 0.04)'
+              e.currentTarget.style.boxShadow = '0 0 10px rgba(143, 191, 211, 0.10)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.30)'
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
+            <div style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10, fontWeight: 700,
+              color: 'var(--color-text-muted)',
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              lineHeight: 1.7,
+            }}>
+              <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+              NENHUMA DÍVIDA ATIVA · FACULDADE / FINANCIAMENTO / EMPRÉSTIMO
+            </div>
+            <div style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11, fontWeight: 700,
+              color: 'var(--color-ice-light)',
+              letterSpacing: '0.22em', textTransform: 'uppercase',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <Plus size={12} strokeWidth={2} />
+              CRIAR DÍVIDA
+            </div>
+          </button>
         ) : (
           <>
             {/* Hero: total devedor + 10-segment progress global */}
