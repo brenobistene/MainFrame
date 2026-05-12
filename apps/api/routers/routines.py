@@ -168,7 +168,14 @@ def routine_completion_stats(
 
 @router.post("/api/routines/{routine_id}/toggle", response_model=RoutineOut)
 def toggle_routine(routine_id: str, target: Optional[str] = None):
-    """Marca/desmarca a rotina como feita no dia alvo."""
+    """Marca/desmarca a rotina como feita no dia alvo.
+
+    Quando marca como done, fecha junto qualquer sessão aberta dessa rotina.
+    Sem isso, rotina com play ativo + toggle done virava sessão fantasma:
+    `active_session` oculta sessões abertas que têm log do mesmo dia (defesa
+    anti-loop do banner), então a row ficava órfã pra sempre — sem banner
+    pra parar e bloqueando outros plays via find_active_session.
+    """
     day = date.fromisoformat(target) if target else datetime.now(SP_TZ).date()
     date_str = day.isoformat()
 
@@ -190,6 +197,11 @@ def toggle_routine(routine_id: str, target: Optional[str] = None):
             conn.execute(
                 "INSERT INTO routine_logs(routine_id, completed_date) VALUES(?,?)",
                 (routine_id, date_str),
+            )
+            # Fecha qualquer sessão aberta dessa rotina pra não virar órfã.
+            conn.execute(
+                "UPDATE routine_sessions SET ended_at = ? WHERE routine_id = ? AND ended_at IS NULL",
+                (utcnow_iso_z(), routine_id),
             )
             done = True
         conn.commit()
@@ -392,11 +404,26 @@ def list_routine_sessions(routine_id: str, target: Optional[str] = None):
 
 @router.post("/api/routines/{routine_id}/sessions/start", response_model=RoutineSessionOut, status_code=201)
 def routine_start_session(routine_id: str, target: Optional[str] = None):
+    """Inicia uma sessão de rotina.
+
+    Idempotente: se já existe sessão aberta DESTA rotina (ended_at IS NULL),
+    devolve ela em vez de criar duplicada. Sem esse guard, double-click do
+    botão Play criava 2+ rows órfãs (bug histórico — racetime entre 2 INSERTs
+    concorrentes ambos passando pelo find_active_session check).
+    """
     now = utcnow_iso_z()
     date_str = target or _today_sp_iso()
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM routines WHERE id = ?", (routine_id,)).fetchone():
             raise HTTPException(404, detail="Routine not found")
+
+        existing = conn.execute(
+            "SELECT * FROM routine_sessions WHERE routine_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (routine_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
+
         active = find_active_session(conn, exclude_type="routine", exclude_id=routine_id)
         if active:
             raise HTTPException(409, detail=active["title"])
@@ -466,6 +493,13 @@ def routine_resume_session(routine_id: str, target: Optional[str] = None):
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM routines WHERE id = ?", (routine_id,)).fetchone():
             raise HTTPException(404, detail="Routine not found")
+        # Idempotente: double-click no resume não cria 2 sub-sessões.
+        existing = conn.execute(
+            "SELECT * FROM routine_sessions WHERE routine_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (routine_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
         active = find_active_session(conn, exclude_type="routine", exclude_id=routine_id)
         if active:
             raise HTTPException(409, detail=active["title"])

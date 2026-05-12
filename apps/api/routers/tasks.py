@@ -153,10 +153,18 @@ def list_task_sessions(task_id: str):
 
 @router.post("/api/tasks/{task_id}/sessions/start", response_model=TaskSessionOut, status_code=201)
 def task_start_session(task_id: str):
+    """Idempotente: se já existe sessão aberta desta task, devolve ela em
+    vez de criar duplicada. Evita rows órfãs em race de double-click."""
     now = utcnow_iso_z()
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
             raise HTTPException(404, detail="Task not found")
+        existing = conn.execute(
+            "SELECT * FROM task_sessions WHERE task_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
         active = find_active_session(conn, exclude_type="task", exclude_id=task_id)
         if active:
             raise HTTPException(409, detail=active["title"])
@@ -206,10 +214,17 @@ def task_pause_session(task_id: str):
 
 @router.post("/api/tasks/{task_id}/sessions/resume", response_model=TaskSessionOut, status_code=201)
 def task_resume_session(task_id: str):
+    """Idempotente: double-click no resume não cria 2 sub-sessões."""
     now = utcnow_iso_z()
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
             raise HTTPException(404, detail="Task not found")
+        existing = conn.execute(
+            "SELECT * FROM task_sessions WHERE task_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
         active = find_active_session(conn, exclude_type="task", exclude_id=task_id)
         if active:
             raise HTTPException(409, detail=active["title"])

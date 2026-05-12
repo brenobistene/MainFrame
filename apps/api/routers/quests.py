@@ -296,8 +296,16 @@ def list_sessions(quest_id: str):
 
 @router.post("/api/quests/{quest_id}/sessions/start", response_model=SessionOut, status_code=201)
 def start_session(quest_id: str):
+    """Idempotente: se já existe sessão aberta desta quest, devolve ela em
+    vez de criar duplicada. Evita rows órfãs em race de double-click."""
     now = utcnow_iso_z()
     with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT * FROM quest_sessions WHERE quest_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (quest_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
         active = find_active_session(conn, exclude_type="quest", exclude_id=quest_id)
         if active:
             raise HTTPException(409, detail=active["title"])
@@ -350,8 +358,15 @@ def pause_session(quest_id: str):
 
 @router.post("/api/quests/{quest_id}/sessions/resume", response_model=SessionOut, status_code=201)
 def resume_session(quest_id: str):
+    """Idempotente: double-click no resume não cria 2 sub-sessões."""
     now = utcnow_iso_z()
     with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT * FROM quest_sessions WHERE quest_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            (quest_id,),
+        ).fetchone()
+        if existing:
+            return dict(existing)
         active = find_active_session(conn, exclude_type="quest", exclude_id=quest_id)
         if active:
             raise HTTPException(409, detail=active["title"])
