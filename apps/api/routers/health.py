@@ -123,9 +123,36 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
     elif template == "consumo_vontade":
         if item_id is None:
             raise HTTPException(422, detail="consumo_vontade exige item_id")
-        q = payload.get("quantidade")
-        if not isinstance(q, (int, float)) or isinstance(q, bool) or q < 0:
-            raise HTTPException(422, detail="quantidade obrigatória (≥ 0)")
+        # Aceita dois formatos:
+        #   - Legado: { "quantidade": N, "vontade"?: 1-5 }
+        #   - Novo (item cigarro): { "eventos": [{"horario": "HH:MM"}, ...], "vontade"?: 1-5 }
+        # Pelo menos um dos dois deve estar presente. "eventos" pode ser
+        # lista vazia (semantica "vontade sem consumo" do dia).
+        eventos = payload.get("eventos")
+        if eventos is not None:
+            if not isinstance(eventos, list):
+                raise HTTPException(422, detail="eventos deve ser lista")
+            for i, ev in enumerate(eventos):
+                if not isinstance(ev, dict):
+                    raise HTTPException(422, detail=f"eventos[{i}] deve ser objeto")
+                h = ev.get("horario")
+                if not isinstance(h, str) or len(h) != 5 or h[2] != ":":
+                    raise HTTPException(422, detail=f"eventos[{i}].horario deve ser HH:MM")
+                try:
+                    hh = int(h[0:2])
+                    mm = int(h[3:5])
+                    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+                        raise ValueError
+                except ValueError:
+                    raise HTTPException(422, detail=f"eventos[{i}].horario inválido")
+                # Vontade opcional por evento (escala 1-5).
+                v_ev = ev.get("vontade")
+                if v_ev is not None:
+                    _validate_scale_1_5(v_ev, f"eventos[{i}].vontade")
+        else:
+            q = payload.get("quantidade")
+            if not isinstance(q, (int, float)) or isinstance(q, bool) or q < 0:
+                raise HTTPException(422, detail="quantidade obrigatória (≥ 0) ou use eventos[]")
         v = payload.get("vontade")
         if v is not None:
             _validate_scale_1_5(v, "vontade")

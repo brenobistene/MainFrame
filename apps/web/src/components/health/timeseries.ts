@@ -52,8 +52,11 @@ export function extractTimeseries(
       })
     case 'consumo_vontade':
       return _aggregateByDay(filtered, (r) => {
-        const q = (r.payload as any).quantidade
-        return typeof q === 'number' ? q : 0
+        // Formato novo (item cigarro): payload.eventos[] = lista de horários.
+        // Cada evento conta como uma unidade pra sparkline diária.
+        const p = r.payload as any
+        if (Array.isArray(p.eventos)) return p.eventos.length
+        return typeof p.quantidade === 'number' ? p.quantidade : 0
       })
     case 'metrica_simples':
       return _lastValuePerDay(filtered, (r) => {

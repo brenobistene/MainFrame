@@ -41,7 +41,11 @@ const PRIMARY_BY_TEMPLATE: Record<string, string> = {
   janela_qualidade: 'duracao_media_7d',
   atividade_tipo: 'frequencia_semanal',
   refeicao_2modos: 'aderencia_dieta_semanal',
-  consumo_vontade: 'dias_desde_ultimo_consumo',
+  // `tempo_desde_ultimo_consumo` retorna string adaptativa ("3h", "2d", "12m")
+  // — muito mais informativo pra cigarro que `dias_desde_ultimo_consumo` (que
+  // sempre cai pra 0 quando o usuário fuma alguma vez no dia). Pode ser
+  // sobrescrito por domínio via `metric_primary_slug`.
+  consumo_vontade: 'tempo_desde_ultimo_consumo',
   metrica_simples: 'ultimo_valor',
   evento_escala: 'media_7d',
 }

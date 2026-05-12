@@ -21,8 +21,9 @@ SQL usa `json_extract` pra ler o payload sem desserializar em Python.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Optional
 
 
@@ -294,8 +295,14 @@ def _alimentacao_pontualidade_media(conn, domain_slug: str, _: Optional[int], sl
 def _vicio_consumo_total_30d(conn, domain_slug: str, item_id: Optional[int], slug: str) -> dict:
     if item_id is None:
         return _empty(slug, "float", "(unidade do item)")
+    # `COALESCE` cobre os dois formatos do payload de consumo_vontade:
+    #   - legado: { quantidade: N }                                — usa N
+    #   - cigarro: { eventos: [{horario}, ...] }                   — usa len(eventos)
+    # `json_array_length` retorna 0 quando o path não existe, então o
+    # COALESCE só cai nele quando quantidade é NULL.
     row = conn.execute(
-        "SELECT SUM(CAST(json_extract(payload, '$.quantidade') AS REAL)) AS total, "
+        "SELECT SUM(CAST(COALESCE(json_extract(payload, '$.quantidade'), "
+        "                          json_array_length(payload, '$.eventos')) AS REAL)) AS total, "
         "       MAX(atualizado_em) AS last_at, COUNT(*) AS n "
         "FROM health_record WHERE domain_slug = ? AND item_id = ? AND data >= ?",
         (domain_slug, item_id, _days_ago_iso(29)),
@@ -315,16 +322,84 @@ def _vicio_consumo_medio_diario_30d(conn, domain_slug: str, item_id: Optional[in
 def _vicio_dias_desde_ultimo_consumo(conn, domain_slug: str, item_id: Optional[int], slug: str) -> dict:
     if item_id is None:
         return _empty(slug, "int", "dias")
+    # Aceita os dois formatos do payload — consumo > 0 OU eventos não-vazios.
     row = conn.execute(
         "SELECT MAX(data) AS d, MAX(atualizado_em) AS last_at "
         "FROM health_record WHERE domain_slug = ? AND item_id = ? "
-        "  AND CAST(json_extract(payload, '$.quantidade') AS REAL) > 0",
+        "  AND (CAST(json_extract(payload, '$.quantidade') AS REAL) > 0 "
+        "       OR json_array_length(payload, '$.eventos') > 0)",
         (domain_slug, item_id),
     ).fetchone()
     if not row or not row["d"]:
         return _empty(slug, "int", "dias")
     diff = (_today() - date.fromisoformat(row["d"])).days
     return _ok(slug, "int", "dias", max(diff, 0), row["last_at"])
+
+
+def _vicio_tempo_desde_ultimo_consumo(conn, domain_slug: str, item_id: Optional[int], slug: str) -> dict:
+    """Tempo desde último evento de consumo, formatado adaptativamente:
+       < 1h  → 'Xm'
+       < 24h → 'Xh' ou 'XhYY'
+       ≥ 24h → 'Nd'
+
+    Suporta os dois formatos de payload do consumo_vontade:
+      - Legado: { quantidade: N, ... } — usa data + horario do registro
+      - Novo (cigarro): { eventos: [{horario}], ... } — usa max(eventos.horario)
+
+    Retorna 'string' pra que o display do Dashboard/Domain renderize direto.
+    """
+    if item_id is None:
+        return _empty(slug, "string", None)
+    # Puxamos o último registro com consumo > 0 OR eventos não-vazios. Ordem
+    # por (data, horario) DESC pega o mais recente — mas pra eventos, o horario
+    # do registro reflete o último evento (mantido em sync no save).
+    row = conn.execute(
+        "SELECT data, horario, payload, atualizado_em FROM health_record "
+        "WHERE domain_slug = ? AND item_id = ? "
+        "  AND (CAST(json_extract(payload, '$.quantidade') AS REAL) > 0 "
+        "       OR json_array_length(payload, '$.eventos') > 0) "
+        "ORDER BY data DESC, COALESCE(horario, '00:00') DESC LIMIT 1",
+        (domain_slug, item_id),
+    ).fetchone()
+    if not row or not row["data"]:
+        return _empty(slug, "string", None)
+    # Determina o horário mais recente do registro:
+    # 1. Se eventos[] não-vazio: pega max(eventos.horario)
+    # 2. Senão: usa row.horario (legado) ou meio-dia como fallback
+    try:
+        payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else (row["payload"] or {})
+    except (json.JSONDecodeError, TypeError):
+        payload = {}
+    horario_evento: Optional[str] = None
+    eventos = payload.get("eventos")
+    if isinstance(eventos, list) and eventos:
+        horarios = [
+            e.get("horario") for e in eventos
+            if isinstance(e, dict) and isinstance(e.get("horario"), str)
+        ]
+        if horarios:
+            horario_evento = max(horarios)
+    horario_final = horario_evento or row["horario"] or "12:00"
+    try:
+        ts = datetime.fromisoformat(f"{row['data']}T{horario_final}:00")
+    except ValueError:
+        return _empty(slug, "string", None)
+    now = datetime.now()
+    delta = now - ts
+    total_seconds = delta.total_seconds()
+    if total_seconds < 0:
+        return _ok(slug, "string", None, "0m", row["atualizado_em"])
+    total_min = int(total_seconds // 60)
+    horas = total_min // 60
+    minutos = total_min % 60
+    if horas < 1:
+        valor = f"{minutos}m"
+    elif horas < 24:
+        valor = f"{horas}h" if minutos == 0 else f"{horas}h{minutos:02d}"
+    else:
+        dias = horas // 24
+        valor = f"{dias}d"
+    return _ok(slug, "string", None, valor, row["atualizado_em"])
 
 
 def _vicio_vontade_media_30d(conn, domain_slug: str, item_id: Optional[int], slug: str) -> dict:
@@ -348,8 +423,10 @@ def _vicio_tendencia_7d(conn, domain_slug: str, item_id: Optional[int], slug: st
         return _empty(slug, "enum", "subindo/caindo/estavel")
 
     def sum_window(from_iso: str, to_iso: str) -> float:
+        # COALESCE cobre legado (quantidade) + novo (eventos[]).
         r = conn.execute(
-            "SELECT SUM(CAST(json_extract(payload, '$.quantidade') AS REAL)) AS s "
+            "SELECT SUM(CAST(COALESCE(json_extract(payload, '$.quantidade'), "
+            "                          json_array_length(payload, '$.eventos')) AS REAL)) AS s "
             "FROM health_record WHERE domain_slug = ? AND item_id = ? "
             "  AND data >= ? AND data <= ?",
             (domain_slug, item_id, from_iso, to_iso),
@@ -457,6 +534,7 @@ STATS_BY_TEMPLATE: dict[str, list[StatDef]] = {
         StatDef("consumo_total_30d", "consumo total 30d", "float", "(unidade do item)", True, _vicio_consumo_total_30d),
         StatDef("consumo_medio_diario_30d", "consumo médio diário 30d", "float", "(unidade do item)/dia", True, _vicio_consumo_medio_diario_30d),
         StatDef("dias_desde_ultimo_consumo", "dias desde último consumo", "int", "dias", True, _vicio_dias_desde_ultimo_consumo),
+        StatDef("tempo_desde_ultimo_consumo", "tempo desde último consumo", "string", None, True, _vicio_tempo_desde_ultimo_consumo),
         StatDef("vontade_media_30d", "vontade média 30d", "float", "1-5", True, _vicio_vontade_media_30d),
         StatDef("tendencia_7d", "tendência 7d (vs 7d anterior)", "enum", "subindo/caindo/estavel", True, _vicio_tendencia_7d),
     ],

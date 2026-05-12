@@ -117,6 +117,34 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
   const [itemsOpen, setItemsOpen] = useState(false)
   const [editing, setEditing] = useState<HealthRecord | null>(null)
 
+  // ─── BigStat "SEM FUMAR" ─────────────────────────────────────────────────
+  // Só ativa quando o domínio é `vicios` e existe item ativo "Cigarro"/"Cigarros".
+  // Filosofia: um registro por dia, payload.eventos = lista de horários dos
+  // cigarros. "Sem fumar" = agora − último evento (do registro mais recente).
+  const cigarroItem =
+    domain.slug === 'vicios' ? findCigarroItem(items) : undefined
+
+  // `useNowHHMM` re-renderiza a cada minuto — derivamos `now` daqui pra que
+  // o "tempo sem fumar" atualize sozinho sem precisar de timer dedicado.
+  const now = useMemo(() => new Date(), [hhmm])
+  const tempoSemFumar = useMemo(
+    () =>
+      cigarroItem ? formatTempoSemFumar(records30d, cigarroItem.id, now) : null,
+    [cigarroItem, records30d, now],
+  )
+
+  // Quantos cigarros foram registrados hoje — soma de eventos (formato novo)
+  // ou quantidade (legado). Aparece como BigStat ao lado do "SEM FUMAR".
+  const cigarrosHoje = useMemo(() => {
+    if (!cigarroItem) return null
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const todayRecord = records30d.find(
+      (r) => r.item_id === cigarroItem.id && r.data === todayIso,
+    )
+    if (!todayRecord) return 0
+    return countConsumo(todayRecord)
+  }, [cigarroItem, records30d, now])
+
   return (
     <div style={{ padding: 'var(--space-5) var(--space-6) var(--space-10)' }}>
       {/* ─── Header stamp do domínio ───────────────────────────────── */}
@@ -134,6 +162,9 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
         }
         onOpenItems={() => setItemsOpen(true)}
         onOpenRegister={() => setRegisterOpen(true)}
+        hasCigarro={!!cigarroItem}
+        tempoSemFumar={tempoSemFumar}
+        cigarrosHoje={cigarrosHoje}
       />
 
       {/* ─── Pendências do dia (filtradas por este domínio) ────────── */}
@@ -218,6 +249,9 @@ function DomainHeader({
   ultimoRegistro,
   onOpenItems,
   onOpenRegister,
+  hasCigarro,
+  tempoSemFumar,
+  cigarrosHoje,
 }: {
   domain: HealthDomain
   cor: string
@@ -228,6 +262,9 @@ function DomainHeader({
   ultimoRegistro: string | null
   onOpenItems: () => void
   onOpenRegister: () => void
+  hasCigarro: boolean
+  tempoSemFumar: string | null
+  cigarrosHoje: number | null
 }) {
   return (
     <header
@@ -317,6 +354,20 @@ function DomainHeader({
           borderTop: '1px dashed var(--color-divider)',
         }}
       >
+        {hasCigarro && (
+          <BigStat
+            label="SEM FUMAR"
+            value={tempoSemFumar ?? '—'}
+            accent={cor}
+          />
+        )}
+        {hasCigarro && (
+          <BigStat
+            label="HOJE"
+            value={`${cigarrosHoje ?? 0}x`}
+            accent={cor}
+          />
+        )}
         <BigStat label="7D" value={String(records7d)} accent={cor} />
         <BigStat label="30D" value={String(records30d)} accent={cor} />
         <BigStat label="ÚLTIMO" value={ultimoRegistro ?? '—'} accent="var(--color-text-secondary)" />
@@ -610,4 +661,103 @@ function sparklineLabel(template: string): string {
     default:
       return 'valor'
   }
+}
+
+// ─── Helpers cigarro ──────────────────────────────────────────────────────
+// Detecção por nome ativo. Aceita "Cigarro" e "Cigarros" (case-insensitive).
+// Restrito ao domínio `vicios` no callsite — não vaza pra outros vícios.
+
+function findCigarroItem(items: HealthItem[]): HealthItem | undefined {
+  return items.find((i) => {
+    if (i.arquivado) return false
+    const n = i.nome.trim().toLowerCase()
+    return n === 'cigarro' || n === 'cigarros'
+  })
+}
+
+/**
+ * Conta o consumo de um registro, suportando os dois formatos:
+ *   - Legado: { quantidade: N }                                — retorna N
+ *   - Novo (cigarro): { eventos: [...] }                       — retorna length
+ */
+function countConsumo(r: HealthRecord): number {
+  const p = r.payload as { quantidade?: unknown; eventos?: unknown }
+  if (Array.isArray(p.eventos)) return p.eventos.length
+  if (typeof p.quantidade === 'number') return p.quantidade
+  return 0
+}
+
+/**
+ * Timestamp semântico do último cigarro fumado num registro:
+ *
+ *   1. Se `payload.eventos` é array e tem entradas — pega o horário máximo
+ *      dos eventos, combinado com `data` do registro. Isso reflete o último
+ *      cigarro fumado naquele dia, independente da ordem de adição.
+ *   2. Senão, formato legado — usa `data + horario` do próprio registro.
+ *   3. Fallbacks: `criado_em`, ou `data 12:00` como último anchor.
+ */
+function recordTimestamp(r: HealthRecord): Date | null {
+  const payload = r.payload as { eventos?: Array<{ horario?: string }> }
+  if (Array.isArray(payload.eventos) && payload.eventos.length > 0 && r.data) {
+    const horarios = payload.eventos
+      .map((e) => e?.horario)
+      .filter((h): h is string => typeof h === 'string' && /^\d{2}:\d{2}$/.test(h))
+    if (horarios.length > 0) {
+      horarios.sort()
+      const ultimo = horarios[horarios.length - 1]
+      const d = new Date(`${r.data}T${ultimo}:00`)
+      if (!Number.isNaN(d.getTime())) return d
+    }
+  }
+  if (r.data && r.horario) {
+    const d = new Date(`${r.data}T${r.horario}:00`)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  if (r.criado_em) {
+    const d = new Date(r.criado_em)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  if (r.data) {
+    const d = new Date(`${r.data}T12:00:00`)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  return null
+}
+
+/**
+ * Formata o intervalo desde o último cigarro:
+ *   < 1h   → "12m"
+ *   < 24h  → "3h" ou "3h45"
+ *   ≥ 24h  → "2d"
+ *
+ * Como o modelo é 1 registro por dia, varremos todos os registros do item
+ * e pegamos o timestamp máximo dentre os eventos. Não dependemos da ordem
+ * da lista de records.
+ */
+function formatTempoSemFumar(
+  records: HealthRecord[],
+  itemId: number,
+  now: Date,
+): string | null {
+  const cigarroRecords = records.filter((r) => r.item_id === itemId)
+  if (cigarroRecords.length === 0) return null
+  let latestTs: Date | null = null
+  for (const r of cigarroRecords) {
+    const ts = recordTimestamp(r)
+    if (ts && (!latestTs || ts.getTime() > latestTs.getTime())) {
+      latestTs = ts
+    }
+  }
+  if (!latestTs) return null
+  const diffMs = now.getTime() - latestTs.getTime()
+  if (diffMs < 60000) return '0m'   // < 1 min — ainda fresco
+  const totalMin = Math.floor(diffMs / 60000)
+  const hours = Math.floor(totalMin / 60)
+  const mins = totalMin % 60
+  if (hours < 1) return `${mins}m`
+  if (hours < 24) {
+    return mins === 0 ? `${hours}h` : `${hours}h${String(mins).padStart(2, '0')}`
+  }
+  const days = Math.floor(hours / 24)
+  return `${days}d`
 }

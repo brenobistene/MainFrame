@@ -168,6 +168,21 @@ export function summarizeRecordPayload(payload: Record<string, unknown>): string
       payload.intensidade ? ` · int ${payload.intensidade}` : ''
     }`
   }
+  // Formato novo cigarro: lista de eventos com horário. Mostra count + até 4
+  // horários ordenados, com elipse quando excede.
+  if (Array.isArray((payload as { eventos?: unknown }).eventos)) {
+    const eventos = (payload as { eventos: Array<{ horario?: string }> }).eventos
+    const horarios = eventos
+      .map((e) => e?.horario)
+      .filter((h): h is string => typeof h === 'string')
+      .sort()
+    const count = eventos.length
+    const v = payload.vontade ? ` · v${payload.vontade}` : ''
+    if (horarios.length === 0) return `${count}x${v}`
+    const head = horarios.slice(0, 4).join(', ')
+    const tail = horarios.length > 4 ? ` …+${horarios.length - 4}` : ''
+    return `${count}x · ${head}${tail}${v}`
+  }
   if ('quantidade' in payload) {
     return `qty ${payload.quantidade}${
       payload.vontade ? ` · v${payload.vontade}` : ''
