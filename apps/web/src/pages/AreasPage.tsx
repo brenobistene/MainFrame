@@ -63,6 +63,7 @@ export function AreasView({ areas, projects, quests, onAreaCreate, onAreaUpdate,
   for (const p of projects) projectAreaById[p.id] = p.area_slug
   const questsByArea: Record<string, number> = {}
   for (const q of quests) {
+    if (!q.project_id) continue
     const slug = projectAreaById[q.project_id]
     if (!slug) continue
     questsByArea[slug] = (questsByArea[slug] ?? 0) + 1
