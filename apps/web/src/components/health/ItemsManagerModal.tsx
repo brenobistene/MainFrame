@@ -72,8 +72,7 @@ export default function ItemsManagerModal({ domain, cor, onClose }: Props) {
         style={{
           position: 'relative',
           padding: '20px 24px',
-          minWidth: 560,
-          maxWidth: 720,
+          width: 'min(720px, calc(100vw - 16px))',
           maxHeight: '85vh',
           overflowY: 'auto',
           color: 'var(--color-text-primary)',

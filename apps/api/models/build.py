@@ -269,6 +269,7 @@ class GoalProgressUpdate(BaseModel):
 
 class RitualOut(BaseModel):
     cadencia: str                                    # 'semanal'|'mensal'|'trimestral'|'anual'
+    nome: Optional[str] = None                        # customizável; null = usa label da cadência
     ativo: bool
     schedule_config: dict                             # JSON parseado
     direcionamento_pensar: str
@@ -283,6 +284,7 @@ class RitualOut(BaseModel):
 
 
 class RitualUpdate(BaseModel):
+    nome: Optional[str] = Field(None, max_length=80)
     ativo: Optional[bool] = None
     schedule_config: Optional[dict] = None
     direcionamento_pensar: Optional[str] = Field(None, max_length=2000)
@@ -297,6 +299,8 @@ class RitualSessionOut(BaseModel):
     duracao_min: Optional[int] = None
     notas: Optional[str] = None
     foco_proxima_periodo: Optional[str] = None
+    skipped: bool = False                             # pulada intencionalmente (viagem, doente)
+    skip_reason: Optional[str] = None
     criado_em: str
 
 
@@ -306,6 +310,18 @@ class RitualSessionCreate(BaseModel):
     duracao_min: Optional[int] = Field(None, ge=1)
     notas: Optional[str] = Field(None, max_length=10000)
     foco_proxima_periodo: Optional[str] = Field(None, max_length=2000)
+    skipped: bool = False
+    skip_reason: Optional[str] = Field(None, max_length=500)
+
+
+class RitualSessionUpdate(BaseModel):
+    """Edição de sessão existente. Todos os campos opcionais (PATCH parcial)."""
+    data_executado: Optional[str] = None
+    duracao_min: Optional[int] = Field(None, ge=1)
+    notas: Optional[str] = Field(None, max_length=10000)
+    foco_proxima_periodo: Optional[str] = Field(None, max_length=2000)
+    skipped: Optional[bool] = None
+    skip_reason: Optional[str] = Field(None, max_length=500)
 
 
 class RitualScheduleItem(BaseModel):

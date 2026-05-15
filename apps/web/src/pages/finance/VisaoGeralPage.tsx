@@ -67,6 +67,7 @@ export function VisaoGeralPage() {
           onOpenDebts={() => navigate('/hub-finance/dividas')}
           onOpenFreelas={() => navigate('/hub-finance/freelas')}
           onOpenInvoices={() => setShowInvoicesManager(true)}
+          onOpenWishlist={() => navigate('/hub-finance/wishlist')}
         />
         <CardOutrasTransacoes
           transactions={transactions}
@@ -219,19 +220,23 @@ function TopBar({ summary, selectedMonth, onMonthChange }: {
 
 // ─── Compromissos do mês — visão consolidada (bills + debt parcelas) ────
 
-function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onOpenDebts, onOpenFreelas, onOpenInvoices }: {
+function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onOpenDebts, onOpenFreelas, onOpenInvoices, onOpenWishlist }: {
   commitments: ReturnType<typeof useHubFinance>['monthCommitments']
   monthlySummary: ReturnType<typeof useHubFinance>['monthlySummary']
   onOpenRecurring: () => void
   onOpenDebts: () => void
   onOpenFreelas: () => void
   onOpenInvoices: () => void
+  onOpenWishlist: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const items = commitments?.items ?? []
   const total_a_pagar = commitments?.total_a_pagar ?? 0
   const total_a_receber = commitments?.total_a_receber ?? 0
   const sobra = commitments?.sobra_projetada ?? 0
+  // Reservas da wishlist do mês — já estão somadas em `total_a_pagar` mas
+  // exibimos linha separada pra deixar visível o peso aspiracional.
+  const reservasWishlist = monthlySummary?.reservas_wishlist ?? 0
   // Real (Nubank) — totais brutos do mês, incluem avulsos. Usados pra
   // mostrar planejado-vs-real no hero e revelar quanto vazou do plano.
   const despesaReal = monthlySummary?.despesa ?? 0
@@ -349,8 +354,15 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
                 value={total_a_receber}
                 color={total_a_receber > 0 ? 'var(--color-success-light)' : 'var(--color-text-muted)'}
               />
+              {reservasWishlist > 0 && (
+                <PlanRealRow
+                  label="RESERVAS WL"
+                  value={reservasWishlist}
+                  color="var(--color-warning)"
+                />
+              )}
               <PlanRealRow
-                label="SOBRA PROJETADA"
+                label={reservasWishlist > 0 ? 'SOBRA REAL' : 'SOBRA PROJETADA'}
                 value={sobra}
                 color={sobra >= 0 ? 'var(--color-text-primary)' : 'var(--color-accent-light)'}
               />
@@ -398,6 +410,7 @@ function CardCompromissosMes({ commitments, monthlySummary, onOpenRecurring, onO
                   if (item.kind === 'bill') onOpenRecurring()
                   else if (item.kind === 'freela_parcela') onOpenFreelas()
                   else if (item.kind === 'invoice') onOpenInvoices()
+                  else if (item.kind === 'wishlist') onOpenWishlist()
                   else onOpenDebts()
                 }}
               />
@@ -754,17 +767,24 @@ function CompromissoRow({ item, onClick, index = 0 }: {
     : isReceita
       ? 'var(--color-success-light)'
       : 'var(--color-text-secondary)'
-  // Border-left semântica (estado da row no scope da month)
+  // Border-left semântica (estado da row no scope da month).
+  // Wishlist tem cor própria (âmbar) — reserva é compromisso aspiracional
+  // virtual, semanticamente diferente de bill/dívida/fatura.
+  const isWishlist = item.kind === 'wishlist'
   const borderLeftColor = isAtrasada
     ? 'var(--color-accent-primary)'
     : isCompleted
       ? 'var(--color-success)'
-      : 'rgba(143, 191, 211, 0.30)'
+      : isWishlist
+        ? 'var(--color-warning)'
+        : 'rgba(143, 191, 211, 0.30)'
   const hoverGlowColor = isAtrasada
     ? 'rgba(159, 18, 57, 0.20)'
     : isCompleted
       ? 'rgba(94, 122, 82, 0.20)'
-      : 'rgba(143, 191, 211, 0.15)'
+      : isWishlist
+        ? 'rgba(192, 138, 58, 0.20)'
+        : 'rgba(143, 191, 211, 0.15)'
 
   // Sub-line cyber-mono uppercase: "PAGA · 06/05" / "VENCE 15/05" / "DIA 12"
   let subText: string
@@ -811,6 +831,7 @@ function CompromissoRow({ item, onClick, index = 0 }: {
         item.kind === 'bill' ? 'abrir contas/receitas fixas' :
         item.kind === 'freela_parcela' ? 'abrir freelas' :
         item.kind === 'invoice' ? 'abrir gerenciar faturas' :
+        item.kind === 'wishlist' ? 'abrir wishlist' :
         'abrir gerenciar dívidas'
       }
     >

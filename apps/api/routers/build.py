@@ -40,6 +40,7 @@ from models.build import (
     RitualScheduleItem,
     RitualSessionCreate,
     RitualSessionOut,
+    RitualSessionUpdate,
     RitualUpdate,
     SettingsOut,
     SettingsUpdate,
@@ -1172,6 +1173,8 @@ def _hydrate_ritual(conn, row) -> dict:
     today = date.today()
     proxima = _calc_proxima_data(row["cadencia"], cfg, today) if row["ativo"] else None
 
+    # Última execução conta tanto sessões completadas quanto skipped — ambas
+    # "fecharam" o slot da semana/mês. Streak/stats no front filtra skipped.
     last_session = conn.execute(
         "SELECT data_executado FROM build_ritual_session "
         "WHERE cadencia = ? ORDER BY data_executado DESC LIMIT 1",
@@ -1184,8 +1187,17 @@ def _hydrate_ritual(conn, row) -> dict:
     if proxima and proxima < today:
         dias_atraso = (today - proxima).days
 
+    # `nome` foi adicionado via migration — sqlite3.Row tem `keys()`, mas o
+    # acesso por nome levanta IndexError se a coluna não foi selecionada,
+    # então usamos `try`/getattr defensivamente.
+    try:
+        nome_val = row["nome"]
+    except (IndexError, KeyError):
+        nome_val = None
+
     return {
         "cadencia": row["cadencia"],
+        "nome": nome_val,
         "ativo": bool(row["ativo"]),
         "schedule_config": cfg,
         "direcionamento_pensar": row["direcionamento_pensar"],
@@ -1256,7 +1268,7 @@ def list_rituals_schedule(
 def list_rituals():
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT cadencia, ativo, schedule_config, direcionamento_pensar, "
+            "SELECT cadencia, nome, ativo, schedule_config, direcionamento_pensar, "
             "       direcionamento_evitar, duracao_alvo_min, "
             "       criado_em, atualizado_em "
             "FROM build_ritual ORDER BY "
@@ -1273,7 +1285,7 @@ def list_rituals():
 def get_ritual(cadencia: str):
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT cadencia, ativo, schedule_config, direcionamento_pensar, "
+            "SELECT cadencia, nome, ativo, schedule_config, direcionamento_pensar, "
             "       direcionamento_evitar, duracao_alvo_min, "
             "       criado_em, atualizado_em "
             "FROM build_ritual WHERE cadencia = ?",
@@ -1308,7 +1320,7 @@ def update_ritual(cadencia: str, body: RitualUpdate):
             raise HTTPException(404, detail=f"Ritual '{cadencia}' não encontrado")
         conn.commit()
         row = conn.execute(
-            "SELECT cadencia, ativo, schedule_config, direcionamento_pensar, "
+            "SELECT cadencia, nome, ativo, schedule_config, direcionamento_pensar, "
             "       direcionamento_evitar, duracao_alvo_min, "
             "       criado_em, atualizado_em "
             "FROM build_ritual WHERE cadencia = ?",
@@ -1328,12 +1340,27 @@ def list_ritual_sessions(cadencia: str, limit: int = 50):
             raise HTTPException(404, detail=f"Ritual '{cadencia}' não encontrado")
         rows = conn.execute(
             "SELECT id, cadencia, data_executado, duracao_min, notas, "
-            "       foco_proxima_periodo, criado_em "
+            "       foco_proxima_periodo, skipped, skip_reason, criado_em "
             "FROM build_ritual_session WHERE cadencia = ? "
             "ORDER BY data_executado DESC, id DESC LIMIT ?",
             (cadencia, limit),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [_session_row_to_dict(r) for r in rows]
+
+
+def _session_row_to_dict(r) -> dict:
+    """Coerce sqlite3.Row pra dict com `skipped` bool — sqlite armazena 0/1."""
+    return {
+        "id": r["id"],
+        "cadencia": r["cadencia"],
+        "data_executado": r["data_executado"],
+        "duracao_min": r["duracao_min"],
+        "notas": r["notas"],
+        "foco_proxima_periodo": r["foco_proxima_periodo"],
+        "skipped": bool(r["skipped"]) if r["skipped"] is not None else False,
+        "skip_reason": r["skip_reason"],
+        "criado_em": r["criado_em"],
+    }
 
 
 @router.post(
@@ -1352,8 +1379,9 @@ def create_ritual_session(cadencia: str, body: RitualSessionCreate):
         data_exec = body.data_executado or date.today().isoformat()
         conn.execute(
             "INSERT INTO build_ritual_session"
-            "(id, cadencia, data_executado, duracao_min, notas, foco_proxima_periodo) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(id, cadencia, data_executado, duracao_min, notas, foco_proxima_periodo, "
+            " skipped, skip_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 cadencia,
@@ -1361,16 +1389,69 @@ def create_ritual_session(cadencia: str, body: RitualSessionCreate):
                 body.duracao_min,
                 body.notas,
                 body.foco_proxima_periodo,
+                int(body.skipped),
+                body.skip_reason,
             ),
         )
         conn.commit()
         row = conn.execute(
             "SELECT id, cadencia, data_executado, duracao_min, notas, "
-            "       foco_proxima_periodo, criado_em "
+            "       foco_proxima_periodo, skipped, skip_reason, criado_em "
             "FROM build_ritual_session WHERE id = ?",
             (session_id,),
         ).fetchone()
-    return dict(row)
+    return _session_row_to_dict(row)
+
+
+@router.patch(
+    "/rituals/{cadencia}/sessions/{session_id}",
+    response_model=RitualSessionOut,
+)
+def update_ritual_session(cadencia: str, session_id: str, body: RitualSessionUpdate):
+    """Edita uma sessão existente. Permite corrigir data/duração/notas após
+    o registro — antes só dava pra deletar+recriar."""
+    fields: dict = {}
+    for name in body.model_fields_set:
+        val = getattr(body, name)
+        if isinstance(val, bool):
+            fields[name] = int(val)
+        else:
+            fields[name] = val
+    if not fields:
+        raise HTTPException(400, detail="Nothing to update")
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE build_ritual_session SET {set_clause} "
+            "WHERE id = ? AND cadencia = ?",
+            [*fields.values(), session_id, cadencia],
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="Sessão não encontrada")
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, cadencia, data_executado, duracao_min, notas, "
+            "       foco_proxima_periodo, skipped, skip_reason, criado_em "
+            "FROM build_ritual_session WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    return _session_row_to_dict(row)
+
+
+@router.delete(
+    "/rituals/{cadencia}/sessions/{session_id}", status_code=204
+)
+def delete_ritual_session(cadencia: str, session_id: str):
+    """Deleta uma sessão. Permite desfazer 'Concluir Revisão' clicado por
+    engano OU limpar entradas de teste."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM build_ritual_session WHERE id = ? AND cadencia = ?",
+            (session_id, cadencia),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="Sessão não encontrada")
+        conn.commit()
 
 
 # ─── Guardrail (v2 — pontes Hub Health) ───────────────────────────────────

@@ -27,7 +27,7 @@ import MetricsPanel from '../../components/health/MetricsPanel'
 import PendingPanel from '../../components/health/PendingPanel'
 import RegisterModal from '../../components/health/RegisterModal'
 import Sparkline from '../../components/health/Sparkline'
-import { extractTimeseries } from '../../components/health/timeseries'
+import { extractTimeseries, lastNDays } from '../../components/health/timeseries'
 import {
   DISPLAY,
   MONO,
@@ -43,6 +43,7 @@ import {
   useHealthItems,
   useHealthRecords,
 } from '../../lib/health-queries'
+import { AnimatedNumber, SkeletonBlock } from '../../components/ui/Motion'
 import type { HealthDomain, HealthItem, HealthRecord } from '../../types'
 
 export default function DomainPage() {
@@ -145,16 +146,20 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
     return countConsumo(todayRecord)
   }, [cigarroItem, records30d, now])
 
+  // Streak: dias consecutivos olhando pra trás com >=1 record.
+  const streak = useMemo(() => calcStreak(records30d), [records30d])
+
   return (
     <div style={{ padding: 'var(--space-5) var(--space-6) var(--space-10)' }}>
-      {/* ─── Header stamp do domínio ───────────────────────────────── */}
-      <DomainHeader
+      {/* ─── HERO do domínio (CP2077 veredict + scoreboard) ─────────── */}
+      <DomainHero
         domain={domain}
         cor={cor}
         Icon={Icon}
         hhmm={hhmm}
         records7d={records7d.length}
         records30d={records30d.length}
+        streak={streak}
         ultimoRegistro={
           records30d.length > 0
             ? formatRecordDate(records30d[0].data, domain.slug, records30d[0].payload)
@@ -182,7 +187,7 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
       <MetricsPanel domain={domain} items={items} cor={cor} />
 
       {/* ─── Lista de registros ────────────────────────────────────── */}
-      <SectionLabel>REGISTROS · 30D</SectionLabel>
+      <SectionHeader label="LOG.STREAM · 30D" count={records30d.length} />
       {records30d.length === 0 ? (
         <div
           style={{
@@ -196,7 +201,7 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
           Nenhum registro nos últimos 30 dias. Toca em REGISTRAR pra começar.
         </div>
       ) : (
-        <div>
+        <div style={{ marginTop: 'var(--space-3)' }}>
           {records30d.map((r) => (
             <RecordRow
               key={r.id}
@@ -237,15 +242,21 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
   )
 }
 
-// ─── Header stamp do domínio ──────────────────────────────────────────────
+// ─── Hero do domínio (CP2077 veredict + scoreboard) ──────────────────────
 
-function DomainHeader({
+/**
+ * Hero card do domínio: top stripe (icon + nome + actions), VEREDICT gigante
+ * derivado do estado (streak / atividade recente / ausência), e scoreboard
+ * com AnimatedNumber. Mesmo padrão do BiomonitorPage HeroBiometric.
+ */
+function DomainHero({
   domain,
   cor,
   Icon,
   hhmm,
   records7d,
   records30d,
+  streak,
   ultimoRegistro,
   onOpenItems,
   onOpenRegister,
@@ -259,6 +270,7 @@ function DomainHeader({
   hhmm: string
   records7d: number
   records30d: number
+  streak: number
   ultimoRegistro: string | null
   onOpenItems: () => void
   onOpenRegister: () => void
@@ -266,15 +278,21 @@ function DomainHeader({
   tempoSemFumar: string | null
   cigarrosHoje: number | null
 }) {
+  // Veredict + cor + glow derivados do estado do domínio.
+  const { headline, headlineColor, glow, hint } = useMemo(
+    () => deriveDomainVeredict({ streak, records7d, records30d, cor }),
+    [streak, records7d, records30d, cor],
+  )
+
   return (
     <header
       className="hq-glass-elevated hq-grain hq-chamfer-cross"
       style={{
         position: 'relative',
-        padding: 'var(--space-4) var(--space-5)',
+        padding: 'var(--space-5) var(--space-6)',
         marginBottom: 'var(--space-4)',
-        // Border-left dessaturada do domínio — único accent forte de cor
-        borderLeft: `2px solid ${cor}`,
+        borderLeft: `3px solid ${cor}`,
+        boxShadow: `inset 1px 0 8px -4px ${cor}`,
       }}
     >
       {/* Hairline ice no topo, assinatura CP2077 hero card */}
@@ -284,14 +302,15 @@ function DomainHeader({
         style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
       />
 
+      {/* TOP STRIPE — icon + nome + scan tag + actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
         <Icon size={22} strokeWidth={1.6} color={cor} />
         <h1
           style={{
             fontFamily: DISPLAY,
-            fontSize: 22,
+            fontSize: 18,
             fontWeight: 600,
-            letterSpacing: '0.18em',
+            letterSpacing: '0.22em',
             margin: 0,
             color: 'var(--color-text-primary)',
             textTransform: 'uppercase',
@@ -343,62 +362,147 @@ function DomainHeader({
         </div>
       </div>
 
-      {/* Stats inline — peso visual maior, valores em mono tabular */}
+      {/* VEREDICT GIGANTE — derivado do estado */}
       <div
         style={{
-          display: 'flex',
-          gap: 'var(--space-8)',
-          alignItems: 'baseline',
-          marginTop: 'var(--space-3)',
+          marginTop: 'var(--space-4)',
+          fontFamily: DISPLAY,
+          fontSize: 38,
+          fontWeight: 700,
+          lineHeight: 1,
+          color: headlineColor,
+          textShadow: glow,
+          letterSpacing: '0.02em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {headline}
+      </div>
+
+      <div
+        className="hq-tech-id"
+        style={{
+          color: 'var(--color-text-muted)',
+          marginTop: 6,
+          fontSize: 10,
+        }}
+      >
+        {hint}
+      </div>
+
+      {/* SCOREBOARD — auto-fit, AnimatedNumber, glow ice/cor accent */}
+      <div
+        style={{
+          marginTop: 'var(--space-4)',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: '14px 28px',
           paddingTop: 'var(--space-3)',
-          borderTop: '1px dashed var(--color-divider)',
+          borderTop: '1px solid var(--color-divider)',
         }}
       >
         {hasCigarro && (
-          <BigStat
+          <HeroStatStatic
             label="SEM FUMAR"
             value={tempoSemFumar ?? '—'}
-            accent={cor}
+            color={cor}
+            glow={`0 0 12px ${cor}66`}
           />
         )}
         {hasCigarro && (
-          <BigStat
+          <HeroStatNumber
             label="HOJE"
-            value={`${cigarrosHoje ?? 0}x`}
-            accent={cor}
+            value={cigarrosHoje ?? 0}
+            format={(n) => `${Math.round(n)}x`}
+            color={cor}
           />
         )}
-        <BigStat label="7D" value={String(records7d)} accent={cor} />
-        <BigStat label="30D" value={String(records30d)} accent={cor} />
-        <BigStat label="ÚLTIMO" value={ultimoRegistro ?? '—'} accent="var(--color-text-secondary)" />
+        <HeroStatNumber
+          label="STREAK"
+          value={streak}
+          format={(n) => `${Math.round(n)}D`}
+          color={streak > 0 ? cor : 'var(--color-text-tertiary)'}
+          glow={streak > 0 ? `0 0 12px ${cor}66` : 'none'}
+        />
+        <HeroStatNumber label="7D" value={records7d} color={cor} />
+        <HeroStatNumber label="30D" value={records30d} color={cor} />
+        <HeroStatStatic
+          label="ÚLTIMO"
+          value={ultimoRegistro ?? '—'}
+          color="var(--color-text-secondary)"
+          glow="none"
+        />
         {domain.lembrete_ativo && (
-          <BigStat label="LEMBRETE" value="ON" accent="var(--color-warning)" />
+          <HeroStatStatic
+            label="LEMBRETE"
+            value="ON"
+            color="var(--color-warning)"
+            glow="0 0 12px rgba(192, 138, 58, 0.35)"
+          />
         )}
       </div>
     </header>
   )
 }
 
-function BigStat({
+function HeroStatNumber({
   label,
   value,
-  accent,
+  format = (n) => String(Math.round(n)),
+  color,
+  glow,
 }: {
   label: string
-  value: string
-  accent: string
+  value: number
+  format?: (n: number) => string
+  color: string
+  glow?: string
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)' }}>
+      <span className="hq-tech-label" style={{ color: 'var(--color-text-muted)' }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontFamily: MONO,
+          fontSize: 20,
+          fontWeight: 700,
+          color,
+          textShadow: glow ?? 'none',
+          letterSpacing: '0.02em',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <AnimatedNumber value={value} format={format} duration={0.7} />
+      </span>
+    </div>
+  )
+}
+
+function HeroStatStatic({
+  label,
+  value,
+  color,
+  glow,
+}: {
+  label: string
+  value: string
+  color: string
+  glow: string
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span className="hq-tech-label" style={{ color: 'var(--color-text-muted)' }}>
         {label}
       </span>
       <span
         style={{
           fontFamily: MONO,
           fontSize: 18,
-          fontWeight: 500,
-          color: accent,
+          fontWeight: 600,
+          color,
+          textShadow: glow,
           letterSpacing: 0,
           fontVariantNumeric: 'tabular-nums',
         }}
@@ -409,19 +513,36 @@ function BigStat({
   )
 }
 
-// ─── Section label ────────────────────────────────────────────────────────
+// ─── Section header técnico (estilo BIO.MATRIX) ──────────────────────────
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionHeader({ label, count }: { label: string; count: number }) {
   return (
     <div
-      className="hq-tech-label"
       style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 10,
         marginTop: 'var(--space-5)',
-        marginBottom: 'var(--space-3)',
-        fontSize: 10,
+        paddingBottom: 6,
+        borderBottom: '1px solid var(--color-divider)',
       }}
     >
-      {children}
+      <span
+        className="hq-tech-label"
+        style={{
+          fontSize: 10,
+          letterSpacing: '0.28em',
+          color: 'var(--color-text-primary)',
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="hq-tech-id"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
+        · {String(count).padStart(2, '0')}
+      </span>
     </div>
   )
 }
@@ -452,11 +573,12 @@ function RecordRow({
         display: 'flex',
         alignItems: 'center',
         gap: 'var(--space-3)',
-        padding: '6px 12px',
-        marginBottom: 3,
+        padding: '9px 14px',
+        marginBottom: 4,
         fontSize: 12,
         fontFamily: MONO,
-        borderLeft: `2px solid ${cor}`,
+        borderLeft: `3px solid ${cor}`,
+        boxShadow: `inset 1px 0 6px -3px ${cor}`,
       }}
     >
       <div
@@ -573,10 +695,10 @@ function VisualizationsPanel({
 
   return (
     <div>
-      <SectionLabel>TENDÊNCIA · 30D</SectionLabel>
+      <SectionHeader label="TREND.SIGNAL · 30D" count={records.length} />
 
       {/* Heatmap */}
-      <div style={{ marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-5)' }}>
+      <div style={{ marginTop: 'var(--space-3)', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-5)' }}>
         <Heatmap30d records={records} cor={cor} />
       </div>
 
@@ -667,11 +789,14 @@ function sparklineLabel(template: string): string {
 // Detecção por nome ativo. Aceita "Cigarro" e "Cigarros" (case-insensitive).
 // Restrito ao domínio `vicios` no callsite — não vaza pra outros vícios.
 
+// Vocabulário aceito pra detectar o item cigarro. Aceita variações comuns
+// em PT-BR. Restrito ao domínio `vicios` no callsite.
+const CIGARRO_NAMES = new Set(['cigarro', 'cigarros', 'fumo', 'fumos'])
+
 function findCigarroItem(items: HealthItem[]): HealthItem | undefined {
   return items.find((i) => {
     if (i.arquivado) return false
-    const n = i.nome.trim().toLowerCase()
-    return n === 'cigarro' || n === 'cigarros'
+    return CIGARRO_NAMES.has(i.nome.trim().toLowerCase())
   })
 }
 
@@ -760,4 +885,94 @@ function formatTempoSemFumar(
   }
   const days = Math.floor(hours / 24)
   return `${days}d`
+}
+
+// ─── Helpers do domínio (streak + veredict) ───────────────────────────────
+
+/** Conta dias consecutivos olhando pra trás (incluindo hoje) com >=1 record. */
+function calcStreak(records: Array<{ data: string }>): number {
+  if (records.length === 0) return 0
+  const dates = new Set(records.map((r) => r.data))
+  const days = lastNDays(60)
+  let streak = 0
+  for (let i = days.length - 1; i >= 0; i--) {
+    if (dates.has(days[i])) {
+      streak += 1
+    } else {
+      break
+    }
+  }
+  return streak
+}
+
+/**
+ * Deriva veredict + cor + glow do domínio baseado no estado atual.
+ *
+ * Hierarquia (mais específico → mais geral):
+ *   STREAK LOCKED   → streak ≥ 7 dias
+ *   STREAK STEADY   → streak 3-6 dias
+ *   STREAK BUILDING → streak 1-2 dias
+ *   SIGNAL ACTIVE   → records 7d > 0 mas streak quebrou
+ *   DRIFT DETECTED  → 30d > 0 mas 7d = 0
+ *   NO RECENT SIGNAL → sem records nos últimos 30d
+ *
+ * Cor: cor do domínio quando ativo, accent vivid quando drift/no-signal.
+ */
+function deriveDomainVeredict({
+  streak,
+  records7d,
+  records30d,
+  cor,
+}: {
+  streak: number
+  records7d: number
+  records30d: number
+  cor: string
+}): { headline: string; headlineColor: string; glow: string; hint: string } {
+  if (streak >= 7) {
+    return {
+      headline: 'STREAK LOCKED',
+      headlineColor: 'var(--color-success)',
+      glow: '0 0 24px rgba(110, 167, 122, 0.40)',
+      hint: `// ${streak} DIAS CONSECUTIVOS · MANTENHA O RITMO`,
+    }
+  }
+  if (streak >= 3) {
+    return {
+      headline: 'STREAK STEADY',
+      headlineColor: cor,
+      glow: `0 0 22px ${cor}66`,
+      hint: `// ${streak} DIAS CONSECUTIVOS · CONSTRUINDO`,
+    }
+  }
+  if (streak >= 1) {
+    return {
+      headline: 'STREAK BUILDING',
+      headlineColor: cor,
+      glow: `0 0 20px ${cor}40`,
+      hint: `// ${streak} DIA${streak === 1 ? '' : 'S'} · INICIANDO ESTABILIDADE`,
+    }
+  }
+  if (records7d > 0) {
+    return {
+      headline: 'SIGNAL ACTIVE',
+      headlineColor: 'var(--color-ice-light)',
+      glow: '0 0 22px var(--color-ice-glow)',
+      hint: `// ${records7d} REGISTRO${records7d === 1 ? '' : 'S'} NOS ÚLTIMOS 7D · STREAK QUEBRADO`,
+    }
+  }
+  if (records30d > 0) {
+    return {
+      headline: 'DRIFT DETECTED',
+      headlineColor: 'var(--color-warning)',
+      glow: '0 0 22px rgba(192, 138, 58, 0.35)',
+      hint: '// SEM REGISTROS NOS ÚLTIMOS 7D · REATIVAR OBSERVAÇÃO',
+    }
+  }
+  return {
+    headline: 'NO RECENT SIGNAL',
+    headlineColor: 'var(--color-accent-vivid)',
+    glow: '0 0 24px rgba(184, 58, 58, 0.40)',
+    hint: '// SEM REGISTROS EM 30D · DOMÍNIO DORMENTE',
+  }
 }

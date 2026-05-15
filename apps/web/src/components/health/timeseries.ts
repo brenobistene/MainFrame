@@ -46,8 +46,21 @@ export function extractTimeseries(
         return typeof d === 'number' ? d : 0
       })
     case 'refeicao_2modos':
+      // Suporta os dois formatos:
+      //   - Novo: payload.refeicoes[] — peso de planned (sim=1, parcial=0.5)
+      //   - Legado: payload.comeu boolean (1 record/refeição)
       return _aggregateByDay(filtered, (r) => {
         const p = r.payload as any
+        if (Array.isArray(p.refeicoes)) {
+          let weight = 0
+          for (const ref of p.refeicoes) {
+            if (ref && ref.tipo === 'planned') {
+              if (ref.comeu === 'sim') weight += 1
+              else if (ref.comeu === 'parcial') weight += 0.5
+            }
+          }
+          return weight
+        }
         return p.comeu === true ? 1 : 0
       })
     case 'consumo_vontade':

@@ -220,6 +220,9 @@ export interface ActiveSession {
    *  Usada pelo banner pra escopear o "+tempo acumulado" ao dia certo
    *  e pra passar `target` correto em finalizações cross-midnight. */
   routine_date?: string | null
+  /** Estimativa em minutos da entidade vinculada (quest/task/routine), usada
+   *  pelo banner pra detectar overflow vs. tempo executado. */
+  estimated_minutes?: number | null
 }
 
 export interface MicroTask {
@@ -401,6 +404,13 @@ export interface FinMonthlySummary {
   despesa: number
   /** receita - despesa (pode ser negativa). */
   sobra: number
+  /** Soma das reservas wishlist planejadas pro mês (passivas, virtuais).
+   *  Só conta itens ativos (desejado | poupando). */
+  reservas_wishlist: number
+  /** Sobra DEPOIS de comprometer com a wishlist do mês.
+   *  Métrica que decide se você pode comprar mais coisa.
+   *  Cálculo: sobra - reservas_wishlist. */
+  sobra_real: number
   transacoes_total: number
 }
 
@@ -476,7 +486,7 @@ export interface FinRecurringBillStatusItem {
 
 // ─── Compromissos do Mês (visão consolidada) ────────────────────────────
 
-export type FinMonthCommitmentKind = 'bill' | 'debt_parcela' | 'freela_parcela' | 'invoice'
+export type FinMonthCommitmentKind = 'bill' | 'debt_parcela' | 'freela_parcela' | 'invoice' | 'wishlist'
 export type FinMonthCommitmentTipo = 'despesa' | 'receita'
 export type FinMonthCommitmentStatus = 'pendente' | 'paga' | 'recebida' | 'atrasada'
 
@@ -507,6 +517,8 @@ export interface FinMonthCommitment {
   invoice_id?: string
   cartao_id?: string
   cartao_nome?: string
+  /** Quando kind='wishlist': id do item pra navegar até /hub-finance/wishlist. */
+  wishlist_item_id?: string
 }
 
 export interface FinMonthCommitments {
@@ -714,6 +726,8 @@ export type BuildRitualScheduleConfig = Record<string, unknown>
 
 export interface BuildRitual {
   cadencia: BuildRitualCadencia
+  /** Nome customizável. Null = front cai pra label da cadência. */
+  nome: string | null
   ativo: boolean
   schedule_config: BuildRitualScheduleConfig
   direcionamento_pensar: string
@@ -728,6 +742,7 @@ export interface BuildRitual {
 }
 
 export type BuildRitualUpdate = Partial<{
+  nome: string | null
   ativo: boolean
   schedule_config: BuildRitualScheduleConfig
   direcionamento_pensar: string
@@ -742,6 +757,9 @@ export interface BuildRitualSession {
   duracao_min: number | null
   notas: string | null
   foco_proxima_periodo: string | null
+  /** Pulado intencionalmente (viagem, doente). Streak no front filtra. */
+  skipped: boolean
+  skip_reason: string | null
   criado_em: string
 }
 
@@ -750,7 +768,18 @@ export interface BuildRitualSessionCreate {
   duracao_min?: number | null
   notas?: string | null
   foco_proxima_periodo?: string | null
+  skipped?: boolean
+  skip_reason?: string | null
 }
+
+export type BuildRitualSessionUpdate = Partial<{
+  data_executado: string
+  duracao_min: number | null
+  notas: string | null
+  foco_proxima_periodo: string | null
+  skipped: boolean
+  skip_reason: string | null
+}>
 
 // Lista de datas de cada cadência ativa num intervalo. Usado pra renderizar
 // marcadores no Calendar.
@@ -979,4 +1008,204 @@ export interface HealthPendingItem {
   descricao: string
   horario_esperado: string | null     // HH:MM (só pra lembrete)
   dias: number | null                 // só pra ausência
+}
+
+// ─── Wishlist (submódulo do Hub Finance) ──────────────────────────────────
+// Lista de desejos com cronograma opcional de reserva mensal. Schema completo
+// em docs/hub-finance/wishlist-PLAN.md.
+
+export type WishlistStatus = 'desejado' | 'poupando' | 'comprado' | 'desistido'
+
+export interface WishlistCategoria {
+  id: string
+  nome: string
+  cor: string | null
+  sort_order: number
+}
+
+export interface WishlistCategoriaCreate {
+  nome: string
+  cor?: string | null
+  sort_order?: number | null
+}
+
+export type WishlistCategoriaUpdate = Partial<WishlistCategoriaCreate>
+
+export interface WishlistLink {
+  id: string
+  url: string
+  label: string | null
+  preco: number | null
+  sort_order: number
+}
+
+export interface WishlistLinkCreate {
+  url: string
+  label?: string | null
+  preco?: number | null
+  sort_order?: number | null
+}
+
+export type WishlistLinkUpdate = Partial<WishlistLinkCreate>
+
+export interface WishlistReserva {
+  id: string
+  ano: number
+  mes: number                          // 1-12
+  /** Dia preferido pra guardar. Null = último dia do mês (default na UI). */
+  dia: number | null
+  valor_planejado: number              // BRL
+  notas: string | null
+  /** Fase 5: transação que materializou a reserva. Null = ainda pendente
+   *  (aparece como "aguardando confirmação"). */
+  transacao_id: string | null
+}
+
+export interface WishlistReservaInput {
+  ano: number
+  mes: number
+  dia?: number | null
+  valor_planejado: number
+  notas?: string | null
+}
+
+export interface WishlistReservaVincularBody {
+  transacao_id: string | null          // null = limpar vínculo
+}
+
+export interface WishlistReservaMatchGroup {
+  reserva: WishlistReserva
+  item_id: string
+  item_nome: string
+  candidates: WishlistTransactionCandidate[]
+}
+
+export interface WishlistItem {
+  id: string
+  nome: string
+  descricao: string | null
+  categoria_id: string | null
+  valor_estimado: number               // BRL
+  prioridade: number
+  status: WishlistStatus
+  data_alvo: string | null             // YYYY-MM-DD opcional
+
+  // Compra (preenchidos quando status='comprado')
+  valor_real: number | null
+  comprado_em: string | null           // YYYY-MM-DD
+  transacao_id: string | null
+
+  // Desistência (preenchidos quando status='desistido')
+  desistido_em: string | null
+  motivo_desistencia: string | null
+
+  criada_em: string | null
+  atualizada_em: string | null
+
+  // Computados pelo backend
+  links: WishlistLink[]
+  reservas: WishlistReserva[]
+  /** Fase 5 (soft mode): só conta reservas CONFIRMADAS (com transacao_id). */
+  reservado_acumulado: number
+  /** Reservas passadas (mês <= atual) SEM vínculo — "aguardando confirmação". */
+  reservado_pendente: number
+  /** max(0, estimado - acumulado). */
+  reservado_restante: number
+  /** 0..100 — baseado em reservado_acumulado (confirmado). */
+  progresso_pct: number
+  proxima_reserva: WishlistReserva | null
+  meses_parado: number                 // pra badge "envelhecendo"
+}
+
+export interface WishlistItemCreate {
+  nome: string
+  descricao?: string | null
+  categoria_id?: string | null
+  valor_estimado: number
+  data_alvo?: string | null
+}
+
+export type WishlistItemUpdate = Partial<{
+  nome: string
+  descricao: string | null
+  categoria_id: string | null
+  valor_estimado: number
+  prioridade: number
+  status: WishlistStatus
+  data_alvo: string | null
+}>
+
+export interface WishlistComprarBody {
+  valor_real: number
+  data?: string | null                 // YYYY-MM-DD; default = hoje no backend
+  transacao_id?: string | null         // null = vincular depois
+}
+
+export interface WishlistDesistirBody {
+  motivo?: string | null
+}
+
+export interface WishlistReabrirBody {
+  novo_status?: 'desejado' | 'poupando' | null
+}
+
+export interface WishlistVincularBody {
+  transacao_id: string | null          // null = limpar vínculo
+}
+
+export interface WishlistReorderItem {
+  id: string
+  prioridade: number
+}
+
+export interface WishlistSettings {
+  envelhecimento_threshold_meses: number
+  atualizado_em: string | null
+}
+
+export type WishlistSettingsUpdate = Partial<{
+  envelhecimento_threshold_meses: number
+}>
+
+export interface WishlistSummary {
+  total_items_ativos: number           // desejado + poupando
+  total_valor_estimado: number
+  /** Fase 5: só reservas CONFIRMADAS (com transacao_id). */
+  total_reservado_acumulado: number
+  /** Reservas passadas SEM vínculo — pendente de confirmação. */
+  total_reservado_pendente: number
+  itens_em_curso: number               // só 'poupando'
+  proxima_compra_id: string | null
+  proxima_compra_nome: string | null
+  proxima_compra_progresso_pct: number | null
+  media_mensal_reserva: number
+}
+
+export interface WishlistMonthReservas {
+  ano: number
+  mes: number
+  total_reservado: number
+  detalhamento: Array<{
+    item_id: string
+    item_nome: string
+    valor_planejado: number
+  }>
+}
+
+// ─── Match transação ↔ item (Fase 3) ──────────────────────────────────────
+
+export interface WishlistTransactionCandidate {
+  id: string
+  data: string                         // YYYY-MM-DD
+  valor: number                        // sempre < 0 (despesa)
+  descricao: string
+  conta_id: string | null
+  conta_nome: string | null
+  /** |Δ| relativo em %, pra UI ordenar/destacar match exato. */
+  diff_pct: number
+}
+
+export interface WishlistMatchGroup {
+  item: WishlistItem
+  candidates: WishlistTransactionCandidate[]
 }

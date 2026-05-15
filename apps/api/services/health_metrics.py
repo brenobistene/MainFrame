@@ -218,76 +218,165 @@ def _exercicio_ultima_sessao(conn, domain_slug: str, _: Optional[int], slug: str
 
 # ─── Handlers — Alimentação (template refeicao_2modos) ───────────────────
 
+def _alimentacao_iter_eventos(conn, domain_slug: str, since: str):
+    """Itera eventos de alimentação numa janela, normalizando os dois formatos:
+       - Legado: 1 record/refeição → 1 evento
+       - Novo: 1 record/dia com refeicoes[] → N eventos
+
+    Yields dicts com forma uniforme:
+      {tipo: 'planned'|'free', comeu: 'sim'|'parcial'|'nao'|None,
+       item_id: int|None, horario: str|None, last_at: str}
+    """
+    rows = conn.execute(
+        "SELECT id, item_id, horario, payload, atualizado_em "
+        "FROM health_record WHERE domain_slug = ? AND data >= ?",
+        (domain_slug, since),
+    ).fetchall()
+    for r in rows:
+        try:
+            payload = json.loads(r["payload"]) if isinstance(r["payload"], str) else (r["payload"] or {})
+        except (json.JSONDecodeError, TypeError):
+            continue
+        refeicoes = payload.get("refeicoes")
+        if isinstance(refeicoes, list):
+            for ref in refeicoes:
+                if not isinstance(ref, dict):
+                    continue
+                tipo = ref.get("tipo")
+                if tipo == "planned":
+                    yield {
+                        "tipo": "planned",
+                        "comeu": ref.get("comeu"),
+                        "item_id": ref.get("item_id") if isinstance(ref.get("item_id"), int) else None,
+                        "horario": ref.get("horario") if isinstance(ref.get("horario"), str) else None,
+                        "last_at": r["atualizado_em"],
+                    }
+                elif tipo == "free":
+                    yield {
+                        "tipo": "free",
+                        "comeu": None,
+                        "item_id": None,
+                        "horario": ref.get("horario") if isinstance(ref.get("horario"), str) else None,
+                        "last_at": r["atualizado_em"],
+                    }
+        else:
+            # Legacy
+            if r["item_id"] is None:
+                yield {
+                    "tipo": "free",
+                    "comeu": None,
+                    "item_id": None,
+                    "horario": r["horario"],
+                    "last_at": r["atualizado_em"],
+                }
+            else:
+                comeu_legacy = payload.get("comeu", False)
+                yield {
+                    "tipo": "planned",
+                    "comeu": "sim" if comeu_legacy else "nao",
+                    "item_id": r["item_id"],
+                    "horario": r["horario"],
+                    "last_at": r["atualizado_em"],
+                }
+
+
 def _alimentacao_aderencia_dieta_semanal(conn, domain_slug: str, _: Optional[int], slug: str) -> dict:
-    """MVP: comeu_count / (num_itens_ativos * 7). Refinar com janela ±30min depois."""
+    """Aderência = peso(planned eatings) / (num_items_ativos * 7).
+    Peso: sim=1.0, parcial=0.5, nao=0.0. Cobre legado e novo formato.
+    """
     n_items = conn.execute(
         "SELECT COUNT(*) AS n FROM health_item WHERE domain_slug = ? AND arquivado = 0",
         (domain_slug,),
     ).fetchone()["n"]
     if n_items == 0:
         return _empty(slug, "float", "%")
-    row = conn.execute(
-        "SELECT COUNT(*) AS comeu, MAX(atualizado_em) AS last_at "
-        "FROM health_record "
-        "WHERE domain_slug = ? AND data >= ? "
-        "  AND item_id IS NOT NULL "
-        "  AND CAST(json_extract(payload, '$.comeu') AS INTEGER) = 1",
-        (domain_slug, _days_ago_iso(6)),
-    ).fetchone()
-    if not row:
+    weight_total = 0.0
+    last_at = None
+    for ev in _alimentacao_iter_eventos(conn, domain_slug, _days_ago_iso(6)):
+        if ev["tipo"] != "planned":
+            continue
+        if ev["comeu"] == "sim":
+            weight_total += 1.0
+        elif ev["comeu"] == "parcial":
+            weight_total += 0.5
+        if ev["last_at"] and (last_at is None or ev["last_at"] > last_at):
+            last_at = ev["last_at"]
+    pct = round((weight_total / (n_items * 7)) * 100, 1)
+    if last_at is None:
         return _empty(slug, "float", "%")
-    pct = round((row["comeu"] / (n_items * 7)) * 100, 1) if n_items else 0.0
-    return _ok(slug, "float", "%", pct, row["last_at"])
+    return _ok(slug, "float", "%", pct, last_at)
 
 
 def _alimentacao_pulos_semanais(conn, domain_slug: str, _: Optional[int], slug: str) -> dict:
-    row = conn.execute(
-        "SELECT COUNT(*) AS n, MAX(atualizado_em) AS last_at "
-        "FROM health_record "
-        "WHERE domain_slug = ? AND data >= ? "
-        "  AND item_id IS NOT NULL "
-        "  AND CAST(json_extract(payload, '$.comeu') AS INTEGER) = 0",
-        (domain_slug, _days_ago_iso(6)),
-    ).fetchone()
-    if not row:
-        return _empty(slug, "int", None)
-    return _ok(slug, "int", None, int(row["n"]), row["last_at"])
+    count = 0
+    last_at = None
+    for ev in _alimentacao_iter_eventos(conn, domain_slug, _days_ago_iso(6)):
+        if ev["tipo"] == "planned" and ev["comeu"] == "nao":
+            count += 1
+            if ev["last_at"] and (last_at is None or ev["last_at"] > last_at):
+                last_at = ev["last_at"]
+    if last_at is None and count == 0:
+        # Sem registros no período — sinaliza dados indisponíveis em vez de "0"
+        any_row = conn.execute(
+            "SELECT atualizado_em FROM health_record WHERE domain_slug = ? LIMIT 1",
+            (domain_slug,),
+        ).fetchone()
+        if not any_row:
+            return _empty(slug, "int", None)
+    return _ok(slug, "int", None, count, last_at)
 
 
 def _alimentacao_fora_dieta_semanal(conn, domain_slug: str, _: Optional[int], slug: str) -> dict:
-    row = conn.execute(
-        "SELECT COUNT(*) AS n, MAX(atualizado_em) AS last_at "
-        "FROM health_record WHERE domain_slug = ? AND data >= ? AND item_id IS NULL",
-        (domain_slug, _days_ago_iso(6)),
-    ).fetchone()
-    if not row:
-        return _empty(slug, "int", None)
-    return _ok(slug, "int", None, int(row["n"]), row["last_at"])
+    count = 0
+    last_at = None
+    for ev in _alimentacao_iter_eventos(conn, domain_slug, _days_ago_iso(6)):
+        if ev["tipo"] == "free":
+            count += 1
+            if ev["last_at"] and (last_at is None or ev["last_at"] > last_at):
+                last_at = ev["last_at"]
+    if last_at is None and count == 0:
+        any_row = conn.execute(
+            "SELECT atualizado_em FROM health_record WHERE domain_slug = ? LIMIT 1",
+            (domain_slug,),
+        ).fetchone()
+        if not any_row:
+            return _empty(slug, "int", None)
+    return _ok(slug, "int", None, count, last_at)
 
 
 def _alimentacao_pontualidade_media(conn, domain_slug: str, _: Optional[int], slug: str) -> dict:
-    rows = conn.execute(
-        "SELECT r.horario AS h, i.horario_esperado AS he, r.atualizado_em "
-        "FROM health_record r JOIN health_item i ON r.item_id = i.id "
-        "WHERE r.domain_slug = ? AND r.data >= ? "
-        "  AND r.horario IS NOT NULL AND i.horario_esperado IS NOT NULL "
-        "  AND CAST(json_extract(r.payload, '$.comeu') AS INTEGER) = 1 "
-        "ORDER BY r.atualizado_em DESC",
-        (domain_slug, _days_ago_iso(6)),
+    # Mapeia item_id → horario_esperado (uma vez)
+    item_rows = conn.execute(
+        "SELECT id, horario_esperado FROM health_item "
+        "WHERE domain_slug = ? AND horario_esperado IS NOT NULL",
+        (domain_slug,),
     ).fetchall()
-    if not rows:
+    expected_by_item = {r["id"]: r["horario_esperado"] for r in item_rows}
+    if not expected_by_item:
         return _empty(slug, "int", "min")
-    diffs = []
-    for r in rows:
+    diffs: list[int] = []
+    last_at = None
+    for ev in _alimentacao_iter_eventos(conn, domain_slug, _days_ago_iso(6)):
+        if ev["tipo"] != "planned":
+            continue
+        if ev["comeu"] not in ("sim", "parcial"):
+            continue
+        if ev["horario"] is None or ev["item_id"] is None:
+            continue
+        expected = expected_by_item.get(ev["item_id"])
+        if expected is None:
+            continue
         try:
-            t1 = int(r["h"][:2]) * 60 + int(r["h"][3:5])
-            t2 = int(r["he"][:2]) * 60 + int(r["he"][3:5])
+            t1 = int(ev["horario"][:2]) * 60 + int(ev["horario"][3:5])
+            t2 = int(expected[:2]) * 60 + int(expected[3:5])
             diffs.append(abs(t1 - t2))
+            if ev["last_at"] and (last_at is None or ev["last_at"] > last_at):
+                last_at = ev["last_at"]
         except (ValueError, TypeError):
             continue
     if not diffs:
         return _empty(slug, "int", "min")
-    return _ok(slug, "int", "min", int(sum(diffs) / len(diffs)), rows[0]["atualizado_em"])
+    return _ok(slug, "int", "min", int(sum(diffs) / len(diffs)), last_at)
 
 
 # ─── Handlers — Vícios (template consumo_vontade, parametrizado por item) ─

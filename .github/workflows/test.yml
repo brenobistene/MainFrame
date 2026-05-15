@@ -1,0 +1,53 @@
+# CI — roda typecheck + tests do frontend e backend em pull requests
+# e push pra main. Falha bloqueia merge no GitHub se branch protection
+# estiver configurado.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancela runs antigos do mesmo PR/branch — só interessa o mais recente.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: web — typecheck + tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit -p tsconfig.app.json
+      - name: Vitest
+        run: npm test
+      - name: Production build
+        run: npx vite build
+
+  backend:
+    name: api — pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: apps/api/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Pytest
+        run: pytest tests/ -v --cov=. --cov-report=term-missing

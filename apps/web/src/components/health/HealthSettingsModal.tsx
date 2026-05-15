@@ -24,6 +24,7 @@ import {
   useHealthDomains,
   useHealthMetricsCatalog,
   useHealthSettings,
+  useMigrateRefeicao2modos,
   useUpdateHealthDomain,
   useUpdateHealthSettings,
 } from '../../lib/health-queries'
@@ -73,8 +74,7 @@ export default function HealthSettingsModal({ onClose }: Props) {
         style={{
           position: 'relative',
           padding: '20px 24px',
-          minWidth: 640,
-          maxWidth: 800,
+          width: 'min(800px, calc(100vw - 16px))',
           maxHeight: '92vh',
           overflowY: 'auto',
           color: 'var(--color-text-primary)',
@@ -126,8 +126,107 @@ export default function HealthSettingsModal({ onClose }: Props) {
 
         <GlobalSettings />
         <DomainsSettings />
+        <AdminSection />
       </div>
     </div>
+  )
+}
+
+// ─── Admin (migrations one-shot) ──────────────────────────────────────────
+
+/**
+ * Seção administrativa pra ferramentas de migração one-shot. Cresce conforme
+ * surgem refactors no schema. Por enquanto: migração refeicao_2modos legacy
+ * → agrupado.
+ */
+function AdminSection() {
+  const migrate = useMigrateRefeicao2modos()
+  const [result, setResult] = useState<{
+    domains_processed: number
+    days_migrated: number
+    records_consolidated: number
+    records_deleted: number
+  } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  function handleClick() {
+    setError(null)
+    setResult(null)
+    if (
+      !confirm(
+        'Consolidar registros antigos de alimentação em formato agrupado (1 record/dia)?\n\nSeguro: faz dump+insert+delete numa transação. Idempotente — pode rodar mais de uma vez.',
+      )
+    ) {
+      return
+    }
+    migrate.mutate(undefined, {
+      onSuccess: (data) => setResult(data),
+      onError: (err) => setError((err as Error).message),
+    })
+  }
+
+  return (
+    <section
+      style={{
+        marginTop: 24,
+        paddingTop: 16,
+        borderTop: '1px dashed var(--color-divider)',
+      }}
+    >
+      <SectionLabel>ADMIN</SectionLabel>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={migrate.isPending}
+          className="hq-btn hq-btn--ghost"
+          style={{ fontSize: 11, padding: '8px 14px' }}
+        >
+          {migrate.isPending ? 'MIGRANDO…' : 'MIGRAR ALIMENTAÇÃO PRA AGRUPADO'}
+        </button>
+        <div
+          style={{
+            flex: '1 1 200px',
+            fontSize: 11,
+            color: 'var(--color-text-muted)',
+            fontFamily: BODY,
+            lineHeight: 1.4,
+          }}
+        >
+          Consolida registros legacy (1 por refeição) em 1 record por dia com
+          `refeicoes[]` no payload. Idempotente.
+        </div>
+      </div>
+      {result && (
+        <div
+          className="hq-tech-id"
+          style={{
+            marginTop: 8,
+            color: 'var(--color-ice-light)',
+            padding: '6px 10px',
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg-primary)',
+          }}
+        >
+          ✓ {result.days_migrated} DIAS · {result.records_deleted} REGISTROS CONSOLIDADOS EM {result.records_consolidated}
+        </div>
+      )}
+      {error && (
+        <div
+          style={{
+            marginTop: 8,
+            color: 'var(--color-error)',
+            padding: '6px 10px',
+            border: '1px solid var(--color-danger-border)',
+            background: 'var(--color-danger-bg)',
+            fontSize: 11,
+            fontFamily: BODY,
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </section>
   )
 }
 

@@ -18,10 +18,11 @@ import { RulesModal } from './components/RulesModal'
 const TABS: { path: string; label: string }[] = [
   { path: '/hub-finance/visao-geral',  label: 'VISÃO GERAL' },
   { path: '/hub-finance/carteira',     label: 'CARTEIRA' },
-  { path: '/hub-finance/lancamentos',  label: 'LANÇAMENTOS' },
   { path: '/hub-finance/fixas',        label: 'FIXAS' },
   { path: '/hub-finance/dividas',      label: 'DÍVIDAS' },
+  { path: '/hub-finance/lancamentos',  label: 'LANÇAMENTOS' },
   { path: '/hub-finance/freelas',      label: 'FREELAS' },
+  { path: '/hub-finance/wishlist',     label: 'WISHLIST' },
   { path: '/hub-finance/categorias',   label: 'CATEGORIAS' },
 ]
 

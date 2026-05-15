@@ -144,27 +144,8 @@ export type { Block }
  * um único parágrafo sem conteúdo, ou string vazia/só-whitespace. Usa pra
  * decidir salvar `null` no banco em vez de JSON "vazio".
  */
-export function isBlockDocEmpty(serialized: string | null | undefined): boolean {
-  if (!serialized) return true
-  const s = serialized.trim()
-  if (!s) return true
-  try {
-    const doc = JSON.parse(s)
-    if (!Array.isArray(doc)) return !s
-    if (doc.length === 0) return true
-    if (doc.length === 1) {
-      const b = doc[0]
-      if (b?.type === 'paragraph') {
-        const content = b.content
-        if (!content) return true
-        if (Array.isArray(content) && content.length === 0) return true
-        if (Array.isArray(content) && content.every((c: any) => !c?.text?.trim())) return true
-      }
-    }
-    return false
-  } catch {
-    // Não é JSON — texto legado. Vazio se só-whitespace.
-    return !s
-  }
-}
+// `isBlockDocEmpty` foi movido pra `block-utils.ts` (sem dependência
+// pesada de @blocknote) pra permitir lazy-load deste arquivo. Re-export
+// preserva compat dos imports antigos.
+export { isBlockDocEmpty } from './block-utils'
 

@@ -25,6 +25,7 @@ import {
   fetchHealthPending,
   fetchHealthRecords,
   fetchHealthSettings,
+  migrateRefeicao2modos,
   unarchiveHealthItem,
   updateHealthDomain,
   updateHealthItem,
@@ -189,6 +190,24 @@ export function useHealthRecords(
   })
 }
 
+/**
+ * Invalida tudo que depende de records: a própria lista, métricas
+ * (cidadãs derivadas) e pendências. Sem esse fanout o auto-save do cigarro
+ * deixava `tempo_desde_ultimo_consumo` (Dashboard) e o MetricsPanel
+ * mostrando dado stale até refresh manual.
+ */
+function invalidateRecordsFanout(qc: ReturnType<typeof useQueryClient>, domainSlug?: string) {
+  if (domainSlug) {
+    qc.invalidateQueries({
+      queryKey: [...healthKeys.all, 'records', domainSlug],
+    })
+  } else {
+    qc.invalidateQueries({ queryKey: [...healthKeys.all, 'records'] })
+  }
+  qc.invalidateQueries({ queryKey: [...healthKeys.all, 'metric-value'] })
+  qc.invalidateQueries({ queryKey: healthKeys.pending() })
+}
+
 export function useCreateHealthRecord() {
   const qc = useQueryClient()
   return useMutation({
@@ -200,9 +219,7 @@ export function useCreateHealthRecord() {
       body: HealthRecordCreate
     }) => createHealthRecord(domainSlug, body),
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({
-        queryKey: [...healthKeys.all, 'records', vars.domainSlug],
-      })
+      invalidateRecordsFanout(qc, vars.domainSlug)
     },
   })
 }
@@ -213,7 +230,7 @@ export function useUpdateHealthRecord() {
     mutationFn: ({ id, patch }: { id: number; patch: HealthRecordUpdate }) =>
       updateHealthRecord(id, patch),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [...healthKeys.all, 'records'] })
+      invalidateRecordsFanout(qc)
     },
   })
 }
@@ -223,7 +240,7 @@ export function useDeleteHealthRecord() {
   return useMutation({
     mutationFn: (id: number) => deleteHealthRecord(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [...healthKeys.all, 'records'] })
+      invalidateRecordsFanout(qc)
     },
   })
 }
@@ -279,5 +296,20 @@ export function useHealthPending() {
     queryFn: fetchHealthPending,
     staleTime: 30 * 1000,             // 30s — pendências mudam com a hora
     refetchInterval: 60 * 1000,       // refetch passivo a cada minuto
+  })
+}
+
+// ─── Admin: migração refeicao_2modos legacy → agrupado ───────────────────
+
+export function useMigrateRefeicao2modos() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: migrateRefeicao2modos,
+    onSuccess: () => {
+      // Fan-out: records + métricas + pending precisam refetch.
+      qc.invalidateQueries({ queryKey: [...healthKeys.all, 'records'] })
+      qc.invalidateQueries({ queryKey: [...healthKeys.all, 'metric-value'] })
+      qc.invalidateQueries({ queryKey: healthKeys.pending() })
+    },
   })
 }

@@ -22,6 +22,7 @@ Configurabilidade (regra "sem hardcoded"):
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, time
 from typing import Optional
 
@@ -84,7 +85,8 @@ def compute_pending(conn) -> list[dict]:
     ) or SONO_LEMBRETE_INICIO_DEFAULT
 
     domains = conn.execute(
-        "SELECT slug, nome, template, lembrete_ativo, ausencia_threshold_dias, ativo "
+        "SELECT slug, nome, template, lembrete_ativo, ausencia_threshold_dias, ativo, "
+        "criado_em "
         "FROM health_domain WHERE ativo = 1 ORDER BY ordem ASC"
     ).fetchall()
 
@@ -130,25 +132,53 @@ def compute_pending(conn) -> list[dict]:
 
         elif template == "refeicao_2modos":
             # Lembrete por item: cada refeição com horario_esperado já passado
-            # (mas dentro do cutoff) e sem registro hoje. Usa LEFT JOIN pra
-            # evitar N+1 (uma query por item) — saber se há registro do dia
-            # vem direto.
+            # (mas dentro do cutoff) e SEM registro hoje pra aquele item.
+            #
+            # Suporta os dois formatos de payload no mesmo dia:
+            #   1. Legado: 1 record por refeição, `r.item_id` aponta pro item
+            #   2. Novo agrupado: 1 record/dia com `payload.refeicoes[]`
+            #      contendo eventos `{tipo: 'planned', item_id: N, comeu}`
+            #
+            # Antes só checava (1); por isso lembrete não sumia no formato novo.
+            today_records = conn.execute(
+                "SELECT item_id, payload FROM health_record "
+                "WHERE domain_slug = ? AND data = ?",
+                (slug, today_iso),
+            ).fetchall()
+            already_registered: set[int] = set()
+            for rec in today_records:
+                if rec["item_id"] is not None:
+                    already_registered.add(rec["item_id"])
+                try:
+                    pl = (
+                        json.loads(rec["payload"])
+                        if isinstance(rec["payload"], str)
+                        else (rec["payload"] or {})
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    pl = {}
+                refs = pl.get("refeicoes")
+                if isinstance(refs, list):
+                    for ref in refs:
+                        if not isinstance(ref, dict):
+                            continue
+                        if ref.get("tipo") != "planned":
+                            continue
+                        rid = ref.get("item_id")
+                        if isinstance(rid, int):
+                            already_registered.add(rid)
+
             items = conn.execute(
-                "SELECT i.id, i.nome, i.horario_esperado, "
-                "       (SELECT 1 FROM health_record r "
-                "        WHERE r.domain_slug = i.domain_slug "
-                "          AND r.data = ? "
-                "          AND r.item_id = i.id LIMIT 1) AS ja_registrado "
-                "FROM health_item i "
-                "WHERE i.domain_slug = ? "
-                "  AND i.arquivado = 0 "
-                "  AND i.horario_esperado IS NOT NULL "
-                "ORDER BY i.horario_esperado ASC",
-                (today_iso, slug),
+                "SELECT id, nome, horario_esperado FROM health_item "
+                "WHERE domain_slug = ? "
+                "  AND arquivado = 0 "
+                "  AND horario_esperado IS NOT NULL "
+                "ORDER BY horario_esperado ASC",
+                (slug,),
             ).fetchall()
             now_minutes = now_t.hour * 60 + now_t.minute
             for it in items:
-                if it["ja_registrado"]:
+                if it["id"] in already_registered:
                     continue
                 he = _parse_hhmm(it["horario_esperado"])
                 if he is None:
@@ -220,14 +250,39 @@ def compute_pending(conn) -> list[dict]:
             ).fetchone()
 
         last_iso = row["last_data"] if row else None
+        # Pra Sono, comparamos com a "noite que terminou hoje" (= ontem)
+        ref_date = _yesterday() if template == "janela_qualidade" else _today()
+
         if not last_iso:
-            # Sem nenhum registro nunca — não dispara âmbar (caso de domínio
-            # recém-instalado). Sistema não cobra observação.
+            # Sem nenhum registro nunca. Aplica período de graça baseado em
+            # `criado_em`: só começa a cobrar depois que passou o `threshold`
+            # de dias desde a criação do domínio. Antes era "nunca cobra",
+            # mas isso escondia domínios que o usuário criou pra começar (ex:
+            # Exercício) e nunca apareciam como pendentes.
+            criado_iso = (d["criado_em"] or "")[:10]
+            try:
+                criado = date.fromisoformat(criado_iso)
+            except ValueError:
+                continue                              # criado_em ausente/corrompido
+            diff = (ref_date - criado).days
+            if diff < threshold:
+                continue                              # ainda no período de graça
+            pending.append({
+                "tipo": "ausencia",
+                "domain_slug": slug,
+                "domain_nome": d["nome"],
+                "item_id": None,
+                "item_nome": None,
+                "descricao": (
+                    f"sem nenhum registro · criado há {diff} dia"
+                    f"{'s' if diff != 1 else ''}"
+                ),
+                "horario_esperado": None,
+                "dias": diff,
+            })
             continue
 
         last = date.fromisoformat(last_iso)
-        # Pra Sono, comparamos com a "noite que terminou hoje" (= ontem)
-        ref_date = _yesterday() if template == "janela_qualidade" else _today()
         diff = (ref_date - last).days
         if diff >= threshold:
             pending.append({

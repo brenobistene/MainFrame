@@ -312,3 +312,17 @@ input[type="time"]::-webkit-datetime-edit-minute-field[aria-valuenow=""] {
 @media (prefers-reduced-motion: reduce) {
   .hh-live-pulse { animation: none; }
 }
+
+/* Grid responsivo da BiomonitorPage: 1 col em telas estreitas, 2 em largas. */
+.hh-biomonitor-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+  margin-top: 8px;
+}
+
+@media (min-width: 900px) {
+  .hh-biomonitor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

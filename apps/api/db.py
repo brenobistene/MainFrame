@@ -43,6 +43,20 @@ FIN_CATEGORIES = [
     ("Dívidas",                "despesa",        "#e85d3a", 12),
 ]
 
+# Seed inicial de categorias da Wishlist (submódulo do Hub Finance). Aplicado
+# só em DB sem nenhuma categoria de wishlist — usuário pode editar/deletar/criar
+# à vontade. Categorias separadas de fin_category (tema de desejo vs tema de
+# despesa real). Schema/decisão em docs/hub-finance/wishlist-PLAN.md.
+FIN_WISHLIST_CATEGORIES = [
+    # (nome, cor, sort_order)
+    ("Tech",            "#4a9eff", 1),
+    ("Decoração",       "#f5a962", 2),
+    ("Saúde Estética",  "#e85d3a", 3),
+    ("Hobby",           "#9d6cff", 4),
+    ("Viagem",          "#7fb069", 5),
+    ("Outros",          "#8a93a6", 6),
+]
+
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -394,6 +408,105 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_fin_recurring_ativa ON fin_recurring_bill(ativa);
 
+        -- ─── Wishlist (submódulo do Hub Finance) ──────────────────────────
+        -- Lista de desejos com cronograma opcional de reserva mensal. Item
+        -- de wishlist NÃO cria transação automaticamente — vincula-se a uma
+        -- transação real existente via `transacao_id` (vínculo manual ou via
+        -- sugestão na importação de extrato). Schema completo em
+        -- docs/hub-finance/wishlist-PLAN.md.
+
+        -- Categorias próprias da wishlist (separadas de fin_category pra
+        -- isolar "tema de desejo" de "tema de despesa real").
+        CREATE TABLE IF NOT EXISTS fin_wishlist_categoria (
+            id              TEXT PRIMARY KEY,
+            nome            TEXT NOT NULL UNIQUE,
+            cor             TEXT,
+            sort_order      INTEGER NOT NULL DEFAULT 0,
+            criada_em       TEXT DEFAULT (datetime('now')),
+            atualizada_em   TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Item da wishlist. Status: desejado | poupando | comprado | desistido.
+        -- `valor_real`, `comprado_em`, `transacao_id` só preenchidos quando
+        -- status='comprado'. `transacao_id` nullable mesmo após compra —
+        -- permite "comprei mas vinculo depois quando importar extrato".
+        -- `motivo_desistencia`, `desistido_em` só quando status='desistido'.
+        CREATE TABLE IF NOT EXISTS fin_wishlist_item (
+            id                   TEXT PRIMARY KEY,
+            nome                 TEXT NOT NULL,
+            descricao            TEXT,
+            categoria_id         TEXT REFERENCES fin_wishlist_categoria(id) ON DELETE SET NULL,
+            valor_estimado       REAL NOT NULL,
+            prioridade           INTEGER NOT NULL DEFAULT 0,
+            status               TEXT NOT NULL DEFAULT 'desejado',
+            data_alvo            TEXT,
+            valor_real           REAL,
+            comprado_em          TEXT,
+            transacao_id         TEXT REFERENCES fin_transaction(id) ON DELETE SET NULL,
+            desistido_em         TEXT,
+            motivo_desistencia   TEXT,
+            criada_em            TEXT DEFAULT (datetime('now')),
+            atualizada_em        TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_fin_wishlist_item_status
+            ON fin_wishlist_item(status);
+        CREATE INDEX IF NOT EXISTS idx_fin_wishlist_item_categoria
+            ON fin_wishlist_item(categoria_id);
+
+        -- Links múltiplos por item (lojas, referências, posts). `preco`
+        -- opcional permite comparar lojas; `label` opcional pra rotular.
+        CREATE TABLE IF NOT EXISTS fin_wishlist_link (
+            id           TEXT PRIMARY KEY,
+            item_id      TEXT NOT NULL REFERENCES fin_wishlist_item(id) ON DELETE CASCADE,
+            url          TEXT NOT NULL,
+            label        TEXT,
+            preco        REAL,
+            sort_order   INTEGER NOT NULL DEFAULT 0,
+            criado_em    TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_fin_wishlist_link_item
+            ON fin_wishlist_link(item_id);
+
+        -- Cronograma de reserva mensal (opcional — item pode não ter linha).
+        -- `valor_planejado` em BRL. `(item_id, ano, mes)` único pra evitar
+        -- duplicata.
+        --
+        -- Fase 5 ("soft mode"): reserva NÃO é mais passivamente cumprida.
+        --  - `dia` (opcional): dia preferido do mês pra você guardar.
+        --    Default = último dia do mês quando NULL.
+        --  - `transacao_id` (opcional): quando setado, indica que a
+        --    transferência real pra caixinha aconteceu e a reserva
+        --    está MATERIALIZADA. `reservado_acumulado` no item conta só
+        --    reservas com vínculo. Reservas passadas sem vínculo viram
+        --    `reservado_pendente` (badge "aguardando confirmação").
+        --
+        -- transacao_id sem FK action declarada porque ALTER ADD COLUMN
+        -- não suporta REFERENCES no SQLite — limpeza manual no DELETE
+        -- de transação.
+        CREATE TABLE IF NOT EXISTS fin_wishlist_reserva (
+            id                TEXT PRIMARY KEY,
+            item_id           TEXT NOT NULL REFERENCES fin_wishlist_item(id) ON DELETE CASCADE,
+            ano               INTEGER NOT NULL,
+            mes               INTEGER NOT NULL,
+            dia               INTEGER,
+            valor_planejado   REAL NOT NULL,
+            transacao_id      TEXT REFERENCES fin_transaction(id) ON DELETE SET NULL,
+            notas             TEXT,
+            criada_em         TEXT DEFAULT (datetime('now')),
+            UNIQUE(item_id, ano, mes)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fin_wishlist_reserva_item
+            ON fin_wishlist_reserva(item_id);
+        CREATE INDEX IF NOT EXISTS idx_fin_wishlist_reserva_mes
+            ON fin_wishlist_reserva(ano, mes);
+
+        -- Settings singleton (igual fin_settings).
+        CREATE TABLE IF NOT EXISTS fin_wishlist_settings (
+            id                              INTEGER PRIMARY KEY CHECK (id = 1),
+            envelhecimento_threshold_meses  INTEGER NOT NULL DEFAULT 6,
+            atualizado_em                   TEXT DEFAULT (datetime('now'))
+        );
+
         -- ─── /Build (Sistema de Metas) ────────────────────────────────────
         -- Camada estratégica: Propósito → Visão → Meta → (Sprint) → Projeto
         -- → Entregável → Quest. Tabelas com prefixo `build_`. Schema completo
@@ -691,6 +804,18 @@ def init_db() -> None:
         # sistema escolhe um default razoável (ver health_metrics).
         _try_add_column(conn, "ALTER TABLE health_domain ADD COLUMN metric_primary_slug TEXT")
 
+        # /Build Ritual — `nome` customizável (default null, frontend cai pra
+        # label da cadência). Permite renomear "SEMANAL" → "Revisão de Sexta"
+        # sem mexer na cadência (PK).
+        _try_add_column(conn, "ALTER TABLE build_ritual ADD COLUMN nome TEXT")
+
+        # /Build Ritual Session — flag `skipped` + `skip_reason` pra registrar
+        # rodada pulada intencionalmente (viagem, doente, etc) sem virar falso
+        # positivo no `dias_atraso`. Sessão skipped ainda move o schedule, mas
+        # quebra streak.
+        _try_add_column(conn, "ALTER TABLE build_ritual_session ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0")
+        _try_add_column(conn, "ALTER TABLE build_ritual_session ADD COLUMN skip_reason TEXT")
+
         # Garante que existe 1 linha de profile. Nome default é piada — o usuário
         # edita pelo ProfileEditModal no primeiro uso. INSERT OR IGNORE =
         # idempotente, então instâncias existentes não são sobrescritas.
@@ -784,7 +909,7 @@ def init_db() -> None:
         health_domain_seeds = [
             # (slug, nome, cor, icone, template, usa_itens, lembrete_ativo, ausencia_dias, ordem)
             ("sono",          "Sono",              None, "moon",     "janela_qualidade", 0, 1, 2,    1),
-            ("exercicio",     "Exercício",         None, "dumbbell", "atividade_tipo",   1, 0, 7,    2),
+            ("exercicio",     "Exercício",         None, "dumbbell", "atividade_tipo",   1, 1, 7,    2),
             ("alimentacao",   "Alimentação",       None, "utensils", "refeicao_2modos",  1, 1, 1,    3),
             ("vicios",        "Vícios",            None, "alert-triangle", "consumo_vontade", 1, 0, None, 4),
             ("medidas",       "Medidas Corporais", None, "scale",    "metrica_simples",  1, 0, None, 5),
@@ -889,6 +1014,24 @@ def init_db() -> None:
                             "VALUES(?,?,?,?,?)",
                             (str(_uuid.uuid4())[:8], nome, tipo, seed_match[2], max_sort + 1),
                         )
+
+        # Seed de categorias da Wishlist — só na primeira instalação.
+        existing_wishlist_cats = conn.execute(
+            "SELECT COUNT(*) AS n FROM fin_wishlist_categoria"
+        ).fetchone()["n"]
+        if existing_wishlist_cats == 0:
+            for nome, cor, sort_order in FIN_WISHLIST_CATEGORIES:
+                conn.execute(
+                    "INSERT INTO fin_wishlist_categoria(id, nome, cor, sort_order) "
+                    "VALUES(?,?,?,?)",
+                    (str(_uuid.uuid4())[:8], nome, cor, sort_order),
+                )
+
+        # Singleton de settings da Wishlist (id=1).
+        conn.execute(
+            "INSERT OR IGNORE INTO fin_wishlist_settings(id, envelhecimento_threshold_meses) "
+            "VALUES(1, 6)"
+        )
 
         conn.commit()
 
@@ -1011,6 +1154,15 @@ def init_db() -> None:
         # (salário, mesada, etc). Permite cadastrar entradas fixas no mesmo
         # módulo de "Contas fixas".
         _try_add_column(conn, "ALTER TABLE fin_recurring_bill ADD COLUMN tipo TEXT NOT NULL DEFAULT 'despesa'")
+
+        # Wishlist Fase 5: dia preferido pra reserva mensal (opcional) +
+        # vínculo opcional pra transação real que MATERIALIZA a reserva
+        # (ex: transferência pra caixinha do Nubank). Mudança semântica:
+        # `reservado_acumulado` passa a contar SÓ as reservas com vínculo —
+        # "soft mode" pedido pelo usuário, sem assumir cumprimento. Doc:
+        # docs/hub-finance/wishlist-PLAN.md §7 (decisão #7 revista).
+        _try_add_column(conn, "ALTER TABLE fin_wishlist_reserva ADD COLUMN dia INTEGER")
+        _try_add_column(conn, "ALTER TABLE fin_wishlist_reserva ADD COLUMN transacao_id TEXT")
 
         # `completed_at`: adiciona + backfill inicial (só roda uma vez, quando a
         # coluna não existia ainda — o backfill é inócuo em reboots).

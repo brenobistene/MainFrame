@@ -18,6 +18,8 @@ import {
   createBuildGoal,
   createBuildPrinciple,
   createBuildRitualSession,
+  updateBuildRitualSession,
+  deleteBuildRitualSession,
   createBuildSprint,
   createGoalGuardrail,
   deleteBuildGoal,
@@ -64,6 +66,7 @@ import type {
   BuildProjectClassification,
   BuildRitualCadencia,
   BuildRitualSessionCreate,
+  BuildRitualSessionUpdate,
   BuildRitualUpdate,
   BuildSettings,
   BuildSprintCreate,
@@ -490,6 +493,46 @@ export function useCreateRitualSession() {
     }) => createBuildRitualSession(cadencia, body),
     onSuccess: (_, vars) => {
       // Invalida list de sessions + lista de rituais (proxima_data muda)
+      qc.invalidateQueries({
+        queryKey: buildKeys.ritualSessions(vars.cadencia),
+      })
+      qc.invalidateQueries({ queryKey: buildKeys.rituals() })
+    },
+  })
+}
+
+export function useUpdateRitualSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      cadencia,
+      sessionId,
+      patch,
+    }: {
+      cadencia: BuildRitualCadencia
+      sessionId: string
+      patch: BuildRitualSessionUpdate
+    }) => updateBuildRitualSession(cadencia, sessionId, patch),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({
+        queryKey: buildKeys.ritualSessions(vars.cadencia),
+      })
+      qc.invalidateQueries({ queryKey: buildKeys.rituals() })
+    },
+  })
+}
+
+export function useDeleteRitualSession() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      cadencia,
+      sessionId,
+    }: {
+      cadencia: BuildRitualCadencia
+      sessionId: string
+    }) => deleteBuildRitualSession(cadencia, sessionId),
+    onSuccess: (_, vars) => {
       qc.invalidateQueries({
         queryKey: buildKeys.ritualSessions(vars.cadencia),
       })

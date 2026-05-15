@@ -2221,6 +2221,57 @@ def month_commitments(
                 "cartao_nome": inv["cartao_nome"],
             })
 
+    # ─── 5) Reservas da Wishlist (compromissos virtuais) ─────────────────
+    # Cada linha de cronograma vira um item `kind='wishlist'`. Compromisso
+    # do mês usa `valor_planejado` (= meta a guardar) e o `dia` se setado;
+    # caso contrário cai pro último dia do mês.
+    #
+    # Status:
+    #  * `paga`     = reserva com transacao_id vinculado (já guardado)
+    #  * `pendente` = sem vínculo
+    # Entra em `total_a_pagar` (desconta de sobra_projetada) sempre, com ou
+    # sem vínculo — é o quanto você se comprometeu a guardar neste mês.
+    with get_conn() as conn:
+        reservas = conn.execute(
+            "SELECT r.id AS reserva_id, r.valor_planejado, r.ano, r.mes, r.dia, "
+            "r.transacao_id, i.id AS item_id, i.nome, i.status AS item_status "
+            "FROM fin_wishlist_reserva r "
+            "JOIN fin_wishlist_item i ON i.id = r.item_id "
+            "WHERE r.ano = ? AND r.mes = ? "
+            "AND i.status IN ('desejado', 'poupando') "
+            "ORDER BY i.nome ASC",
+            (year, month),
+        ).fetchall()
+    for r in reservas:
+        valor_res = float(r["valor_planejado"] or 0)
+        dia_pref = r["dia"]
+        if dia_pref:
+            dia_num = min(int(dia_pref), last_day)
+            data_prev = f"{year:04d}-{month:02d}-{dia_num:02d}"
+        else:
+            dia_num = None
+            data_prev = data_ate
+        has_link = bool(r["transacao_id"])
+        items.append({
+            "kind": "wishlist",
+            "id": r["reserva_id"],
+            "descricao": r["nome"],
+            "sub_descricao": "wishlist · reserva mensal",
+            "tipo": "despesa",
+            "dia": dia_num,
+            "data_prevista": data_prev,
+            "valor": round(valor_res, 2),
+            "valor_pago": round(valor_res, 2) if has_link else None,
+            "status": "paga" if has_link else "pendente",
+            "transacao_id": r["transacao_id"],
+            "data_pagamento": None,
+            "wishlist_item_id": r["item_id"],
+        })
+        if has_link:
+            total_pago += valor_res
+        else:
+            total_a_pagar += valor_res
+
     # Ordena por data_prevista (sem data vai pro fim)
     items.sort(key=lambda i: (i["data_prevista"] or "9999-99-99", i["descricao"]))
 
@@ -3091,6 +3142,22 @@ def monthly_summary(
 
     receita = float(row["receita"] or 0)
     despesa = float(row["despesa"] or 0)
+    sobra = receita - despesa
+
+    # Reservas planejadas da Wishlist pro mês (passivas: planejado = assumido).
+    # Só conta itens ativos (desejado | poupando). Decisão registrada em
+    # docs/hub-finance/wishlist-PLAN.md seções 2#11 e 8.
+    with get_conn() as conn:
+        res_row = conn.execute(
+            "SELECT COALESCE(SUM(r.valor_planejado), 0) AS total "
+            "FROM fin_wishlist_reserva r "
+            "JOIN fin_wishlist_item i ON i.id = r.item_id "
+            "WHERE r.ano = ? AND r.mes = ? "
+            "AND i.status IN ('desejado', 'poupando')",
+            (year, month),
+        ).fetchone()
+    reservas_wishlist = float(res_row["total"] or 0)
+
     return {
         "year": year,
         "month": month,
@@ -3098,7 +3165,11 @@ def monthly_summary(
         "data_ate": data_ate,
         "receita": receita,
         "despesa": despesa,
-        "sobra": receita - despesa,
+        "sobra": sobra,
+        "reservas_wishlist": round(reservas_wishlist, 2),
+        # Sobra real = o que sobra DEPOIS de comprometer com a wishlist do mês.
+        # É a métrica que decide se você pode comprar mais coisa (ver PLAN §11).
+        "sobra_real": round(sobra - reservas_wishlist, 2),
         "transacoes_total": row["total"] or 0,
     }
 

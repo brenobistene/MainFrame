@@ -168,6 +168,33 @@ export function summarizeRecordPayload(payload: Record<string, unknown>): string
       payload.intensidade ? ` · int ${payload.intensidade}` : ''
     }`
   }
+  // Formato novo alimentação: lista de refeições do dia. Mostra resumo
+  // agregado de planejadas (sim/parcial/nao) + count de fora-dieta.
+  if (Array.isArray((payload as { refeicoes?: unknown }).refeicoes)) {
+    const refs = (payload as {
+      refeicoes: Array<{ tipo?: string; comeu?: string }>
+    }).refeicoes
+    let sim = 0
+    let parcial = 0
+    let nao = 0
+    let livre = 0
+    for (const r of refs) {
+      if (r.tipo === 'planned') {
+        if (r.comeu === 'sim') sim++
+        else if (r.comeu === 'parcial') parcial++
+        else if (r.comeu === 'nao') nao++
+      } else if (r.tipo === 'free') {
+        livre++
+      }
+    }
+    const partes: string[] = []
+    if (sim || parcial || nao) {
+      const total = sim + parcial + nao
+      partes.push(`${total} planejada${total !== 1 ? 's' : ''} (${sim} sim · ${parcial} parcial · ${nao} não)`)
+    }
+    if (livre) partes.push(`${livre} fora dieta`)
+    return partes.length > 0 ? partes.join(' · ') : '—'
+  }
   // Formato novo cigarro: lista de eventos com horário. Mostra count + até 4
   // horários ordenados, com elipse quando excede.
   if (Array.isArray((payload as { eventos?: unknown }).eventos)) {

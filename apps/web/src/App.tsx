@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import {
   ChevronsLeft, ChevronsRight, Pause, Play, CheckCircle2, Menu,
 } from 'lucide-react'
@@ -16,35 +16,43 @@ import {
   reportApiError,
 } from './api'
 import {
-  useProjects, useQuests, useTasks, useAreas, useProfile, useAppInvalidator,
+  useProjects, useQuests, useTasks, useAreas, useProfile, useRoutines, useDebts, useAppInvalidator,
 } from './lib/app-queries'
 import { tabSync } from './lib/tabsync'
 import { useBreakpoint } from './lib/useBreakpoint'
+import { CommandPalette } from './components/CommandPalette'
 import type { Project, Quest, Area, ActiveSession, Profile, Task } from './types'
 import { parseIsoAsUtc, sumClosedSessionsSeconds, formatHMS } from './utils/datetime'
 import { SessionHistoryModal } from './components/SessionHistoryModal'
+// Rotas-padrão (Dia/Dashboard/Áreas) ficam eager — landing + maior tráfego.
+// Resto vai lazy pra reduzir bundle inicial: cada rota baixa só quando
+// usuário navega pra ela. Reduziu ~50% no chunk principal.
 import { DashboardView } from './pages/DashboardPage'
 import { DiaView } from './pages/DiaPage'
-import { CalendarView } from './pages/CalendarPage'
 import { AreasView, AreaDetailRoute } from './pages/AreasPage'
 import { DialogPortal } from './components/ui/CyberDialog'
 import { BannerGridOverlay } from './components/BannerGridOverlay'
-import { RoutinesView } from './pages/RoutinesPage'
-import { TasksView } from './pages/TasksPage'
-import { MicroDumpView } from './pages/MicroDumpPage'
-import { ArquivadosView } from './pages/ArquivadosPage'
-import { HubFinanceLayout } from './pages/finance/HubFinanceLayout'
-import { VisaoGeralPage } from './pages/finance/VisaoGeralPage'
-import { CarteiraPage } from './pages/finance/CarteiraPage'
-import { LancamentosPage } from './pages/finance/LancamentosPage'
-import { FixasPage } from './pages/finance/FixasPage'
-import { DividasPage } from './pages/finance/DividasPage'
-import { FreelasPage } from './pages/finance/FreelasPage'
-import { CategoriasPage } from './pages/finance/CategoriasPage'
-import BuildPage from './pages/BuildPage'
-import HealthLayout from './pages/health/HealthLayout'
-import BiomonitorPage from './pages/health/BiomonitorPage'
-import DomainPage from './pages/health/DomainPage'
+// Lazy routes — named exports precisam do shim `.then(m => ({ default: m.X }))`
+// porque React.lazy() só aceita default export.
+const CalendarView    = lazy(() => import('./pages/CalendarPage').then(m => ({ default: m.CalendarView })))
+const RoutinesView    = lazy(() => import('./pages/RoutinesPage').then(m => ({ default: m.RoutinesView })))
+const TasksView       = lazy(() => import('./pages/TasksPage').then(m => ({ default: m.TasksView })))
+const MicroDumpView   = lazy(() => import('./pages/MicroDumpPage').then(m => ({ default: m.MicroDumpView })))
+const ArquivadosView  = lazy(() => import('./pages/ArquivadosPage').then(m => ({ default: m.ArquivadosView })))
+const HubFinanceLayout = lazy(() => import('./pages/finance/HubFinanceLayout').then(m => ({ default: m.HubFinanceLayout })))
+const VisaoGeralPage  = lazy(() => import('./pages/finance/VisaoGeralPage').then(m => ({ default: m.VisaoGeralPage })))
+const CarteiraPage    = lazy(() => import('./pages/finance/CarteiraPage').then(m => ({ default: m.CarteiraPage })))
+const LancamentosPage = lazy(() => import('./pages/finance/LancamentosPage').then(m => ({ default: m.LancamentosPage })))
+const FixasPage       = lazy(() => import('./pages/finance/FixasPage').then(m => ({ default: m.FixasPage })))
+const DividasPage     = lazy(() => import('./pages/finance/DividasPage').then(m => ({ default: m.DividasPage })))
+const WishlistPage    = lazy(() => import('./pages/finance/WishlistPage').then(m => ({ default: m.WishlistPage })))
+const FreelasPage     = lazy(() => import('./pages/finance/FreelasPage').then(m => ({ default: m.FreelasPage })))
+const CategoriasPage  = lazy(() => import('./pages/finance/CategoriasPage').then(m => ({ default: m.CategoriasPage })))
+// Build/Health usam default exports → import sem `.then`.
+const BuildPage       = lazy(() => import('./pages/BuildPage'))
+const HealthLayout    = lazy(() => import('./pages/health/HealthLayout'))
+const BiomonitorPage  = lazy(() => import('./pages/health/BiomonitorPage'))
+const DomainPage      = lazy(() => import('./pages/health/DomainPage'))
 import { useRituals } from './lib/build-queries'
 import { useHealthPending } from './lib/health-queries'
 
@@ -125,7 +133,15 @@ export default function App() {
   const areas: Area[] = areasQ.data ?? []
   const profileQ = useProfile()
   const profile: Profile = profileQ.data ?? { name: '', role: '', avatar_url: '' }
+  // Routines + debts pro Command Palette (Ctrl+K). Não há cost dedicated:
+  // os hooks compartilham cache com /rotinas e /finance/dividas.
+  const routinesQ = useRoutines()
+  const routines = routinesQ.data ?? []
+  const debtsQ = useDebts()
+  const debts = debtsQ.data ?? []
   const appInv = useAppInvalidator()
+  // Command Palette state — abre via Ctrl/Cmd+K (listener global abaixo).
+  const [paletteOpen, setPaletteOpen] = useState(false)
   // Shim setters: child components passam `set*` como callback (onCreate,
   // onDelete, etc) e fazem `setX(prev => prev.map(...))` pra updates locais.
   // Aqui o argumento é descartado e disparamos invalidação + tabSync —
@@ -250,6 +266,21 @@ export default function App() {
   useEffect(() => {
     setIsHydrated(true)
     refreshActiveSession()
+  }, [])
+
+  // Command Palette — atalho global Ctrl+K (Windows/Linux) / Cmd+K (Mac).
+  // Toggle (não só abrir) pra mesmo atalho fechar quando já está aberto.
+  // preventDefault em qualquer caso pra não acionar atalho nativo do browser
+  // (alguns navegadores usam Ctrl+K pra focar a barra de busca).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const isPaletteKey = (e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')
+      if (!isPaletteKey) return
+      e.preventDefault()
+      setPaletteOpen(o => !o)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   // Cross-tab sync: quando outra aba muta dados do app, invalida cache local.
@@ -542,7 +573,7 @@ export default function App() {
     const overdueTasks = tasks.filter(t =>
       !t.done && t.scheduled_date && t.scheduled_date < todayYmd
     ).length
-    const archived = projects.filter(p => p.archived_at).length
+    const archived = archivedIdeas.length
     return {
       '/tarefas': { count: overdueTasks, urgent: true },
       '/arquivados': { count: archived, urgent: false },
@@ -1312,6 +1343,21 @@ export default function App() {
             empilhava com refetch do HubFinanceProvider — gerava
             sensação de lentidão entre subpáginas do Hub Finance. */}
         <div>
+        {/* Suspense fallback minimal — só um placeholder discreto enquanto
+            o chunk lazy é baixado. Em rede rápida (cache quente), invisível.
+            Mantém vibe cyber HUD com `// LOADING` em mono. */}
+        <Suspense fallback={
+          <div style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10, fontWeight: 700,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.22em', textTransform: 'uppercase',
+            padding: '48px 8px',
+          }}>
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+            LOADING
+          </div>
+        }>
         <Routes>
           <Route path="/" element={<Navigate to="/dia" replace />} />
           <Route path="/dashboard" element={<DashboardView projects={projects} quests={quests} areas={areas} profile={profile} onProfileUpdate={setProfile} onSelectProject={setSelectedProjectId} />} />
@@ -1335,6 +1381,7 @@ export default function App() {
             <Route path="carteira" element={<CarteiraPage />} />
             <Route path="fixas" element={<FixasPage />} />
             <Route path="dividas" element={<DividasPage />} />
+            <Route path="wishlist" element={<WishlistPage />} />
             <Route path="lancamentos" element={<LancamentosPage />} />
             <Route path="freelas" element={<FreelasPage />} />
             <Route path="categorias" element={<CategoriasPage />} />
@@ -1391,9 +1438,21 @@ export default function App() {
           } />
           <Route path="*" element={<Navigate to="/dia" replace />} />
         </Routes>
+        </Suspense>
         </div>
       </main>
       <DialogPortal />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        areas={areas}
+        projects={projects}
+        quests={quests}
+        tasks={tasks}
+        routines={routines}
+        debts={debts}
+        onSelectProject={setSelectedProjectId}
+      />
     </div>
   )
 }

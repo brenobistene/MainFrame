@@ -11,6 +11,8 @@ Rotas de introspecção (/, /routes, /docs) ficam aqui porque precisam ler
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -32,6 +34,7 @@ from routers import (
     routines,
     status,
     tasks,
+    wishlist,
 )
 from services.calendar_state import (
     GOOGLE_CALENDAR_ENABLED,
@@ -41,18 +44,23 @@ from services.calendar_state import (
 from services.meta import API_VERSION, SERVICE_NAME
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Startup/shutdown handler. Substitui o @app.on_event("startup")
+    (deprecated em FastAPI 0.110+). Pre-yield = startup, post-yield = shutdown.
+    Não temos shutdown logic por enquanto; o `yield` libera o app pra servir."""
+    init_db()
+    init_calendar_service()
+    yield
+
+
 app = FastAPI(
     title="Hub Quest API",
     version=API_VERSION,
     docs_url="/swagger",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
-    init_calendar_service()
 
 
 app.add_middleware(
@@ -76,6 +84,7 @@ app.include_router(profile.router)
 app.include_router(micro_tasks.router)
 app.include_router(calendar.router)
 app.include_router(finance.router)
+app.include_router(wishlist.router)  # Hub Finance · Wishlist (/api/finance/wishlist/*)
 app.include_router(build.router)
 app.include_router(health.router)  # Hub Health (/api/health/*)
 

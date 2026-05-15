@@ -1,10 +1,21 @@
 import { useRef, useState } from 'react'
+import { Link2, PiggyBank } from 'lucide-react'
 import { importNubankCsv, reportApiError } from '../../../api'
-import type { FinAccount, FinImportSummary } from '../../../types'
+import type {
+  FinAccount, FinImportSummary, WishlistMatchGroup,
+  WishlistReservaMatchGroup,
+} from '../../../types'
 import {
   sectionLabel, fieldLabel, inputStyle, primaryButton, ghostButton,
   modalOverlay, modalShell, modalHairline, modalHeader, modalBody,
+  formatBRL,
 } from './styleHelpers'
+import {
+  useVincularReservaTransacao,
+  useVincularWishlistTransacao,
+  useWishlistMatchSuggestions,
+  useWishlistMatchSuggestionsReservas,
+} from '../../../lib/wishlist-queries'
 
 export function ImportCsvModal({ accounts, onClose, onImported }: {
   accounts: FinAccount[]
@@ -131,6 +142,12 @@ export function ImportCsvModal({ accounts, onClose, onImported }: {
                 {result.error_samples.map((s, i) => <div key={i}>· {s}</div>)}
               </div>
             )}
+
+            {/* Sugestões da Wishlist — Fase 3 (items comprados) +
+                Fase 5 (reservas pendentes de confirmação). */}
+            <WishlistMatchBlock />
+            <WishlistReservasMatchBlock />
+
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button onClick={handleClose} style={primaryButton()}>fechar</button>
             </div>
@@ -162,6 +179,360 @@ function SummaryRow({ label, value, color, last }: {
       }}>
         {value}
       </span>
+    </div>
+  )
+}
+
+// ─── Bloco de sugestões da Wishlist (Fase 3) ──────────────────────────────
+
+function WishlistMatchBlock() {
+  const { data: groups = [], isLoading } = useWishlistMatchSuggestions(15)
+
+  if (isLoading) return null
+  if (groups.length === 0) return null
+
+  // Filtra grupos com ao menos uma candidata (sem sentido mostrar item sem matches)
+  const withCandidates = groups.filter(g => g.candidates.length > 0)
+  if (withCandidates.length === 0) return null
+
+  return (
+    <div
+      style={{
+        padding: 12,
+        background: 'rgba(192, 138, 58, 0.06)',
+        border: '1px solid rgba(192, 138, 58, 0.35)',
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Link2 size={11} strokeWidth={2} style={{ color: 'var(--color-warning)' }} />
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10, fontWeight: 700,
+            color: 'var(--color-warning)',
+            letterSpacing: '0.22em', textTransform: 'uppercase',
+          }}
+        >
+          Sugestão da Wishlist · {withCandidates.length} {withCandidates.length === 1 ? 'item aguardando vínculo' : 'items aguardando vínculo'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {withCandidates.map(g => (
+          <WishlistMatchGroup key={g.item.id} group={g} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function WishlistMatchGroup({ group }: { group: WishlistMatchGroup }) {
+  const vincularMut = useVincularWishlistTransacao()
+  const [vinculado, setVinculado] = useState(false)
+
+  async function handleVincular(transacaoId: string) {
+    try {
+      await vincularMut.mutateAsync({
+        id: group.item.id,
+        body: { transacao_id: transacaoId },
+      })
+      setVinculado(true)
+    } catch (err) {
+      reportApiError('WishlistMatchBlock.vincular', err)
+      alert('Erro ao vincular transação.')
+    }
+  }
+
+  if (vinculado) {
+    return (
+      <div
+        style={{
+          padding: '6px 10px',
+          fontFamily: 'var(--font-mono)', fontSize: 10,
+          color: 'var(--color-success)',
+          letterSpacing: '0.14em', textTransform: 'uppercase',
+        }}
+      >
+        ✓ {group.item.nome} vinculado
+      </div>
+    )
+  }
+
+  return (
+    <div
+      style={{
+        padding: 8,
+        background: 'rgba(8, 12, 18, 0.55)',
+        border: '1px solid var(--color-border)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          marginBottom: 6,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 12, fontWeight: 600,
+            color: 'var(--color-text-primary)',
+          }}
+        >
+          {group.item.nome}
+        </span>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: 9,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.14em', textTransform: 'uppercase',
+          }}
+        >
+          {group.item.valor_real != null
+            ? formatBRL(group.item.valor_real)
+            : formatBRL(group.item.valor_estimado)}
+          {group.item.comprado_em && (
+            <> · comprado {fmtBRDate(group.item.comprado_em)}</>
+          )}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {group.candidates.slice(0, 3).map(c => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => handleVincular(c.id)}
+            disabled={vincularMut.isPending}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr auto auto',
+              gap: 10, alignItems: 'center',
+              padding: '6px 10px',
+              background: 'rgba(8, 12, 18, 0.45)',
+              border: '1px solid rgba(143, 191, 211, 0.18)',
+              cursor: vincularMut.isPending ? 'wait' : 'pointer',
+              textAlign: 'left', color: 'inherit',
+              fontFamily: 'inherit',
+              transition: 'all 0.12s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
+              e.currentTarget.style.background = 'rgba(143, 191, 211, 0.08)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.18)'
+              e.currentTarget.style.background = 'rgba(8, 12, 18, 0.45)'
+            }}
+          >
+            <Link2 size={10} strokeWidth={2} style={{ color: 'var(--color-ice-light)' }} />
+            <span
+              style={{
+                fontFamily: 'var(--font-display)', fontSize: 11,
+                color: 'var(--color-text-primary)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {c.descricao}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9,
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+              }}
+            >
+              {fmtBRDate(c.data)}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                color: 'var(--color-text-primary)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {formatBRL(Math.abs(c.valor))}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function fmtBRDate(iso: string): string {
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y.slice(-2)}`
+}
+
+// ─── Reservas pendentes (Fase 5) ──────────────────────────────────────────
+
+const MES_ABBR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+
+function WishlistReservasMatchBlock() {
+  const { data: groups = [], isLoading } = useWishlistMatchSuggestionsReservas(15)
+  if (isLoading) return null
+  const withCandidates = groups.filter(g => g.candidates.length > 0)
+  if (withCandidates.length === 0) return null
+
+  return (
+    <div
+      style={{
+        padding: 12,
+        background: 'rgba(94, 122, 82, 0.06)',
+        border: '1px solid rgba(94, 122, 82, 0.35)',
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <PiggyBank size={11} strokeWidth={2} style={{ color: 'var(--color-success)' }} />
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10, fontWeight: 700,
+            color: 'var(--color-success)',
+            letterSpacing: '0.22em', textTransform: 'uppercase',
+          }}
+        >
+          Reservas pendentes de confirmação · {withCandidates.length}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {withCandidates.map(g => (
+          <ReservaMatchGroupRow key={g.reserva.id} group={g} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ReservaMatchGroupRow({ group }: { group: WishlistReservaMatchGroup }) {
+  const vincularMut = useVincularReservaTransacao()
+  const [vinculado, setVinculado] = useState(false)
+
+  async function handleVincular(txId: string) {
+    try {
+      await vincularMut.mutateAsync({
+        reservaId: group.reserva.id,
+        body: { transacao_id: txId },
+      })
+      setVinculado(true)
+    } catch (err) {
+      reportApiError('ReservaMatchGroupRow.vincular', err)
+      alert('Erro ao vincular reserva.')
+    }
+  }
+
+  if (vinculado) {
+    return (
+      <div
+        style={{
+          padding: '6px 10px',
+          fontFamily: 'var(--font-mono)', fontSize: 10,
+          color: 'var(--color-success)',
+          letterSpacing: '0.14em', textTransform: 'uppercase',
+        }}
+      >
+        ✓ {group.item_nome} · {MES_ABBR[group.reserva.mes - 1]}/{String(group.reserva.ano).slice(-2)} confirmada
+      </div>
+    )
+  }
+
+  const diaLabel = group.reserva.dia ? ` dia ${group.reserva.dia}` : ''
+
+  return (
+    <div
+      style={{
+        padding: 8,
+        background: 'rgba(8, 12, 18, 0.55)',
+        border: '1px solid var(--color-border)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          marginBottom: 6,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 12, fontWeight: 600,
+            color: 'var(--color-text-primary)',
+          }}
+        >
+          {group.item_nome}
+        </span>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: 9,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.14em', textTransform: 'uppercase',
+          }}
+        >
+          {formatBRL(group.reserva.valor_planejado)} · {MES_ABBR[group.reserva.mes - 1]}/{String(group.reserva.ano).slice(-2)}{diaLabel}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {group.candidates.slice(0, 3).map(c => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => handleVincular(c.id)}
+            disabled={vincularMut.isPending}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr auto auto',
+              gap: 10, alignItems: 'center',
+              padding: '6px 10px',
+              background: 'rgba(8, 12, 18, 0.45)',
+              border: '1px solid rgba(94, 122, 82, 0.18)',
+              cursor: vincularMut.isPending ? 'wait' : 'pointer',
+              textAlign: 'left', color: 'inherit',
+              fontFamily: 'inherit',
+              transition: 'all 0.12s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'rgba(94, 122, 82, 0.55)'
+              e.currentTarget.style.background = 'rgba(94, 122, 82, 0.08)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'rgba(94, 122, 82, 0.18)'
+              e.currentTarget.style.background = 'rgba(8, 12, 18, 0.45)'
+            }}
+          >
+            <Link2 size={10} strokeWidth={2} style={{ color: 'var(--color-success)' }} />
+            <span
+              style={{
+                fontFamily: 'var(--font-display)', fontSize: 11,
+                color: 'var(--color-text-primary)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {c.descricao}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9,
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+              }}
+            >
+              {fmtBRDate(c.data)}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                color: 'var(--color-text-primary)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {formatBRL(Math.abs(c.valor))}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

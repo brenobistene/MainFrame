@@ -28,6 +28,9 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+.coverage
+.coverage.*
+htmlcov/
 
 # Python DB (local SQLite)
 *.db
@@ -56,3 +59,4 @@ apps/web/public/*.personal.*
 *.md
 !README.md
 !INSTALL.md
+!TESTING.md

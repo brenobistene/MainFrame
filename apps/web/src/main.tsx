@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import './index.css'
 import App from './App.tsx'
+import { SaveIndicator } from './components/ui/SaveIndicator'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,10 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <App />
       </BrowserRouter>
+      {/* SaveIndicator global — toast no canto inferior direito mostrando
+          "salvando…" / "salvo ✓" pra QUALQUER mutation do app. Plugado
+          uma vez aqui; cobre todas as surfaces que já têm auto-save. */}
+      <SaveIndicator />
       {showDevtools && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   </StrictMode>,

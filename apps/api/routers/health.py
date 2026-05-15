@@ -107,8 +107,75 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
             _validate_scale_1_5(i, "intensidade")
 
     elif template == "refeicao_2modos":
-        # 2 modos: dieta (item_id + comeu) ou livre (item_id null + descricao)
-        if item_id is None:
+        # Aceita 3 formatos:
+        #   1. Agrupado (novo): { refeicoes: [{tipo, ...}, ...] }
+        #      - tipo='planned': { item_id, comeu: 'sim'|'parcial'|'nao', horario? }
+        #      - tipo='free':    { descricao, horario }   (horario obrigatório)
+        #   2. Legado dieta:  { comeu: bool } com item_id no record
+        #   3. Legado livre:  { descricao } com item_id=null no record
+        refeicoes = payload.get("refeicoes")
+        if refeicoes is not None:
+            if not isinstance(refeicoes, list):
+                raise HTTPException(422, detail="refeicoes deve ser lista")
+            for i, ref in enumerate(refeicoes):
+                if not isinstance(ref, dict):
+                    raise HTTPException(422, detail=f"refeicoes[{i}] deve ser objeto")
+                tipo = ref.get("tipo")
+                if tipo not in ("planned", "free"):
+                    raise HTTPException(
+                        422,
+                        detail=f"refeicoes[{i}].tipo deve ser 'planned' ou 'free'",
+                    )
+                horario = ref.get("horario")
+                if horario is not None:
+                    if not isinstance(horario, str) or len(horario) != 5 or horario[2] != ":":
+                        raise HTTPException(
+                            422,
+                            detail=f"refeicoes[{i}].horario deve ser HH:MM",
+                        )
+                    try:
+                        hh = int(horario[0:2])
+                        mm = int(horario[3:5])
+                        if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+                            raise ValueError
+                    except ValueError:
+                        raise HTTPException(
+                            422,
+                            detail=f"refeicoes[{i}].horario inválido",
+                        )
+                if tipo == "planned":
+                    ref_item_id = ref.get("item_id")
+                    if not isinstance(ref_item_id, int) or isinstance(ref_item_id, bool):
+                        raise HTTPException(
+                            422,
+                            detail=f"refeicoes[{i}].item_id obrigatório (int) pra tipo='planned'",
+                        )
+                    comeu = ref.get("comeu")
+                    if comeu not in ("sim", "parcial", "nao"):
+                        raise HTTPException(
+                            422,
+                            detail=f"refeicoes[{i}].comeu deve ser 'sim'|'parcial'|'nao'",
+                        )
+                else:  # tipo == 'free'
+                    desc = ref.get("descricao")
+                    if not isinstance(desc, str) or not desc.strip():
+                        raise HTTPException(
+                            422,
+                            detail=f"refeicoes[{i}].descricao obrigatória (não-vazia)",
+                        )
+                    if horario is None:
+                        raise HTTPException(
+                            422,
+                            detail=f"refeicoes[{i}].horario obrigatório pra tipo='free'",
+                        )
+            # No formato agrupado, item_id do record deve ser null (info está no payload)
+            if item_id is not None:
+                raise HTTPException(
+                    422,
+                    detail="modo agrupado (refeicoes[]) requer item_id=null no record",
+                )
+        elif item_id is None:
+            # Legado livre: { descricao }
             desc = payload.get("descricao")
             if not isinstance(desc, str) or not desc.strip():
                 raise HTTPException(
@@ -116,6 +183,7 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
                     detail="modo livre (sem item_id) exige descricao não-vazia",
                 )
         else:
+            # Legado dieta: { comeu: bool }
             comeu = payload.get("comeu", True)
             if not isinstance(comeu, bool):
                 raise HTTPException(422, detail="comeu deve ser bool")
@@ -149,6 +217,19 @@ def _validate_payload(template: str, payload: dict[str, Any], item_id: Optional[
                 v_ev = ev.get("vontade")
                 if v_ev is not None:
                     _validate_scale_1_5(v_ev, f"eventos[{i}].vontade")
+                # Nota livre opcional por evento (string, max 500 chars).
+                nota_ev = ev.get("nota")
+                if nota_ev is not None:
+                    if not isinstance(nota_ev, str):
+                        raise HTTPException(
+                            422,
+                            detail=f"eventos[{i}].nota deve ser string ou null",
+                        )
+                    if len(nota_ev) > 500:
+                        raise HTTPException(
+                            422,
+                            detail=f"eventos[{i}].nota muito longa (máx 500 caracteres)",
+                        )
         else:
             q = payload.get("quantidade")
             if not isinstance(q, (int, float)) or isinstance(q, bool) or q < 0:
@@ -761,3 +842,137 @@ def list_pending():
     """
     with get_conn() as conn:
         return compute_pending(conn)
+
+
+@router.post("/admin/migrate-refeicao-2modos")
+def migrate_refeicao_2modos(domain_slug: Optional[str] = None):
+    """Consolida registros legacy de alimentação em formato agrupado.
+
+    Pra cada domain com template `refeicao_2modos` (ou só `domain_slug` se passado):
+      - Agrupa records do mesmo (domain, data) que estão no formato legacy
+        ({comeu} ou {descricao})
+      - Cria UM record novo com payload `{refeicoes: [...]}` agregando todos
+      - Deleta os legados
+      - `data` do agrupado = data original; `horario` = horário do primeiro evento;
+        `item_id` = null; `notas` = concat das notas individuais (separadas por ` · `)
+
+    Idempotente: records que já estão no novo formato (`refeicoes[]`) são
+    ignorados. Mistura no mesmo dia (alguns novos, outros legados) é tratada
+    consolidando os legados num novo grupo separado.
+
+    Retorna sumário: { domains_processed, days_migrated, records_consolidated,
+                       records_deleted }
+    """
+    summary = {
+        "domains_processed": 0,
+        "days_migrated": 0,
+        "records_consolidated": 0,
+        "records_deleted": 0,
+    }
+    with get_conn() as conn:
+        # Lista domains alvo
+        if domain_slug:
+            domain_rows = conn.execute(
+                "SELECT slug, template FROM health_domain WHERE slug = ? AND template = 'refeicao_2modos'",
+                (domain_slug,),
+            ).fetchall()
+        else:
+            domain_rows = conn.execute(
+                "SELECT slug, template FROM health_domain WHERE template = 'refeicao_2modos'"
+            ).fetchall()
+        if not domain_rows:
+            return summary
+        for d in domain_rows:
+            summary["domains_processed"] += 1
+            # Datas únicas com registros nesse domain
+            datas = conn.execute(
+                "SELECT DISTINCT data FROM health_record WHERE domain_slug = ? ORDER BY data",
+                (d["slug"],),
+            ).fetchall()
+            for data_row in datas:
+                data = data_row["data"]
+                # Records do dia
+                records = conn.execute(
+                    "SELECT id, item_id, horario, payload, notas, criado_em "
+                    "FROM health_record WHERE domain_slug = ? AND data = ? "
+                    "ORDER BY COALESCE(horario, '99:99'), id",
+                    (d["slug"], data),
+                ).fetchall()
+                # Separa legados de novos formatos
+                legacy_records = []
+                for r in records:
+                    try:
+                        p = json.loads(r["payload"]) if isinstance(r["payload"], str) else (r["payload"] or {})
+                    except (json.JSONDecodeError, TypeError):
+                        p = {}
+                    if isinstance(p.get("refeicoes"), list):
+                        continue  # já novo formato, pula
+                    legacy_records.append((r, p))
+                if not legacy_records:
+                    continue
+                # Constrói refeicoes[] agregado
+                refeicoes = []
+                notas_collected = []
+                first_horario = None
+                last_at = None
+                for r, p in legacy_records:
+                    horario_evt = r["horario"]
+                    if first_horario is None and horario_evt:
+                        first_horario = horario_evt
+                    if r["item_id"] is None:
+                        # Legado livre
+                        desc = p.get("descricao", "").strip()
+                        if desc:
+                            ref = {"tipo": "free", "descricao": desc}
+                            if horario_evt:
+                                ref["horario"] = horario_evt
+                            else:
+                                # Free precisa de horario; fallback pra 12:00
+                                ref["horario"] = "12:00"
+                            refeicoes.append(ref)
+                    else:
+                        # Legado dieta
+                        comeu_bool = p.get("comeu", True)
+                        ref = {
+                            "tipo": "planned",
+                            "item_id": r["item_id"],
+                            "comeu": "sim" if comeu_bool else "nao",
+                        }
+                        if horario_evt:
+                            ref["horario"] = horario_evt
+                        refeicoes.append(ref)
+                    if r["notas"]:
+                        notas_collected.append(r["notas"])
+                    if r["criado_em"] and (last_at is None or r["criado_em"] > last_at):
+                        last_at = r["criado_em"]
+                if not refeicoes:
+                    continue
+                # Cria novo record consolidado
+                payload_new = {"refeicoes": refeicoes}
+                notas_final = " · ".join(notas_collected) if notas_collected else None
+                now = utcnow_iso_z()
+                conn.execute(
+                    "INSERT INTO health_record (domain_slug, item_id, data, horario, payload, notas, criado_em, atualizado_em) "
+                    "VALUES (?, NULL, ?, ?, ?, ?, ?, ?)",
+                    (
+                        d["slug"],
+                        data,
+                        first_horario,
+                        json.dumps(payload_new),
+                        notas_final,
+                        last_at or now,
+                        now,
+                    ),
+                )
+                # Deleta os legados
+                ids_to_delete = [r["id"] for r, _ in legacy_records]
+                placeholders = ",".join("?" for _ in ids_to_delete)
+                conn.execute(
+                    f"DELETE FROM health_record WHERE id IN ({placeholders})",
+                    ids_to_delete,
+                )
+                summary["days_migrated"] += 1
+                summary["records_consolidated"] += 1
+                summary["records_deleted"] += len(ids_to_delete)
+        conn.commit()
+    return summary

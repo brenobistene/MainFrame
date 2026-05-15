@@ -12,7 +12,7 @@ import type {
   BuildProjectAlignment, BuildProjectClassification,
   BuildSprint, BuildSprintCreate, BuildSprintUpdate, BuildGoalDependency,
   BuildRitual, BuildRitualCadencia, BuildRitualUpdate, BuildRitualSession,
-  BuildRitualSessionCreate, BuildRitualScheduleItem,
+  BuildRitualSessionCreate, BuildRitualSessionUpdate, BuildRitualScheduleItem,
   BuildGuardrail, BuildGuardrailCreate, BuildGuardrailUpdate, BuildGuardrailEvaluation,
   HealthDomain, HealthDomainCreate, HealthDomainUpdate,
   HealthItem, HealthItemCreate, HealthItemUpdate,
@@ -20,6 +20,17 @@ import type {
   HealthSettings, HealthSettingsUpdate,
   HealthMetricMeta, HealthMetricValue,
   HealthPendingItem,
+  WishlistCategoria, WishlistCategoriaCreate, WishlistCategoriaUpdate,
+  WishlistItem, WishlistItemCreate, WishlistItemUpdate,
+  WishlistLink, WishlistLinkCreate, WishlistLinkUpdate,
+  WishlistReserva, WishlistReservaInput,
+  WishlistStatus,
+  WishlistComprarBody, WishlistDesistirBody, WishlistReabrirBody,
+  WishlistVincularBody, WishlistReorderItem,
+  WishlistSettings, WishlistSettingsUpdate,
+  WishlistSummary, WishlistMonthReservas,
+  WishlistTransactionCandidate, WishlistMatchGroup,
+  WishlistReservaVincularBody, WishlistReservaMatchGroup,
 } from './types'
 
 // URL base do backend. Default aponta pro backend local padrão; pode ser
@@ -34,7 +45,7 @@ export function reportApiError(context: string, err: unknown): void {
   console.warn(`[api] ${context} falhou:`, err)
 }
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`)
   if (!res.ok) throw new Error(`API error ${res.status}`)
   return res.json()
@@ -1350,6 +1361,25 @@ export const createBuildRitualSession = (
     body: JSON.stringify(body),
   })
 
+export const updateBuildRitualSession = (
+  cadencia: BuildRitualCadencia,
+  sessionId: string,
+  patch: BuildRitualSessionUpdate,
+) =>
+  jsonFetch<BuildRitualSession>(
+    `/api/build/rituals/${cadencia}/sessions/${sessionId}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  )
+
+export const deleteBuildRitualSession = (
+  cadencia: BuildRitualCadencia,
+  sessionId: string,
+) =>
+  jsonFetch<void>(
+    `/api/build/rituals/${cadencia}/sessions/${sessionId}`,
+    { method: 'DELETE' },
+  )
+
 export const fetchBuildRitualSchedule = (from: string, to: string) =>
   get<BuildRitualScheduleItem[]>(
     `/api/build/rituals/schedule?from=${from}&to=${to}`,
@@ -1509,3 +1539,266 @@ export const fetchHealthMetricValue = (slug: string, itemId?: number) => {
 // Pendências (lembretes + ausência)
 export const fetchHealthPending = () =>
   get<HealthPendingItem[]>('/api/health/pending')
+
+// Admin — migração one-shot de registros legacy de alimentação pra formato agrupado
+export interface HealthMigrateRefeicaoSummary {
+  domains_processed: number
+  days_migrated: number
+  records_consolidated: number
+  records_deleted: number
+}
+export const migrateRefeicao2modos = () =>
+  jsonFetch<HealthMigrateRefeicaoSummary>(
+    '/api/health/admin/migrate-refeicao-2modos',
+    { method: 'POST' },
+  )
+
+// ─── Wishlist (submódulo do Hub Finance) ───────────────────────────────────
+// Doc completo em docs/hub-finance/wishlist-PLAN.md.
+
+// Categorias
+export const fetchWishlistCategorias = () =>
+  get<WishlistCategoria[]>('/api/finance/wishlist/categorias')
+
+export async function createWishlistCategoria(body: WishlistCategoriaCreate): Promise<WishlistCategoria> {
+  return jsonOrThrow<WishlistCategoria>(await fetch(`${BASE}/api/finance/wishlist/categorias`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function updateWishlistCategoria(
+  id: string,
+  patch: WishlistCategoriaUpdate,
+): Promise<WishlistCategoria> {
+  return jsonOrThrow<WishlistCategoria>(await fetch(`${BASE}/api/finance/wishlist/categorias/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }))
+}
+
+export async function deleteWishlistCategoria(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/finance/wishlist/categorias/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+}
+
+// Items
+export const fetchWishlistItems = (params?: {
+  status?: WishlistStatus
+  categoriaId?: string
+  includeDone?: boolean
+}) => {
+  const q = new URLSearchParams()
+  if (params?.status) q.set('status', params.status)
+  if (params?.categoriaId) q.set('categoria_id', params.categoriaId)
+  if (params?.includeDone) q.set('include_done', 'true')
+  const qs = q.toString()
+  return get<WishlistItem[]>(`/api/finance/wishlist/items${qs ? `?${qs}` : ''}`)
+}
+
+export const fetchWishlistItem = (id: string) =>
+  get<WishlistItem>(`/api/finance/wishlist/items/${id}`)
+
+export async function createWishlistItem(body: WishlistItemCreate): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function updateWishlistItem(id: string, patch: WishlistItemUpdate): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }))
+}
+
+export async function deleteWishlistItem(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/finance/wishlist/items/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+}
+
+export async function reorderWishlistItems(payload: WishlistReorderItem[]): Promise<void> {
+  const res = await fetch(`${BASE}/api/finance/wishlist/items/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+}
+
+// Ações de fluxo
+export async function comprarWishlistItem(id: string, body: WishlistComprarBody): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items/${id}/comprar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function desistirWishlistItem(id: string, body: WishlistDesistirBody = {}): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items/${id}/desistir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function reabrirWishlistItem(id: string, body: WishlistReabrirBody = {}): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items/${id}/reabrir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function vincularWishlistTransacao(id: string, body: WishlistVincularBody): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items/${id}/transacao`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export const fetchWishlistAguardandoVinculo = () =>
+  get<WishlistItem[]>('/api/finance/wishlist/items/aguardando-vinculo')
+
+// Links
+export async function createWishlistLink(itemId: string, body: WishlistLinkCreate): Promise<WishlistLink> {
+  return jsonOrThrow<WishlistLink>(await fetch(`${BASE}/api/finance/wishlist/items/${itemId}/links`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export async function updateWishlistLink(linkId: string, patch: WishlistLinkUpdate): Promise<WishlistLink> {
+  return jsonOrThrow<WishlistLink>(await fetch(`${BASE}/api/finance/wishlist/links/${linkId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }))
+}
+
+export async function deleteWishlistLink(linkId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/finance/wishlist/links/${linkId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+}
+
+// Reservas (cronograma)
+export const fetchWishlistReservas = (itemId: string) =>
+  get<WishlistReserva[]>(`/api/finance/wishlist/items/${itemId}/reservas`)
+
+export async function replaceWishlistReservas(
+  itemId: string,
+  cronograma: WishlistReservaInput[],
+): Promise<WishlistItem> {
+  return jsonOrThrow<WishlistItem>(await fetch(`${BASE}/api/finance/wishlist/items/${itemId}/reservas`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cronograma),
+  }))
+}
+
+export async function deleteWishlistReserva(itemId: string, ano: number, mes: number): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/finance/wishlist/items/${itemId}/reservas/${ano}/${mes}`,
+    { method: 'DELETE' },
+  )
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+}
+
+// Agregados
+export const fetchWishlistSummary = () =>
+  get<WishlistSummary>('/api/finance/wishlist/summary')
+
+export const fetchWishlistReservasMes = (year: number, month: number) =>
+  get<WishlistMonthReservas>(`/api/finance/wishlist/reservas/mes?year=${year}&month=${month}`)
+
+// Settings
+export const fetchWishlistSettings = () =>
+  get<WishlistSettings>('/api/finance/wishlist/settings')
+
+export async function updateWishlistSettings(patch: WishlistSettingsUpdate): Promise<WishlistSettings> {
+  return jsonOrThrow<WishlistSettings>(await fetch(`${BASE}/api/finance/wishlist/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }))
+}
+
+// Match transação ↔ item (Fase 3)
+export const fetchWishlistMatchCandidates = (params: {
+  valor: number
+  data: string
+  diasJanela?: number
+  limit?: number
+}) => {
+  const q = new URLSearchParams()
+  q.set('valor', String(params.valor))
+  q.set('data', params.data)
+  if (params.diasJanela !== undefined) q.set('dias_janela', String(params.diasJanela))
+  if (params.limit !== undefined) q.set('limit', String(params.limit))
+  return get<WishlistTransactionCandidate[]>(
+    `/api/finance/wishlist/match-candidates?${q.toString()}`,
+  )
+}
+
+export const fetchWishlistMatchSuggestions = (params?: {
+  diasJanela?: number
+  limitPerItem?: number
+}) => {
+  const q = new URLSearchParams()
+  if (params?.diasJanela !== undefined) q.set('dias_janela', String(params.diasJanela))
+  if (params?.limitPerItem !== undefined) q.set('limit_per_item', String(params.limitPerItem))
+  const qs = q.toString()
+  return get<WishlistMatchGroup[]>(
+    `/api/finance/wishlist/match-suggestions${qs ? `?${qs}` : ''}`,
+  )
+}
+
+// Fase 5 — vínculo reserva ↔ transação
+export const fetchReservaMatchCandidates = (params: {
+  reservaId: string
+  diasJanela?: number
+  limit?: number
+}) => {
+  const q = new URLSearchParams()
+  if (params.diasJanela !== undefined) q.set('dias_janela', String(params.diasJanela))
+  if (params.limit !== undefined) q.set('limit', String(params.limit))
+  const qs = q.toString()
+  return get<WishlistTransactionCandidate[]>(
+    `/api/finance/wishlist/reservas/${params.reservaId}/match-candidates${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export async function vincularReservaTransacao(
+  reservaId: string,
+  body: WishlistReservaVincularBody,
+): Promise<unknown> {
+  return jsonOrThrow(await fetch(
+    `${BASE}/api/finance/wishlist/reservas/${reservaId}/transacao`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  ))
+}
+
+export const fetchWishlistMatchSuggestionsReservas = (params?: {
+  diasJanela?: number
+  limitPerReserva?: number
+}) => {
+  const q = new URLSearchParams()
+  if (params?.diasJanela !== undefined) q.set('dias_janela', String(params.diasJanela))
+  if (params?.limitPerReserva !== undefined) q.set('limit_per_reserva', String(params.limitPerReserva))
+  const qs = q.toString()
+  return get<WishlistReservaMatchGroup[]>(
+    `/api/finance/wishlist/match-suggestions-reservas${qs ? `?${qs}` : ''}`,
+  )
+}

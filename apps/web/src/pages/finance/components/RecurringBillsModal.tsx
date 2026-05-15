@@ -112,7 +112,7 @@ export function RecurringBillsModal({
       <div onClick={onClose} style={modalOverlay()}>
         <div onClick={e => e.stopPropagation()} style={{
           ...modalShell(),
-          minWidth: 620, maxWidth: 760, maxHeight: '85vh',
+          width: 'min(760px, calc(100vw - 16px))', maxHeight: '85vh',
           display: 'flex', flexDirection: 'column',
         }}>
           <div style={modalHairline} />

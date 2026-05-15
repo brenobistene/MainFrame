@@ -37,7 +37,7 @@ export function ClientsManagerModal({ onClose, onChanged }: {
       <div onClick={onClose} style={modalOverlay()}>
         <div onClick={e => e.stopPropagation()} style={{
           ...modalShell(),
-          minWidth: 560, maxWidth: 720, maxHeight: '85vh',
+          width: 'min(720px, calc(100vw - 16px))', maxHeight: '85vh',
           display: 'flex', flexDirection: 'column',
         }}>
           <div style={modalHairline} />

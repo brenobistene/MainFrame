@@ -16,8 +16,15 @@ def parse_iso(dt: str) -> datetime:
 
 
 def utcnow_iso_z() -> str:
-    """UTC agora em ISO com sufixo Z — padrão de armazenamento do app."""
-    return datetime.utcnow().isoformat() + "Z"
+    """UTC agora em ISO com sufixo Z — padrão de armazenamento do app.
+
+    Usa `datetime.now(timezone.utc)` em vez do antigo `datetime.utcnow()`
+    (deprecated em 3.12+). O resultado é tz-aware, então fazemos `.replace(
+    tzinfo=None)` antes de serializar pra preservar o formato sem offset
+    `+00:00` no output — o `Z` final indica UTC. Mantém compat com rows
+    legados parsados por parse_iso.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
 
 
 def calculate_quest_duration(conn, quest_id: str) -> int:

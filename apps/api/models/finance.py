@@ -369,11 +369,12 @@ class RecurringBillStatusItem(BaseModel):
 
 class MonthCommitment(BaseModel):
     """Item unificado de compromisso do mês — junta recurring bills, debt
-    parcelas, freela parcelas e faturas de cartão em uma view única
-    ordenada por dia. Status é inferido conforme a fonte (bill: tx-match;
-    debt/freela: parcela.status; invoice: status do fin_invoice + check
-    de vencimento vs hoje)."""
-    kind: str  # 'bill' | 'debt_parcela' | 'freela_parcela' | 'invoice'
+    parcelas, freela parcelas, faturas de cartão e reservas de wishlist
+    em uma view única ordenada por dia. Status é inferido conforme a fonte
+    (bill: tx-match; debt/freela: parcela.status; invoice: status do
+    fin_invoice + check de vencimento vs hoje; wishlist: sempre 'pendente'
+    — reserva é virtual e passiva)."""
+    kind: str  # 'bill' | 'debt_parcela' | 'freela_parcela' | 'invoice' | 'wishlist'
     id: str  # bill_id, parcela_id ou invoice_id (pra UI dedup)
     descricao: str
     sub_descricao: Optional[str] = None  # ex: "parcela 3/12" ou "salário/recorrente"
@@ -397,6 +398,8 @@ class MonthCommitment(BaseModel):
     invoice_id: Optional[str] = None
     cartao_id: Optional[str] = None
     cartao_nome: Optional[str] = None
+    # Wishlist: id do item pra navegar até /wishlist e abrir o cronograma.
+    wishlist_item_id: Optional[str] = None
 
 
 class MonthCommitmentsResponse(BaseModel):

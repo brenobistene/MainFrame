@@ -12,15 +12,16 @@ import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import {
   Search, Target, Folder, Layers, CheckSquare, Repeat,
-  Wallet, Calendar as CalendarIcon, FileText, X,
+  Wallet, Calendar as CalendarIcon, FileText, X, Heart, Plus,
 } from 'lucide-react'
 import type {
   Area, Project, Quest, Task, Routine, FinDebt,
 } from '../types'
+import { useWishlistItems } from '../lib/wishlist-queries'
 
 interface CommandItem {
   id: string
-  type: 'quest' | 'project' | 'area' | 'task' | 'routine' | 'debt' | 'page'
+  type: 'quest' | 'project' | 'area' | 'task' | 'routine' | 'debt' | 'page' | 'wishlist' | 'action'
   title: string
   subtitle?: string
   /** Route to navigate to. Optional side-effect on click. */
@@ -48,6 +49,10 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
+  // Wishlist items ativos (desejado/poupando) — só fetch quando palette
+  // está aberto, evita request global no boot da app.
+  const { data: wishlistItems = [] } = useWishlistItems({ includeDone: false })
+
   // Reset query/active quando abre
   useEffect(() => {
     if (open) {
@@ -69,8 +74,11 @@ export function CommandPalette({
       { id: 'page:rotinas', type: 'page', title: 'Rotinas', subtitle: 'Hábitos', navigate: () => navigate('/rotinas') },
       { id: 'page:micro-dump', type: 'page', title: 'Dump', subtitle: 'Captura rápida', navigate: () => navigate('/micro-dump') },
       { id: 'page:hub-finance', type: 'page', title: 'Hub Finance', subtitle: 'Finanças', navigate: () => navigate('/hub-finance') },
+      { id: 'page:wishlist', type: 'page', title: 'Wishlist', subtitle: 'Lista de desejos', navigate: () => navigate('/hub-finance/wishlist') },
       { id: 'page:health', type: 'page', title: 'Hub Health', subtitle: 'Saúde', navigate: () => navigate('/health') },
       { id: 'page:build', type: 'page', title: '/Build', subtitle: 'Estratégia', navigate: () => navigate('/build') },
+      // Ações — atalhos pra criar. Sufixo `+` ajuda o usuário a achar.
+      { id: 'action:new-wishlist', type: 'action', title: '+ Item wishlist', subtitle: 'Adicionar à lista de desejos', navigate: () => navigate('/hub-finance/wishlist?new=1') },
     ]
     for (const a of areas) {
       items.push({
@@ -130,8 +138,17 @@ export function CommandPalette({
         navigate: () => navigate('/hub-finance/dividas'),
       })
     }
+    for (const w of wishlistItems) {
+      items.push({
+        id: `wishlist:${w.id}`,
+        type: 'wishlist',
+        title: w.nome,
+        subtitle: w.status === 'poupando' ? 'Wishlist · poupando' : 'Wishlist',
+        navigate: () => navigate('/hub-finance/wishlist'),
+      })
+    }
     return items
-  }, [areas, projects, quests, tasks, routines, debts, navigate, onSelectProject])
+  }, [areas, projects, quests, tasks, routines, debts, wishlistItems, navigate, onSelectProject])
 
   // Filter por query: case-insensitive substring no title e subtitle
   const filtered = useMemo(() => {
@@ -356,6 +373,8 @@ function iconFor(type: CommandItem['type']) {
     case 'task': return <CheckSquare size={13} strokeWidth={1.8} />
     case 'routine': return <Repeat size={13} strokeWidth={1.8} />
     case 'debt': return <Wallet size={13} strokeWidth={1.8} />
+    case 'wishlist': return <Heart size={13} strokeWidth={1.8} />
+    case 'action': return <Plus size={13} strokeWidth={1.8} />
     default: return <CalendarIcon size={13} strokeWidth={1.8} />
   }
 }

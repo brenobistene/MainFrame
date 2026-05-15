@@ -20,7 +20,7 @@ import { DayPeriodsEditModal } from '../components/DayPeriodsEditModal'
 import { PlannedItemRow } from '../components/PlannedItemRow'
 import { modalHeader } from './finance/components/styleHelpers'
 import { PageShell, TechId, DataReadoutFrame } from '../components/ui/CyberShell'
-import { RitualNextCard } from '../components/RitualNextCard'
+import { DiaPendenciasBlock } from '../components/DiaPendenciasBlock'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -743,12 +743,11 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
       }
     >
 
-      {/* Surface excepcional do estrategista no executor: só aparece quando
-          há ritual atrasado OU agendado pra hoje. Default sumido — operação
-          continua limpa. Decisão #15 de docs/metas-de-vida/PLAN.md. */}
-      <div style={{ marginBottom: 12 }}>
-        <RitualNextCard urgentOnly />
-      </div>
+      {/* PENDÊNCIAS HOJE — unifica rituals atrasados/de hoje (com player) +
+          pendências do Hub Health (sem player, click abre RegisterModal).
+          Substitui o antigo `RitualNextCard urgentOnly` que era só link.
+          Some quando não há nada pendente. */}
+      <DiaPendenciasBlock />
 
       {overdueTasks.length > 0 && (
         <OverdueTasksBanner
@@ -938,6 +937,19 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
                 [period]: prev[period].filter(id => id !== itemId),
               }))
             }}
+            onMoveToPeriod={(itemId, target) => {
+              // Same logic do onDrop entre períodos — remove de qualquer
+              // turno e adiciona ao target. Permite mover sem drag em touch.
+              setDayPlan(prev => {
+                if (prev[target].includes(itemId)) return prev
+                return {
+                  morning:   prev.morning.filter(id => id !== itemId),
+                  afternoon: prev.afternoon.filter(id => id !== itemId),
+                  evening:   prev.evening.filter(id => id !== itemId),
+                  [target]: [...prev[target].filter(id => id !== itemId), itemId],
+                } as any
+              })
+            }}
             onOpenPlanner={() => setShowPlanner(true)}
             onOpenQuest={(q) => {
               // Clique numa quest (subtask) → abre o PROJETO PAI em
@@ -1006,7 +1018,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
 function PeriodSection({
   period, dayPeriods, dayPlan, projects, quests, allTasks, routines, doneRoutineIds,
   areas, activeSession, delivsByProject, todayIsoForTasks, nowMin, migratedFrom,
-  onSessionUpdate, onRemoveFromPlan, onOpenPlanner, onOpenQuest,
+  onSessionUpdate, onRemoveFromPlan, onMoveToPeriod, onOpenPlanner, onOpenQuest,
 }: {
   period: 'morning' | 'afternoon' | 'evening'
   dayPeriods: DayPeriods
@@ -1027,6 +1039,8 @@ function PeriodSection({
   migratedFrom: Record<string, 'morning' | 'afternoon' | 'evening'>
   onSessionUpdate: () => void
   onRemoveFromPlan: (itemId: string) => void
+  /** Fallback touch pra drag-and-drop. */
+  onMoveToPeriod: (itemId: string, target: 'morning' | 'afternoon' | 'evening') => void
   onOpenPlanner: () => void
   onOpenQuest: (q: Quest) => void
 }) {
@@ -1187,6 +1201,8 @@ function PeriodSection({
                 activeSession={activeSession}
                 onSessionUpdate={onSessionUpdate}
                 onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
+                currentPeriod={period}
+                onMoveToPeriod={(target) => onMoveToPeriod(item.id, target)}
                 target={todayIsoForTasks}
                 parentTitle={parentTitle}
                 deliverableTitle={deliverableTitle}

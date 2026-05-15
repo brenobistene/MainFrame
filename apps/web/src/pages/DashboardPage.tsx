@@ -597,6 +597,9 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           alignItems: 'center',
           gap: 'var(--space-5)',
           minHeight: 56,
+          // Mobile: deixa o stack metadata cair pra próxima linha quando
+          // não cabe ao lado da identidade.
+          flexWrap: 'wrap',
         }}
       >
         {/* TAB MARKER — pequeno indicador ice estendendo abaixo do title,
@@ -832,12 +835,14 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                   {vereditoHeadline}
                 </div>
 
-                {/* STATS GRID — pares LABEL : VALUE alinhados estilo scoreboard */}
+                {/* STATS GRID — pares LABEL : VALUE alinhados estilo scoreboard.
+                    auto-fit + minmax(160px) colapsa pra 1 coluna em mobile
+                    sem quebrar visual. */}
                 <div
                   style={{
                     marginTop: 22,
                     display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
                     gap: '14px 32px',
                     paddingTop: 16,
                     borderTop: '1px solid var(--color-divider)',

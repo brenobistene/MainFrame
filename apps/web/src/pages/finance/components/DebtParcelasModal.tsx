@@ -162,7 +162,7 @@ export function DebtParcelasModal({
       <div onClick={onClose} style={modalOverlay()}>
         <div onClick={e => e.stopPropagation()} style={{
           ...modalShell(),
-          minWidth: 720, maxWidth: 880, maxHeight: '88vh',
+          width: 'min(880px, calc(100vw - 16px))', maxHeight: '88vh',
           display: 'flex', flexDirection: 'column',
         }}>
           <div style={modalHairline} />

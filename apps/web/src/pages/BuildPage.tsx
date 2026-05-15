@@ -14,6 +14,7 @@
  * docs/design-system/STYLES.md §3.2.
  */
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Pencil, Plus, X, Check, Archive, History, Star, Target, AlertTriangle, Calendar,
@@ -29,8 +30,11 @@ import {
   useClassifyProject,
   useCreateGoal,
   useCreateGoalGuardrail,
+  useUpdateGoalGuardrail,
   useCreatePrinciple,
   useCreateRitualSession,
+  useUpdateRitualSession,
+  useDeleteRitualSession,
   useCreateSprint,
   useDeleteGoalGuardrail,
   useDeletePrinciple,
@@ -74,6 +78,7 @@ import type {
   BuildProjectClassification,
   BuildRitual,
   BuildRitualCadencia,
+  BuildRitualSession,
   BuildSprint,
   BuildVision,
   HealthMetricMeta,
@@ -85,21 +90,38 @@ import type {
 // (d2b52e). Vermelho queimado (não bubble-gum), preto frio profundo, cyan
 // como accent tech secundário.
 
+// Paleta consolidada com o resto do app (CP2077 / Hell Is Us). Antes a /build
+// usava "neomilitarism" — bg quase preto puro + accent vermelho saturado +
+// cyan claro. Conflitava com a estética do app: ice como brand primário,
+// oxblood reservado pra danger/live, chamfer cross em painéis, hairline ice.
+//
+// Os nomes do objeto NEO foram preservados pra não tocar 4900 linhas de
+// consumers — os VALORES agora apontam pras CSS vars centrais (index.html).
+// Status warnings (drift, atrasos) ainda usam oxblood (= accent-primary).
 const NEO = {
-  bg: '#050608',            // preto frio profundo
-  panel: '#0c0d10',         // painel: tom acima do bg
-  border: '#1a1a1f',        // borda inativa
-  borderHot: '#3d1418',     // borda com tinge vermelho (sutil)
-  textPrimary: '#dde3e8',   // branco-cyan ligeiramente frio
-  textSecondary: '#8a9098',
-  textMuted: '#4d5258',
-  accent: '#dc2531',        // vermelho-sangue saturado (não pink)
-  accentDim: '#7a1015',     // pra hover/disabled
-  cyan: '#4dd0e1',          // accent tech (headers de status, brackets)
-  cyanDim: '#1f6b75',
+  bg: 'transparent',                                  // deixa o body atmospheric mostrar (fog azul + halo)
+  panel: 'rgba(11, 13, 18, 0.55)',                    // glass com leve translucidez (combina com hq-glass)
+  border: 'var(--color-border-strong)',
+  borderHot: 'rgba(143, 191, 211, 0.35)',             // hairline ice no header dos painéis
+  textPrimary: 'var(--color-text-primary)',
+  textSecondary: 'var(--color-text-secondary)',
+  textMuted: 'var(--color-text-muted)',
+  accent: 'var(--color-ice)',                         // ICE (era red — biggest change)
+  accentDim: 'var(--color-ice-deep)',
+  cyan: 'var(--color-ice-light)',                     // ice claro pros HUD readouts (consolida com accent)
+  cyanDim: 'var(--color-ice-deep)',
+  // Reservado pra estados de DANGER/LIVE: drift, ritual atrasado, error.
+  // Usar EXPLICITAMENTE — não como brand color.
+  danger: 'var(--color-accent-primary)',              // oxblood
+  dangerLight: 'var(--color-accent-light)',
 }
 
-const MONO = '"IBM Plex Mono", "SF Mono", Consolas, monospace'
+// Fontes alinhadas com o resto do app. Display = Rajdhani (hero/headers),
+// Body = Chakra Petch (parágrafos), Mono = JetBrains Mono (labels técnicos).
+const MONO = 'var(--font-mono)'
+const DISPLAY = 'var(--font-display)'
+const BODY = 'var(--font-body)'
+void DISPLAY; void BODY;  // exposed for future panel internals; keep tree-shake-friendly
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -115,50 +137,68 @@ function fmtDate(iso: string | null | undefined): string {
 
 export default function BuildPage() {
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: NEO.bg,
-        color: NEO.textPrimary,
-        fontFamily: MONO,
-        padding: '24px 40px 64px',
-        position: 'relative',
-      }}
-    >
-      {/* Glitch line vermelha vertical no canto esquerdo — assinatura visual
-          do Neomilitarism CP2077. Muito sutil. */}
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 80,
-          bottom: 80,
-          width: 2,
-          background: `linear-gradient(180deg, transparent 0%, ${NEO.accent} 20%, ${NEO.accent} 80%, transparent 100%)`,
-          opacity: 0.6,
-          pointerEvents: 'none',
-        }}
-      />
+    <div style={{ color: 'var(--color-text-primary)', position: 'relative', fontFamily: BODY }}>
       <Header />
+
+      {/* Body como cena CP2077 — mesmo tratamento da DashboardPage:
+          - Base sólida quase preta + multi-layer radials (halo branco-ice,
+            fog azul-aço denso, halo ice off-axis, whisper oxblood,
+            vinheta inferior).
+          - Grain extra-denso bluish overlay pra textura cinemática.
+          Sem isso a página fica "achatada" e perde a vibe Hell Is Us. */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 20,
-          marginTop: 28,
+          padding: '32px 40px 64px',
+          position: 'relative',
+          overflow: 'hidden',
+          background: `
+            radial-gradient(ellipse 50% 35% at 50% 12%, rgba(220, 224, 228, 0.12), transparent 75%),
+            radial-gradient(ellipse 90% 55% at 50% 18%, rgba(50, 62, 73, 0.38), transparent 75%),
+            radial-gradient(ellipse 40% 35% at 100% 45%, rgba(143, 191, 211, 0.10), transparent 70%),
+            radial-gradient(ellipse 55% 45% at 0% 75%, rgba(40, 50, 57, 0.30), transparent 70%),
+            radial-gradient(ellipse 50% 35% at 0% 8%, rgba(159, 18, 57, 0.06), transparent 60%),
+            radial-gradient(ellipse 110% 70% at 50% 115%, rgba(0, 0, 0, 0.85), transparent 70%),
+            #06080c
+          `,
+          minHeight: 'calc(100vh - 96px)',
         }}
       >
-        <PurposePanel />
-        <VisionPanel />
-      </div>
-      <div style={{ marginTop: 20 }}>
-        <RitualsPanel />
-      </div>
-      <div style={{ marginTop: 20 }}>
-        <GoalsPanel />
-      </div>
-      <div style={{ marginTop: 20 }}>
-        <DriftPanel />
+        {/* Grain extra-denso bluish — overlay acima do body global. */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            opacity: 0.13,
+            mixBlendMode: 'overlay',
+            backgroundImage:
+              "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='dn'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0.6 0 0 0 0.45  0.7 0 0 0 0.55  0.85 0 0 0 0.7  0 0 0 0.8 0'/></filter><rect width='100%25' height='100%25' filter='url(%23dn)'/></svg>\")",
+            zIndex: 0,
+          }}
+        />
+
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+              gap: 20,
+            }}
+          >
+            <PurposePanel />
+            <VisionPanel />
+          </div>
+          <div style={{ marginTop: 20 }}>
+            <RitualsPanel />
+          </div>
+          <div style={{ marginTop: 20 }}>
+            <GoalsPanel />
+          </div>
+          <div style={{ marginTop: 20 }}>
+            <DriftPanel />
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -1029,6 +1069,14 @@ function DependenciesInline({ goal }: { goal: BuildGoal }) {
 
 function DriftPanel() {
   const { data: drift = [], isLoading } = useProjectsAlignment({ driftOnly: true })
+  // Segunda fetch: TODOS os projetos pra extrair os classificados.
+  // Backend não tem filtro `classifiedOnly` — filtramos client-side. Pra
+  // escala pessoal (dezenas de projetos), custo é desprezível.
+  const { data: allAlignment = [] } = useProjectsAlignment()
+  const classified = useMemo(
+    () => allAlignment.filter((p) => p.alignment_status === 'classified'),
+    [allAlignment],
+  )
   const { data: areasList = [] } = useQuery({
     queryKey: ['areas-list'],
     queryFn: fetchAreas,
@@ -1036,6 +1084,7 @@ function DriftPanel() {
   })
   const [expanded, setExpanded] = useState(false)
   const [areaFilter, setAreaFilter] = useState<string | 'all'>('all')
+  const [classifiedExpanded, setClassifiedExpanded] = useState(false)
 
   // Conta por área (só áreas que têm drift) — pra mostrar count nos chips
   const countByArea = useMemo(() => {
@@ -1194,7 +1243,144 @@ function DriftPanel() {
           )}
         </>
       )}
+
+      {/* Classificados — projetos que o usuário declarou intencionalmente
+          sem Meta (manutenção/reativo/exploratório). Seção separada do
+          drift porque a semântica é diferente: aqui é "está OK assim".
+          Toggle independente; aparece só se houver classificados. */}
+      {classified.length > 0 && (
+        <div
+          style={{
+            marginTop: 16,
+            paddingTop: 12,
+            borderTop: `1px dashed ${NEO.border}`,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setClassifiedExpanded((e) => !e)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: NEO.textSecondary,
+              cursor: 'pointer',
+              padding: '6px 0',
+              fontFamily: MONO,
+              fontSize: 11,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              textAlign: 'left',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+            }}
+          >
+            {classifiedExpanded ? (
+              <ChevronDown size={12} />
+            ) : (
+              <ChevronRight size={12} />
+            )}
+            <span style={{ color: NEO.cyan }}>{classified.length}</span> projetos
+            classificados — clique pra revisar
+          </button>
+          {classifiedExpanded && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                marginTop: 8,
+                maxHeight: 320,
+                overflowY: 'auto',
+                paddingRight: 4,
+              }}
+            >
+              {classified.map((p) => (
+                <ClassifiedRow key={p.id} project={p} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </Panel>
+  )
+}
+
+function ClassifiedRow({ project }: { project: BuildProjectAlignment }) {
+  const { data: areas = [] } = useQuery({
+    queryKey: ['areas-list'],
+    queryFn: fetchAreas,
+    staleTime: 5 * 60 * 1000,
+  })
+  const classifyProj = useClassifyProject()
+  const area = areas.find((a: Area) => a.slug === project.area_slug)
+  const classLabel =
+    project.classification === 'manutencao'
+      ? 'Manutenção'
+      : project.classification === 'reativo'
+        ? 'Reativo'
+        : project.classification === 'exploratorio'
+          ? 'Exploratório'
+          : '—'
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 10px',
+        background: 'transparent',
+        border: `1px solid ${NEO.border}`,
+        borderLeft: `2px solid ${area?.color ?? NEO.borderHot}`,
+        fontFamily: MONO,
+        fontSize: 11,
+      }}
+    >
+      <span style={{ flex: 1, color: NEO.textPrimary }}>
+        {project.title}
+        {area && (
+          <span style={{ color: NEO.textMuted, marginLeft: 6, fontSize: 10 }}>
+            · {area.name}
+          </span>
+        )}
+      </span>
+      <span
+        style={{
+          color: NEO.cyan,
+          fontSize: 10,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {classLabel}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          classifyProj.mutate({ projectId: project.id, classification: null })
+        }
+        disabled={classifyProj.isPending}
+        title="Remover classificação (volta pro Drift)"
+        style={{
+          background: 'transparent',
+          color: NEO.textMuted,
+          border: `1px solid ${NEO.border}`,
+          padding: '3px 8px',
+          fontFamily: MONO,
+          fontSize: 9,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          cursor: classifyProj.isPending ? 'wait' : 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+        }}
+      >
+        <X size={10} /> remover
+      </button>
+    </div>
   )
 }
 
@@ -1395,6 +1581,35 @@ function RitualsPanel() {
 
   const totalAtrasados = rituals.filter((r) => r.dias_atraso > 0 && r.ativo).length
 
+  // Desktop notifications — quando há rituais atrasados, dispara 1 notificação
+  // por sessão (sem spam). Permissão pedida no primeiro atraso detectado.
+  // Notification API funciona enquanto a página está aberta. Para true
+  // background, precisaria service worker — fora do escopo aqui.
+  useEffect(() => {
+    if (totalAtrasados === 0) return
+    if (typeof Notification === 'undefined') return
+    const key = `ritual-notif-${new Date().toISOString().slice(0, 10)}-${totalAtrasados}`
+    if (sessionStorage.getItem(key)) return
+    const fire = () => {
+      try {
+        new Notification('Rituais atrasados', {
+          body: `${totalAtrasados} ritual${totalAtrasados === 1 ? '' : 'is'} esperando revisão`,
+          tag: 'hub-quest-rituais',
+        })
+        sessionStorage.setItem(key, '1')
+      } catch {
+        /* ignora — alguns browsers bloqueiam após blur */
+      }
+    }
+    if (Notification.permission === 'granted') {
+      fire()
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission().then((p) => {
+        if (p === 'granted') fire()
+      })
+    }
+  }, [totalAtrasados])
+
   return (
     <Panel
       title="RITUAIS · REVISÃO"
@@ -1458,6 +1673,98 @@ function daysFromToday(iso: string): number {
   return Math.round((target.getTime() - today.getTime()) / 86400000)
 }
 
+/**
+ * Calcula stats de execução: streak atual + completion%.
+ *
+ * Streak: número de slots consecutivos do ritual com sessão completada
+ * (não skipped), olhando do mais recente pra trás. `skipped` quebra o
+ * raciocínio "vacation mode" — não conta como fail nem como sucesso, então
+ * paramos no primeiro slot skipped (não conta, mas também não zera).
+ *
+ * Completion: %, calculado nos últimos 90d. Numerador = sessões não-skipped;
+ * denominador = slots esperados nesse intervalo (deriva da cadência).
+ */
+function calcRitualStats(sessions: BuildRitualSession[], cadencia: BuildRitualCadencia): {
+  streak: number
+  completionPct: number | null
+  pendingCount: number
+} {
+  // Sessions já vêm sorted desc por data
+  const completed = sessions.filter((s) => !s.skipped)
+  let streak = 0
+  // Streak: conta sessões consecutivas não-skipped começando da mais recente.
+  for (const s of sessions) {
+    if (s.skipped) continue   // pula sem zerar streak (vacation mode)
+    streak++
+    // Quebra ao encontrar a primeira gap (se sessões pulam mais de 1 slot).
+    // MVP: confia que cada session = 1 slot. Aproximação suficiente.
+    // Para versão rigorosa, comparar data_executado contra schedule esperado.
+  }
+  // Cap streak ao número total de slots em 1y pra não escalar absurdo
+  const cap = cadencia === 'semanal' ? 52 : cadencia === 'mensal' ? 12 : cadencia === 'trimestral' ? 4 : 1
+  streak = Math.min(streak, cap * 2)
+
+  // Completion 90d: nº slots esperados em 90 dias por cadência
+  const slotsEsperados90d =
+    cadencia === 'semanal' ? Math.floor(90 / 7) :
+    cadencia === 'mensal' ? 3 :
+    cadencia === 'trimestral' ? 1 :
+    0   // anual em 90d = 0, retorna null
+  const ninetyDaysAgo = new Date()
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+  const recent = completed.filter((s) => new Date(`${s.data_executado}T00:00:00`) >= ninetyDaysAgo)
+  const completionPct = slotsEsperados90d > 0
+    ? Math.min(100, Math.round((recent.length / slotsEsperados90d) * 100))
+    : null
+
+  return { streak, completionPct, pendingCount: completed.length }
+}
+
+/**
+ * Mini-heatmap: 12 quadradinhos representando últimas N rodadas (cap pela
+ * cadência). Verde = completada, âmbar = skipped, vazio = sem registro.
+ * Visual passivo, não interativo.
+ */
+function RitualHeatmap({ sessions, cadencia }: {
+  sessions: BuildRitualSession[]
+  cadencia: BuildRitualCadencia
+}) {
+  const slots = cadencia === 'semanal' ? 12 : cadencia === 'mensal' ? 12 : cadencia === 'trimestral' ? 8 : 4
+  const recent = sessions.slice(0, slots).reverse()  // cronologicamente
+  const padded = Array.from({ length: slots }, (_, i) => {
+    const idx = recent.length - (slots - i)
+    return idx >= 0 ? recent[idx] : null
+  })
+  return (
+    <div style={{ display: 'flex', gap: 2 }}>
+      {padded.map((s, i) => {
+        const color = !s
+          ? 'transparent'
+          : s.skipped
+            ? '#c08a3a'  // âmbar (warning)
+            : NEO.cyan
+        return (
+          <span
+            key={i}
+            title={
+              !s
+                ? '—'
+                : `${s.data_executado}${s.skipped ? ' (pulado)' : ''}`
+            }
+            style={{
+              flex: 1,
+              height: 6,
+              background: color,
+              border: !s ? `1px solid ${NEO.border}` : 'none',
+              opacity: s ? 1 : 0.4,
+            }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 function RitualCard({
   ritual,
   onReview,
@@ -1469,6 +1776,19 @@ function RitualCard({
 }) {
   const isAtrasado = ritual.dias_atraso > 0
   const proximaDays = ritual.proxima_data ? daysFromToday(ritual.proxima_data) : null
+  const { data: sessions = [] } = useRitualSessions(ritual.cadencia)
+  const stats = useMemo(
+    () => calcRitualStats(sessions, ritual.cadencia),
+    [sessions, ritual.cadencia],
+  )
+
+  // Display do dia da semana + warning weekend pra próxima data
+  const proximaWeekday = ritual.proxima_data ? weekdayLabel(ritual.proxima_data) : null
+  const proximaIsWeekend = ritual.proxima_data ? isWeekend(ritual.proxima_data) : false
+
+  // Nome customizável: fallback pra label da cadência se null/empty.
+  const displayName = ritual.nome?.trim() || CADENCIA_LABELS[ritual.cadencia]
+  const showCadenciaTag = !!ritual.nome?.trim()   // mostra tag pequena se renomeou
 
   return (
     <div
@@ -1483,24 +1803,44 @@ function RitualCard({
         gap: 8,
       }}
     >
-      {/* Header com cadência + settings */}
+      {/* Header com nome + cadência tag + settings */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: 6,
         }}
       >
-        <span
-          style={{
-            fontSize: 10,
-            color: isAtrasado ? NEO.accent : NEO.cyan,
-            letterSpacing: '0.25em',
-            fontWeight: 700,
-          }}
-        >
-          {CADENCIA_LABELS[ritual.cadencia]}
-        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1 }}>
+          <span
+            style={{
+              fontSize: 11,
+              color: isAtrasado ? NEO.accent : NEO.cyan,
+              letterSpacing: showCadenciaTag ? '0.1em' : '0.25em',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+            title={displayName}
+          >
+            {displayName}
+          </span>
+          {showCadenciaTag && (
+            <span
+              style={{
+                fontSize: 8,
+                color: NEO.textMuted,
+                letterSpacing: '0.18em',
+                fontWeight: 600,
+              }}
+            >
+              {CADENCIA_LABELS[ritual.cadencia]}
+            </span>
+          )}
+        </div>
         <button
           type="button"
           onClick={onConfigure}
@@ -1512,13 +1852,14 @@ function RitualCard({
             cursor: 'pointer',
             padding: 2,
             display: 'flex',
+            flexShrink: 0,
           }}
         >
           <SettingsIcon size={11} />
         </button>
       </div>
 
-      {/* Próxima data */}
+      {/* Próxima data com dia da semana */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <div
           style={{
@@ -1549,10 +1890,75 @@ function RitualCard({
             ? `${proximaDays}d`
             : '—'}
         </div>
-        <div style={{ fontSize: 10, color: NEO.textMuted }}>
-          {ritual.proxima_data ? fmtDate(ritual.proxima_data) : '—'}
+        <div
+          style={{
+            fontSize: 10,
+            color: proximaIsWeekend ? '#c08a3a' : NEO.textMuted,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+          title={proximaIsWeekend ? 'Cai em fim de semana' : undefined}
+        >
+          {ritual.proxima_data ? (
+            <>
+              {proximaWeekday && <span>{proximaWeekday},</span>}
+              <span>{fmtDate(ritual.proxima_data)}</span>
+              {proximaIsWeekend && <span style={{ marginLeft: 2 }}>· fds</span>}
+            </>
+          ) : (
+            '—'
+          )}
         </div>
       </div>
+
+      {/* Mini-heatmap */}
+      {sessions.length > 0 && (
+        <div style={{ paddingTop: 4 }}>
+          <RitualHeatmap sessions={sessions} cadencia={ritual.cadencia} />
+        </div>
+      )}
+
+      {/* Stats: streak + completion */}
+      {sessions.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            fontSize: 9,
+            color: NEO.textMuted,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {stats.streak > 0 && (
+            <span>
+              streak{' '}
+              <span style={{ color: NEO.cyan, fontWeight: 700 }}>
+                {stats.streak}
+              </span>
+            </span>
+          )}
+          {stats.completionPct !== null && (
+            <span>
+              90d{' '}
+              <span
+                style={{
+                  color:
+                    stats.completionPct >= 80
+                      ? NEO.cyan
+                      : stats.completionPct >= 50
+                        ? '#c08a3a'
+                        : NEO.accent,
+                  fontWeight: 700,
+                }}
+              >
+                {stats.completionPct}%
+              </span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Última execução */}
       <div
@@ -1602,6 +2008,296 @@ function RitualCard({
   )
 }
 
+/**
+ * Linha do histórico de sessões — exibe + edita inline + deleta.
+ *
+ * Estados: collapsed (default, mostra dados) → editing (form inline). Skip
+ * sessions têm visual diferenciado (border âmbar + label "PULADO").
+ *
+ * Antes era read-only; usuário não conseguia corrigir typos nem desfazer
+ * "Concluir Revisão" clicado por engano.
+ */
+function RitualSessionHistoryRow({
+  session,
+  cadencia,
+}: {
+  session: BuildRitualSession
+  cadencia: BuildRitualCadencia
+}) {
+  const updateSession = useUpdateRitualSession()
+  const deleteSession = useDeleteRitualSession()
+  const [editing, setEditing] = useState(false)
+  const [dataExec, setDataExec] = useState(session.data_executado)
+  const [duracao, setDuracao] = useState(
+    session.duracao_min != null ? String(session.duracao_min) : '',
+  )
+  const [notas, setNotas] = useState(session.notas ?? '')
+  const [skipReason, setSkipReason] = useState(session.skip_reason ?? '')
+
+  function save() {
+    updateSession.mutate(
+      {
+        cadencia,
+        sessionId: session.id,
+        patch: {
+          data_executado: dataExec,
+          duracao_min: duracao.trim() ? Number(duracao) : null,
+          notas: notas.trim() || null,
+          skip_reason: session.skipped
+            ? skipReason.trim() || null
+            : session.skip_reason,
+        },
+      },
+      { onSuccess: () => setEditing(false) },
+    )
+  }
+
+  function del() {
+    if (
+      confirm(
+        `Deletar esta sessão de ${fmtDate(session.data_executado)}? Não dá pra desfazer.`,
+      )
+    ) {
+      deleteSession.mutate({ cadencia, sessionId: session.id })
+    }
+  }
+
+  const accent = session.skipped ? '#c08a3a' : NEO.cyanDim
+
+  if (editing) {
+    return (
+      <div
+        style={{
+          background: NEO.bg,
+          border: `1px solid ${NEO.cyan}`,
+          borderLeft: `2px solid ${NEO.cyan}`,
+          padding: '10px 12px',
+          fontSize: 11,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <Label>DATA</Label>
+            <input
+              type="date"
+              value={dataExec}
+              onChange={(e) => setDataExec(e.target.value)}
+              style={{ ...inputBlockStyle, marginTop: 4, fontSize: 11 }}
+            />
+          </div>
+          {!session.skipped && (
+            <div style={{ width: 110 }}>
+              <Label>DURAÇÃO</Label>
+              <input
+                type="number"
+                value={duracao}
+                onChange={(e) => setDuracao(e.target.value)}
+                style={{ ...inputBlockStyle, marginTop: 4, fontSize: 11 }}
+              />
+            </div>
+          )}
+        </div>
+        {session.skipped ? (
+          <div>
+            <Label>MOTIVO</Label>
+            <input
+              type="text"
+              value={skipReason}
+              onChange={(e) => setSkipReason(e.target.value)}
+              maxLength={500}
+              style={{ ...inputBlockStyle, marginTop: 4, fontSize: 11 }}
+            />
+          </div>
+        ) : (
+          <div>
+            <Label>NOTAS</Label>
+            <textarea
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+              rows={3}
+              style={{ ...textareaStyle, marginTop: 4, fontSize: 11 }}
+            />
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+          <MicroBtn onClick={() => setEditing(false)} label="cancelar" />
+          <button
+            type="button"
+            onClick={save}
+            disabled={updateSession.isPending}
+            style={{
+              background: NEO.accent,
+              color: '#000',
+              border: 'none',
+              padding: '3px 10px',
+              fontFamily: MONO,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              opacity: updateSession.isPending ? 0.6 : 1,
+            }}
+          >
+            salvar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      style={{
+        background: NEO.bg,
+        border: `1px solid ${NEO.border}`,
+        borderLeft: `2px solid ${accent}`,
+        padding: '8px 10px',
+        fontSize: 11,
+        color: NEO.textSecondary,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          alignItems: 'center',
+        }}
+      >
+        <span
+          style={{
+            color: session.skipped ? '#c08a3a' : NEO.cyan,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+          }}
+        >
+          {fmtDate(session.data_executado)}
+        </span>
+        {session.skipped ? (
+          <span
+            style={{
+              fontSize: 9,
+              color: '#c08a3a',
+              letterSpacing: '0.18em',
+              fontWeight: 700,
+              padding: '1px 6px',
+              border: '1px solid #c08a3a',
+            }}
+          >
+            PULADO
+          </span>
+        ) : session.duracao_min !== null ? (
+          <span style={{ color: NEO.textMuted, fontSize: 10 }}>
+            {session.duracao_min} min
+          </span>
+        ) : null}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            title="Editar sessão"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: NEO.textMuted,
+              cursor: 'pointer',
+              padding: 2,
+              display: 'flex',
+            }}
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            type="button"
+            onClick={del}
+            disabled={deleteSession.isPending}
+            title="Deletar sessão"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: NEO.textMuted,
+              cursor: 'pointer',
+              padding: 2,
+              display: 'flex',
+            }}
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
+      {session.skipped && session.skip_reason && (
+        <div
+          style={{
+            marginTop: 4,
+            color: NEO.textMuted,
+            fontStyle: 'italic',
+            fontSize: 11,
+          }}
+        >
+          motivo: {session.skip_reason}
+        </div>
+      )}
+      {!session.skipped && session.notas && (
+        <div
+          style={{
+            marginTop: 6,
+            color: NEO.textPrimary,
+            fontSize: 12,
+            lineHeight: 1.5,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {session.notas}
+        </div>
+      )}
+      {!session.skipped && session.foco_proxima_periodo && (
+        <div
+          style={{
+            marginTop: 6,
+            paddingTop: 6,
+            borderTop: `1px dashed ${NEO.border}`,
+            fontSize: 11,
+            color: NEO.textMuted,
+          }}
+        >
+          <span
+            style={{
+              color: NEO.cyan,
+              letterSpacing: '0.15em',
+              fontSize: 9,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              marginRight: 6,
+            }}
+          >
+            foco próx.:
+          </span>
+          <span style={{ color: NEO.textPrimary, fontStyle: 'italic' }}>
+            {session.foco_proxima_periodo}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function weekdayLabel(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`)
+  if (isNaN(d.getTime())) return ''
+  const dias = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB']
+  return dias[d.getDay()]
+}
+
+function isWeekend(iso: string): boolean {
+  const d = new Date(`${iso}T00:00:00`)
+  if (isNaN(d.getTime())) return false
+  const dow = d.getDay()
+  return dow === 0 || dow === 6
+}
+
 // ─── Modal de revisão ─────────────────────────────────────────────────────
 
 function RitualReviewModal({
@@ -1615,53 +2311,92 @@ function RitualReviewModal({
 }) {
   const createSession = useCreateRitualSession()
   const { data: pastSessions = [] } = useRitualSessions(cadencia)
+  const { data: activeGoals = [] } = useGoals('ativa')
   const today = new Date().toISOString().slice(0, 10)
+  const [mode, setMode] = useState<'completar' | 'pular'>('completar')
   const [dataExecutado, setDataExecutado] = useState(today)
   const [duracao, setDuracao] = useState('')
   const [notas, setNotas] = useState('')
   const [focoProx, setFocoProx] = useState('')
+  const [skipReason, setSkipReason] = useState('')
+  const [reviewedGoalIds, setReviewedGoalIds] = useState<Set<string>>(new Set())
   const [showHistory, setShowHistory] = useState(false)
 
   function submit() {
+    const isSkip = mode === 'pular'
+    // Anexa lista de Metas revisadas no início das notas (semantic linking).
+    // Schema simples: prefixo "Metas revisadas: x, y, z\n\n" + notas livres.
+    const metasRevisadas = activeGoals
+      .filter((g) => reviewedGoalIds.has(g.id))
+      .map((g) => g.titulo)
+    const notasFinal = (() => {
+      if (isSkip) return null  // skip não tem notas, tem skip_reason
+      const parts: string[] = []
+      if (metasRevisadas.length > 0) {
+        parts.push(`Metas revisadas: ${metasRevisadas.join(' · ')}`)
+      }
+      if (notas.trim()) parts.push(notas.trim())
+      return parts.length > 0 ? parts.join('\n\n') : null
+    })()
     createSession.mutate(
       {
         cadencia,
         body: {
           data_executado: dataExecutado,
-          duracao_min: duracao.trim() ? Number(duracao) : null,
-          notas: notas.trim() || null,
-          foco_proxima_periodo: focoProx.trim() || null,
+          duracao_min: isSkip ? null : duracao.trim() ? Number(duracao) : null,
+          notas: notasFinal,
+          foco_proxima_periodo: isSkip ? null : focoProx.trim() || null,
+          skipped: isSkip,
+          skip_reason: isSkip ? skipReason.trim() || null : null,
         },
       },
       { onSuccess: onClose },
     )
   }
 
-  return (
+  function toggleReviewedGoal(id: string) {
+    setReviewedGoalIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Portal — escapa do clip-path do Panel ancestral. Mesmo bug do
+  // GoalCreateModal: sem portal, o overlay fica recortado dentro do painel.
+  return createPortal(
     <div
       role="dialog"
+      className="hq-animate-overlay-in"
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.9)',
+        background: 'var(--color-overlay)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         zIndex: 1000,
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px 20px',
-        overflowY: 'auto',
+        padding: '24px 20px',
+        overflow: 'hidden',
       }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="hq-animate-modal-in"
         style={{
-          width: '100%',
-          maxWidth: 720,
-          background: NEO.panel,
+          width: 'min(720px, calc(100vw - 32px))',
+          background: '#0b0d12',
           border: `1px solid ${NEO.accent}`,
           padding: '28px 32px',
           position: 'relative',
+          maxHeight: 'calc(100vh - 48px)',
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          boxShadow: 'var(--shadow-modal), 0 0 0 1px rgba(0,0,0,0.4)',
         }}
       >
         <CornerBracket position="tl" />
@@ -1781,22 +2516,43 @@ function RitualReviewModal({
           </div>
         </div>
 
-        {/* Form de session */}
+        {/* Toggle mode: completar vs pular intencionalmente */}
         <div
           style={{
-            fontSize: 10,
-            color: NEO.textSecondary,
-            letterSpacing: '0.25em',
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            marginBottom: 8,
+            display: 'flex',
+            gap: 6,
+            marginBottom: 14,
             paddingTop: 12,
             borderTop: `1px dashed ${NEO.border}`,
           }}
         >
-          Registrar revisão
+          {(['completar', 'pular'] as const).map((m) => {
+            const active = mode === m
+            return (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                style={{
+                  background: active ? NEO.accent : 'transparent',
+                  color: active ? '#000' : NEO.textSecondary,
+                  border: `1px solid ${active ? NEO.accent : NEO.border}`,
+                  padding: '5px 12px',
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.18em',
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                }}
+              >
+                {m === 'completar' ? 'completar' : 'pular esta rodada'}
+              </button>
+            )
+          })}
         </div>
 
+        {/* Data (sempre) */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
             <Label>DATA</Label>
@@ -1807,40 +2563,134 @@ function RitualReviewModal({
               style={{ ...inputBlockStyle, marginTop: 4 }}
             />
           </div>
-          <div style={{ width: 140 }}>
-            <Label>DURAÇÃO (MIN)</Label>
+          {mode === 'completar' && (
+            <div style={{ width: 140 }}>
+              <Label>DURAÇÃO (MIN)</Label>
+              <input
+                type="number"
+                value={duracao}
+                onChange={(e) => setDuracao(e.target.value)}
+                placeholder={String(ritual.duracao_alvo_min)}
+                style={{ ...inputBlockStyle, marginTop: 4 }}
+              />
+            </div>
+          )}
+        </div>
+
+        {mode === 'pular' ? (
+          /* Modo SKIP: só motivo opcional. Sem notas/foco — preserva semântica. */
+          <div style={{ marginBottom: 12 }}>
+            <Label>MOTIVO (OPC)</Label>
             <input
-              type="number"
-              value={duracao}
-              onChange={(e) => setDuracao(e.target.value)}
-              placeholder={String(ritual.duracao_alvo_min)}
+              type="text"
+              value={skipReason}
+              onChange={(e) => setSkipReason(e.target.value)}
+              placeholder='ex.: "viagem", "doente", "sobreposição"'
+              maxLength={500}
               style={{ ...inputBlockStyle, marginTop: 4 }}
             />
+            <div
+              style={{
+                fontSize: 10,
+                color: NEO.textMuted,
+                marginTop: 6,
+                fontStyle: 'italic',
+              }}
+            >
+              Pular preserva o schedule sem virar falso positivo de atraso. Não
+              quebra streak.
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Metas ativas pra checar quais foram revisadas */}
+            {activeGoals.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <Label>METAS REVISADAS NESTA SESSÃO (OPC)</Label>
+                <div
+                  style={{
+                    marginTop: 6,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    maxHeight: 160,
+                    overflowY: 'auto',
+                    paddingRight: 4,
+                  }}
+                >
+                  {activeGoals.map((g) => {
+                    const checked = reviewedGoalIds.has(g.id)
+                    return (
+                      <label
+                        key={g.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '6px 8px',
+                          background: checked ? `${NEO.cyan}15` : 'transparent',
+                          border: `1px solid ${checked ? NEO.cyan : NEO.border}`,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          color: NEO.textPrimary,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleReviewedGoal(g.id)}
+                          style={{ accentColor: NEO.cyan }}
+                        />
+                        <span style={{ flex: 1 }}>{g.titulo}</span>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            color: NEO.textMuted,
+                            letterSpacing: '0.12em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {g.horizon}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
-        <div style={{ marginBottom: 12 }}>
-          <Label>NOTAS DA REFLEXÃO</Label>
-          <textarea
-            value={notas}
-            onChange={(e) => setNotas(e.target.value)}
-            placeholder="o que saiu da reflexão? (visível só pra você)"
-            rows={4}
-            style={{ ...textareaStyle, marginTop: 4 }}
-          />
-        </div>
+            <div style={{ marginBottom: 12 }}>
+              <Label>NOTAS DA REFLEXÃO</Label>
+              <textarea
+                value={notas}
+                onChange={(e) => setNotas(e.target.value)}
+                placeholder="o que saiu da reflexão? (visível só pra você)"
+                rows={4}
+                style={{ ...textareaStyle, marginTop: 4 }}
+              />
+            </div>
 
-        {cadencia === 'semanal' && (
-          <div style={{ marginBottom: 12 }}>
-            <Label>FOCO DA PRÓXIMA SEMANA</Label>
-            <textarea
-              value={focoProx}
-              onChange={(e) => setFocoProx(e.target.value)}
-              placeholder="1-2 Metas como foco explícito"
-              rows={2}
-              style={{ ...textareaStyle, marginTop: 4 }}
-            />
-          </div>
+            {/* Foco da próxima rodada — agora em todas cadências */}
+            <div style={{ marginBottom: 12 }}>
+              <Label>
+                FOCO DA PRÓXIMA{' '}
+                {cadencia === 'semanal'
+                  ? 'SEMANA'
+                  : cadencia === 'mensal'
+                    ? 'RODADA MENSAL'
+                    : cadencia === 'trimestral'
+                      ? 'RODADA TRIMESTRAL'
+                      : 'RODADA ANUAL'}
+              </Label>
+              <textarea
+                value={focoProx}
+                onChange={(e) => setFocoProx(e.target.value)}
+                placeholder="1-2 Metas como foco explícito"
+                rows={2}
+                style={{ ...textareaStyle, marginTop: 4 }}
+              />
+            </div>
+          </>
         )}
 
         {/* Histórico recente — colapsado por default */}
@@ -1881,88 +2731,19 @@ function RitualReviewModal({
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 8,
-                  maxHeight: 280,
+                  maxHeight: 320,
                   overflowY: 'auto',
                   paddingRight: 4,
                 }}
               >
-                {pastSessions.slice(0, 10).map((s) => (
-                  <div
+                {pastSessions.slice(0, 20).map((s) => (
+                  <RitualSessionHistoryRow
                     key={s.id}
-                    style={{
-                      background: NEO.bg,
-                      border: `1px solid ${NEO.border}`,
-                      borderLeft: `2px solid ${NEO.cyanDim}`,
-                      padding: '8px 10px',
-                      fontSize: 11,
-                      color: NEO.textSecondary,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 10,
-                        alignItems: 'center',
-                        marginBottom: s.notas || s.foco_proxima_periodo ? 6 : 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: NEO.cyan,
-                          fontWeight: 700,
-                          letterSpacing: '0.1em',
-                        }}
-                      >
-                        {fmtDate(s.data_executado)}
-                      </span>
-                      {s.duracao_min !== null && (
-                        <span style={{ color: NEO.textMuted, fontSize: 10 }}>
-                          {s.duracao_min} min
-                        </span>
-                      )}
-                    </div>
-                    {s.notas && (
-                      <div
-                        style={{
-                          color: NEO.textPrimary,
-                          fontSize: 12,
-                          lineHeight: 1.5,
-                          whiteSpace: 'pre-wrap',
-                        }}
-                      >
-                        {s.notas}
-                      </div>
-                    )}
-                    {s.foco_proxima_periodo && (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          paddingTop: 6,
-                          borderTop: `1px dashed ${NEO.border}`,
-                          fontSize: 11,
-                          color: NEO.textMuted,
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: NEO.cyan,
-                            letterSpacing: '0.15em',
-                            fontSize: 9,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            marginRight: 6,
-                          }}
-                        >
-                          foco próx.:
-                        </span>
-                        <span style={{ color: NEO.textPrimary, fontStyle: 'italic' }}>
-                          {s.foco_proxima_periodo}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                    session={s}
+                    cadencia={cadencia}
+                  />
                 ))}
-                {pastSessions.length > 10 && (
+                {pastSessions.length > 20 && (
                   <div
                     style={{
                       fontSize: 10,
@@ -1972,7 +2753,7 @@ function RitualReviewModal({
                       padding: 4,
                     }}
                   >
-                    + {pastSessions.length - 10} sessões mais antigas
+                    + {pastSessions.length - 20} sessões mais antigas
                   </div>
                 )}
               </div>
@@ -2003,7 +2784,8 @@ function RitualReviewModal({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -2019,6 +2801,7 @@ function RitualConfigModal({
   onClose: () => void
 }) {
   const updateRitual = useUpdateRitual()
+  const [nome, setNome] = useState(ritual.nome ?? '')
   const [ativo, setAtivo] = useState(ritual.ativo)
   const [pensar, setPensar] = useState(ritual.direcionamento_pensar)
   const [evitar, setEvitar] = useState(ritual.direcionamento_evitar)
@@ -2065,6 +2848,7 @@ function RitualConfigModal({
       {
         cadencia,
         patch: {
+          nome: nome.trim() || null,
           ativo,
           direcionamento_pensar: pensar,
           direcionamento_evitar: evitar,
@@ -2076,31 +2860,39 @@ function RitualConfigModal({
     )
   }
 
-  return (
+  // Portal — mesmo fix dos outros modais (clip-path do Panel).
+  return createPortal(
     <div
       role="dialog"
+      className="hq-animate-overlay-in"
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.9)',
+        background: 'var(--color-overlay)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         zIndex: 1000,
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px 20px',
-        overflowY: 'auto',
+        padding: '24px 20px',
+        overflow: 'hidden',
       }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="hq-animate-modal-in"
         style={{
-          width: '100%',
-          maxWidth: 640,
-          background: NEO.panel,
+          width: 'min(640px, calc(100vw - 32px))',
+          background: '#0b0d12',
           border: `1px solid ${NEO.accent}`,
           padding: '28px 32px',
           position: 'relative',
+          maxHeight: 'calc(100vh - 48px)',
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          boxShadow: 'var(--shadow-modal), 0 0 0 1px rgba(0,0,0,0.4)',
         }}
       >
         <CornerBracket position="tl" />
@@ -2139,6 +2931,17 @@ function RitualConfigModal({
             <X size={16} />
           </button>
         </div>
+
+        {/* Nome customizável — default null = usa label da cadência */}
+        <Label>NOME DO RITUAL (OPC)</Label>
+        <input
+          type="text"
+          value={nome}
+          onChange={(e) => setNome(e.target.value)}
+          maxLength={80}
+          placeholder={`ex.: "Revisão de Sexta" — vazio usa ${CADENCIA_LABELS[cadencia]}`}
+          style={{ ...inputBlockStyle, marginTop: 4, marginBottom: 14 }}
+        />
 
         {/* Toggle ativo */}
         <div
@@ -2276,7 +3079,8 @@ function RitualConfigModal({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -2312,6 +3116,11 @@ function GuardrailsInline({ goal }: { goal: BuildGoal }) {
   const { data: guardrails = [] } = useGoalGuardrailsEval(goal.id)
   const removeGuardrail = useDeleteGoalGuardrail()
   const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+
+  const editing = editingId !== null
+    ? guardrails.find((g) => g.id === editingId) ?? null
+    : null
 
   if (guardrails.length === 0 && !adding) {
     return (
@@ -2341,6 +3150,10 @@ function GuardrailsInline({ goal }: { goal: BuildGoal }) {
               <GuardrailRow
                 key={g.id}
                 ev={g}
+                onEdit={() => {
+                  setEditingId(g.id)
+                  setAdding(false)
+                }}
                 onRemove={() =>
                   removeGuardrail.mutate({ goalId: goal.id, guardrailId: g.id })
                 }
@@ -2349,8 +3162,16 @@ function GuardrailsInline({ goal }: { goal: BuildGoal }) {
           </div>
         </>
       )}
-      {adding ? (
-        <GuardrailAddForm
+      {/* Form: edit tem prioridade sobre add */}
+      {editing ? (
+        <GuardrailForm
+          key={`edit-${editing.id}`}
+          goalId={goal.id}
+          initial={editing}
+          onClose={() => setEditingId(null)}
+        />
+      ) : adding ? (
+        <GuardrailForm
           goalId={goal.id}
           onClose={() => setAdding(false)}
         />
@@ -2365,9 +3186,11 @@ function GuardrailsInline({ goal }: { goal: BuildGoal }) {
 
 function GuardrailRow({
   ev,
+  onEdit,
   onRemove,
 }: {
   ev: BuildGuardrailEvaluation
+  onEdit: () => void
   onRemove: () => void
 }) {
   const style = GUARDRAIL_STATE_STYLE[ev.estado]
@@ -2424,6 +3247,21 @@ function GuardrailRow({
       </span>
       <button
         type="button"
+        onClick={onEdit}
+        title="Editar guardrail"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: NEO.textMuted,
+          cursor: 'pointer',
+          padding: 2,
+          display: 'flex',
+        }}
+      >
+        <Pencil size={10} />
+      </button>
+      <button
+        type="button"
         onClick={onRemove}
         title="Remover guardrail"
         style={{
@@ -2441,19 +3279,30 @@ function GuardrailRow({
   )
 }
 
-function GuardrailAddForm({
+function GuardrailForm({
   goalId,
+  initial,
   onClose,
 }: {
   goalId: string
+  /** Quando setado, opera em modo edição. Senão, criação. */
+  initial?: BuildGuardrailEvaluation | null
   onClose: () => void
 }) {
+  const isEdit = !!initial
   const { data: catalog = [] } = useHealthMetricsCatalog()
   const createGuardrail = useCreateGoalGuardrail()
-  const [metricSlug, setMetricSlug] = useState('')
-  const [itemId, setItemId] = useState<string>('')
-  const [operador, setOperador] = useState<BuildGuardrailOperador>('>=')
-  const [valorAlvo, setValorAlvo] = useState('')
+  const updateGuardrail = useUpdateGoalGuardrail()
+  const [metricSlug, setMetricSlug] = useState(initial?.metric_slug ?? '')
+  const [itemId, setItemId] = useState<string>(
+    initial?.item_id != null ? String(initial.item_id) : '',
+  )
+  const [operador, setOperador] = useState<BuildGuardrailOperador>(
+    (initial?.operador as BuildGuardrailOperador) ?? '>=',
+  )
+  const [valorAlvo, setValorAlvo] = useState(
+    initial?.valor_alvo != null ? String(initial.valor_alvo) : '',
+  )
   const [error, setError] = useState<string | null>(null)
 
   const selectedMeta: HealthMetricMeta | undefined = catalog.find((m) => m.slug === metricSlug)
@@ -2481,21 +3330,29 @@ function GuardrailAddForm({
       return
     }
     setError(null)
-    createGuardrail.mutate(
-      {
-        goalId,
-        body: {
-          metric_slug: metricSlug,
-          item_id: needsItem ? Number(itemId) : null,
-          operador,
-          valor_alvo: Number(valorAlvo),
+    const payload = {
+      metric_slug: metricSlug,
+      item_id: needsItem ? Number(itemId) : null,
+      operador,
+      valor_alvo: Number(valorAlvo),
+    }
+    if (isEdit && initial) {
+      updateGuardrail.mutate(
+        { goalId, guardrailId: initial.id, patch: payload },
+        {
+          onSuccess: onClose,
+          onError: (err) => setError(err instanceof Error ? err.message : 'Erro'),
         },
-      },
-      {
-        onSuccess: onClose,
-        onError: (err) => setError(err instanceof Error ? err.message : 'Erro'),
-      },
-    )
+      )
+    } else {
+      createGuardrail.mutate(
+        { goalId, body: payload },
+        {
+          onSuccess: onClose,
+          onError: (err) => setError(err instanceof Error ? err.message : 'Erro'),
+        },
+      )
+    }
   }
 
   return (
@@ -2517,10 +3374,14 @@ function GuardrailAddForm({
           textTransform: 'uppercase',
         }}
       >
-        Adicionar guardrail (Hub Health)
+        {isEdit ? 'Editar guardrail (Hub Health)' : 'Adicionar guardrail (Hub Health)'}
       </div>
 
-      {/* Select de métrica */}
+      {/* Select de métrica.
+          `colorScheme: dark` força o browser a usar UI escura no dropdown
+          nativo (sem isso, em Windows light mode a lista vinha branca).
+          `background: var(--color-bg-primary)` substitui o transparent que
+          deixava o campo invisível. */}
       <select
         value={metricSlug}
         onChange={(e) => {
@@ -2528,13 +3389,14 @@ function GuardrailAddForm({
           setItemId('')
         }}
         style={{
-          background: NEO.bg,
+          background: 'var(--color-bg-primary)',
           color: NEO.textPrimary,
-          border: `1px solid ${NEO.border}`,
+          border: '1px solid var(--color-border)',
           padding: '4px 8px',
           fontFamily: MONO,
           fontSize: 11,
           outline: 'none',
+          colorScheme: 'dark',
         }}
       >
         <option value="">— escolha uma métrica —</option>
@@ -2556,13 +3418,14 @@ function GuardrailAddForm({
           value={itemId}
           onChange={(e) => setItemId(e.target.value)}
           style={{
-            background: NEO.bg,
+            background: 'var(--color-bg-primary)',
             color: NEO.textPrimary,
-            border: `1px solid ${NEO.border}`,
+            border: '1px solid var(--color-border)',
             padding: '4px 8px',
             fontFamily: MONO,
             fontSize: 11,
             outline: 'none',
+            colorScheme: 'dark',
           }}
         >
           <option value="">— escolha um item de {selectedMeta?.domain_slug} —</option>
@@ -2580,14 +3443,15 @@ function GuardrailAddForm({
           value={operador}
           onChange={(e) => setOperador(e.target.value as BuildGuardrailOperador)}
           style={{
-            background: NEO.bg,
+            background: 'var(--color-bg-primary)',
             color: NEO.cyan,
-            border: `1px solid ${NEO.border}`,
+            border: '1px solid var(--color-border)',
             padding: '4px 8px',
             fontFamily: MONO,
             fontSize: 11,
             fontWeight: 700,
             outline: 'none',
+            colorScheme: 'dark',
           }}
         >
           <option value=">=">≥</option>
@@ -2605,13 +3469,14 @@ function GuardrailAddForm({
           step="any"
           style={{
             flex: 1,
-            background: NEO.bg,
+            background: 'var(--color-bg-primary)',
             color: NEO.textPrimary,
-            border: `1px solid ${NEO.border}`,
+            border: '1px solid var(--color-border)',
             padding: '4px 8px',
             fontFamily: MONO,
             fontSize: 11,
             outline: 'none',
+            colorScheme: 'dark',
           }}
         />
         {selectedMeta?.unidade && (
@@ -2630,7 +3495,7 @@ function GuardrailAddForm({
         <button
           type="button"
           onClick={submit}
-          disabled={createGuardrail.isPending}
+          disabled={createGuardrail.isPending || updateGuardrail.isPending}
           style={{
             background: NEO.accent,
             color: '#000',
@@ -2641,11 +3506,15 @@ function GuardrailAddForm({
             fontWeight: 700,
             letterSpacing: '0.1em',
             textTransform: 'uppercase',
-            cursor: createGuardrail.isPending ? 'wait' : 'pointer',
-            opacity: createGuardrail.isPending ? 0.6 : 1,
+            cursor:
+              createGuardrail.isPending || updateGuardrail.isPending
+                ? 'wait'
+                : 'pointer',
+            opacity:
+              createGuardrail.isPending || updateGuardrail.isPending ? 0.6 : 1,
           }}
         >
-          adicionar
+          {isEdit ? 'salvar' : 'adicionar'}
         </button>
       </div>
     </div>
@@ -2811,31 +3680,47 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
     })
   }
 
-  return (
+  // Portal pro document.body — o modal é renderizado dentro de `<Panel>`,
+  // que tem `clip-path` na linha 4850. Sem o portal, o overlay (position
+  // fixed) seria clipado dentro do retângulo do Panel, renderizando dentro
+  // do painel em vez de cobrir a tela inteira. Portal escapa essa árvore.
+  return createPortal(
     <div
       role="dialog"
+      className="hq-animate-overlay-in"
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.85)',
+        background: 'var(--color-overlay)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         zIndex: 1000,
         display: 'flex',
-        alignItems: 'flex-start',
+        // Centralizado vertical/horizontal — popup tradicional. Quando o
+        // conteúdo passa do limite, o card faz scroll interno (não o overlay).
+        alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px 20px',
-        overflowY: 'auto',
+        padding: '24px 20px',
+        overflow: 'hidden',
       }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="hq-animate-modal-in"
         style={{
-          width: '100%',
-          maxWidth: 640,
-          background: NEO.panel,
+          width: 'min(640px, calc(100vw - 32px))',
+          // Background opaco — NEO.panel (0.55 alpha) combinado com backdrop
+          // blur deixava o card "fantasma". Aqui queremos foco total no form.
+          background: '#0b0d12',
           border: `1px solid ${NEO.accent}`,
           padding: '28px 32px',
           position: 'relative',
+          // Scroll por dentro do card — header e botões sempre acessíveis.
+          maxHeight: 'calc(100vh - 48px)',
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          boxShadow: 'var(--shadow-modal), 0 0 0 1px rgba(0,0,0,0.4)',
         }}
       >
         <CornerBracket position="tl" />
@@ -2971,13 +3856,14 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
                       setMetricItemId('')
                     }}
                     style={{
-                      background: NEO.bg,
+                      background: 'var(--color-bg-primary)',
                       color: NEO.textPrimary,
                       border: `1px solid ${NEO.cyanDim}`,
                       padding: '6px 10px',
                       fontFamily: MONO,
                       fontSize: 12,
                       outline: 'none',
+                      colorScheme: 'dark',
                     }}
                   >
                     <option value="">— escolha uma Métrica —</option>
@@ -2997,13 +3883,14 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
                       value={metricItemId}
                       onChange={(e) => setMetricItemId(e.target.value)}
                       style={{
-                        background: NEO.bg,
+                        background: 'var(--color-bg-primary)',
                         color: NEO.textPrimary,
                         border: `1px solid ${NEO.cyanDim}`,
                         padding: '6px 10px',
                         fontFamily: MONO,
                         fontSize: 12,
                         outline: 'none',
+                        colorScheme: 'dark',
                       }}
                     >
                       <option value="">— item de {selectedMetric.domain_slug} —</option>
@@ -3209,7 +4096,8 @@ function GoalCreateModal({ onClose }: { onClose: () => void }) {
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -3413,31 +4301,39 @@ function GoalEditModal({
     }
   }
 
-  return (
+  // Portal — mesma razão do GoalCreateModal (escapa do clip-path do Panel).
+  return createPortal(
     <div
       role="dialog"
+      className="hq-animate-overlay-in"
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.85)',
+        background: 'var(--color-overlay)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         zIndex: 1000,
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px 20px',
-        overflowY: 'auto',
+        padding: '24px 20px',
+        overflow: 'hidden',
       }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="hq-animate-modal-in"
         style={{
-          width: '100%',
-          maxWidth: 640,
-          background: NEO.panel,
+          width: 'min(640px, calc(100vw - 32px))',
+          background: '#0b0d12',
           border: `1px solid ${NEO.accent}`,
           padding: '28px 32px',
           position: 'relative',
+          maxHeight: 'calc(100vh - 48px)',
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          boxShadow: 'var(--shadow-modal), 0 0 0 1px rgba(0,0,0,0.4)',
         }}
       >
         <CornerBracket position="tl" />
@@ -3796,7 +4692,8 @@ function GoalEditModal({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -3889,157 +4786,139 @@ function Header() {
   const ritualsAtrasados = rituals.filter((r) => r.ativo && r.dias_atraso > 0).length
 
   return (
-    <div
+    <header
       style={{
         position: 'relative',
-        borderBottom: `1px solid ${NEO.border}`,
-        paddingBottom: 16,
+        padding: '14px 40px',
+        background: 'linear-gradient(180deg, rgba(10, 14, 22, 0.92), rgba(8, 10, 14, 0.88))',
+        borderBottom: '1px solid var(--color-ice-deep)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-5)',
+        minHeight: 64,
+        flexWrap: 'wrap',
       }}
     >
-      {/* Eyebrow + status (canto direito) — vibe HUD CP2077 */}
+      {/* TAB MARKER — indicador ice estendendo abaixo, assinatura "tab pull"
+          das HUDs CP2077 (mesma da DashboardPage). */}
       <div
+        aria-hidden="true"
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
+          position: 'absolute',
+          left: 0, bottom: -1,
+          width: 64, height: 2,
+          background: 'var(--color-ice)',
+          boxShadow: '0 0 12px var(--color-ice-glow)',
         }}
-      >
+      />
+
+      {/* LEFT — tab title + hero + subtítulo empilhados. Em formato BAND
+          (não card), igual o Dashboard header. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', flex: 1, minWidth: 0 }}>
         <div
+          className="hq-tech-label"
           style={{
-            fontSize: 10,
-            letterSpacing: '0.35em',
-            color: NEO.accent,
-            fontWeight: 700,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
+            fontSize: 11,
+            color: 'var(--color-ice-light)',
+            letterSpacing: '0.28em',
+            flexShrink: 0,
           }}
         >
-          <span style={{ color: NEO.accent }}>❱</span>
-          STRATEGIC&nbsp;COMMAND
-          <span
-            style={{
-              display: 'inline-block',
-              width: 8,
-              height: 8,
-              background: NEO.accent,
-              marginLeft: 4,
-            }}
-          />
+          BUILD
         </div>
-        <div
-          style={{
-            fontSize: 10,
-            letterSpacing: '0.25em',
-            color: NEO.cyan,
-            fontWeight: 700,
-          }}
-        >
-          // SYS&nbsp;ONLINE
+        <div style={{ width: 1, height: 28, background: 'var(--color-border-strong)', flexShrink: 0 }} />
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{
+            fontFamily: DISPLAY,
+            fontSize: 18, fontWeight: 600,
+            letterSpacing: '0.04em',
+            color: 'var(--color-text-primary)',
+            lineHeight: 1.1,
+            textTransform: 'uppercase',
+            textShadow: '0 0 16px rgba(143, 191, 211, 0.18)',
+          }}>
+            STRATEGIC.COMMAND
+          </div>
+          <div className="hq-tech-id" style={{ color: 'var(--color-text-muted)' }}>
+            propósito → visão → metas
+          </div>
         </div>
-      </div>
-      <h1
-        style={{
-          margin: '8px 0 0',
-          fontSize: 36,
-          fontWeight: 800,
-          letterSpacing: '0.04em',
-          textTransform: 'uppercase',
-          color: NEO.textPrimary,
-        }}
-      >
-        /BUILD
-      </h1>
-      <div
-        style={{
-          fontSize: 11,
-          color: NEO.textSecondary,
-          marginTop: 6,
-          letterSpacing: '0.05em',
-        }}
-      >
-        camada estratégica · propósito → visão → metas
       </div>
 
-      {/* Stats bar — visão imediata do estado da camada estratégica */}
-      <div
-        style={{
-          marginTop: 14,
-          display: 'flex',
-          gap: 14,
-          flexWrap: 'wrap',
-        }}
-      >
-        <HeaderStat
-          label="metas ativas"
+      {/* RIGHT — stats stack em formato HUD readout (igual o lado direito
+          do Dashboard header). Cada stat tem label mono + value mono colorido
+          conforme estado (oxblood quando alerta). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
+        <HeaderReadout
+          label="METAS"
           value={`${activeGoals.length}/${maxMetas}`}
-          color={
+          tone={
             activeGoals.length >= maxMetas
-              ? NEO.accent
+              ? 'danger'
               : activeGoals.length === 0
-              ? NEO.textMuted
-              : NEO.textPrimary
+              ? 'muted'
+              : 'ice'
           }
         />
-        <HeaderStat
-          label="drift"
+        <HeaderReadout
+          label="DRIFT"
           value={String(drift.length)}
-          color={drift.length > 0 ? NEO.accent : NEO.textMuted}
+          tone={drift.length > 0 ? 'danger' : 'muted'}
         />
-        <HeaderStat
-          label="rituais atrasados"
+        <HeaderReadout
+          label="ATRASOS"
           value={String(ritualsAtrasados)}
-          color={ritualsAtrasados > 0 ? NEO.accent : NEO.cyan}
+          tone={ritualsAtrasados > 0 ? 'danger' : 'success'}
         />
+        <div style={{ width: 1, height: 28, background: 'var(--color-border-strong)' }} />
+        <div className="hq-tech-id" style={{ color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
+          <span>SYS.ONLINE</span>
+          <span style={{ color: 'var(--color-success)' }}>· CONN.OK</span>
+        </div>
       </div>
-    </div>
+
+    </header>
   )
 }
 
-function HeaderStat({
+function HeaderReadout({
   label,
   value,
-  color,
+  tone,
 }: {
   label: string
   value: string
-  color: string
+  tone: 'ice' | 'danger' | 'muted' | 'success'
 }) {
+  const color =
+    tone === 'danger' ? 'var(--color-accent-light)'
+    : tone === 'muted' ? 'var(--color-text-tertiary)'
+    : tone === 'success' ? 'var(--color-success-light)'
+    : 'var(--color-ice-light)'
+  const glow =
+    tone === 'danger' ? '0 0 10px rgba(251, 113, 133, 0.30)'
+    : tone === 'ice' ? '0 0 10px var(--color-ice-glow)'
+    : 'none'
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
-        minWidth: 80,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 9,
-          letterSpacing: '0.22em',
-          color: NEO.textMuted,
-          fontWeight: 700,
-          textTransform: 'uppercase',
-        }}
-      >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
+      <span className="hq-tech-label" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
         {label}
-      </div>
-      <div
-        style={{
-          fontSize: 22,
-          fontWeight: 800,
-          color,
-          letterSpacing: '0.04em',
-          lineHeight: 1,
-          fontFamily: MONO,
-        }}
-      >
+      </span>
+      <span style={{
+        fontFamily: MONO,
+        fontSize: 16, fontWeight: 700,
+        color,
+        textShadow: glow,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '0.02em',
+      }}>
         {value}
-      </div>
+      </span>
     </div>
   )
 }
+
+// HeaderStat (old) removido — substituído por HeaderReadout no novo header BAND.
 
 // ─── Painel do Propósito ──────────────────────────────────────────────────
 
@@ -4794,58 +5673,73 @@ function Panel({
   subtitle?: string
   children: React.ReactNode
 }) {
+  // Frame estilo "DATA DISPLAY" do Dashboard veredito:
+  //  - Outer: hq-brackets-full (corner ice glow) + 1px ice-deep + clipPath
+  //    chamfer-bl + radial subtle gradients no fundo
+  //  - TITLE BAR: faixa solid no topo com pulse-square ice + tech-label +
+  //    optional subtitle/range no canto direito
+  //  - CONTENT: padding generoso, children
+  // Mesma assinatura visual da DashboardPage frame de veredito.
   return (
     <div
+      className="hq-brackets-full"
       style={{
         position: 'relative',
-        background: NEO.panel,
-        border: `1px solid ${NEO.border}`,
-        padding: '20px 24px 24px',
+        border: '1px solid var(--color-ice-deep)',
+        background: `
+          radial-gradient(ellipse 60% 100% at 50% 0%, rgba(143, 191, 211, 0.05), transparent 70%),
+          radial-gradient(ellipse 80% 60% at 50% 100%, rgba(40, 50, 57, 0.25), transparent 70%),
+          rgba(8, 12, 18, 0.65)
+        `,
+        color: 'var(--color-ice)', // for hq-brackets-full corner color
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)',
       }}
     >
-      {/* Corner brackets — vibe CP2077 menu */}
-      <CornerBracket position="tl" />
-      <CornerBracket position="tr" />
-      <CornerBracket position="bl" />
-      <CornerBracket position="br" />
-
+      {/* TITLE BAR — faixa solid no topo, separa do CONTENT. */}
       <div
         style={{
+          padding: '8px 16px',
+          borderBottom: '1px solid var(--color-ice-deep)',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          fontSize: 11,
-          letterSpacing: '0.32em',
-          color: NEO.accent,
-          fontWeight: 700,
-          marginBottom: 2,
+          gap: 10,
+          background: 'rgba(40, 50, 57, 0.45)',
+          flexWrap: 'wrap',
         }}
       >
-        <span style={{ color: NEO.accent }}>❰</span>
-        <span>{title}</span>
-        <span
+        <div
+          aria-hidden="true"
           style={{
-            flex: 1,
-            height: 1,
-            background: `linear-gradient(90deg, ${NEO.borderHot} 0%, transparent 100%)`,
-            marginLeft: 4,
+            width: 8, height: 8,
+            background: 'var(--color-ice)',
+            boxShadow: '0 0 8px var(--color-ice-glow)',
+            flexShrink: 0,
           }}
         />
-      </div>
-      {subtitle && (
-        <div
+        <span
+          className="hq-tech-label"
           style={{
+            color: 'var(--color-ice-light)',
+            letterSpacing: '0.28em',
             fontSize: 10,
-            color: NEO.textMuted,
-            marginBottom: 18,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
           }}
         >
-          {subtitle}
-        </div>
-      )}
-      {children}
+          {title}
+        </span>
+        {subtitle && (
+          <span
+            className="hq-tech-id"
+            style={{ color: 'var(--color-text-muted)', marginLeft: 'auto' }}
+          >
+            {subtitle}
+          </span>
+        )}
+      </div>
+
+      {/* CONTENT */}
+      <div style={{ padding: '20px 24px 24px' }}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -4929,21 +5823,27 @@ function ActionBtn({
 }
 
 const textareaStyle: React.CSSProperties = {
-  background: NEO.bg,
+  // Bg sólido — antes `NEO.bg = transparent` deixava o campo invisível
+  // sobre o card. Border discreta (não accent) pra não competir com input.
+  // Fonte BODY (Chakra Petch) — texto livre lê melhor que mono.
+  background: 'var(--color-bg-primary)',
   color: NEO.textPrimary,
-  border: `1px solid ${NEO.accent}`,
-  padding: 10,
-  fontFamily: MONO,
+  border: '1px solid var(--color-border)',
+  padding: '10px 12px',
+  fontFamily: BODY,
   fontSize: 13,
-  lineHeight: 1.6,
+  lineHeight: 1.55,
   resize: 'vertical',
   outline: 'none',
+  width: '100%',
+  boxSizing: 'border-box',
+  letterSpacing: 0,
 }
 
 const inputStyle: React.CSSProperties = {
-  background: NEO.bg,
+  background: 'var(--color-bg-primary)',
   color: NEO.textPrimary,
-  border: `1px solid ${NEO.accent}`,
+  border: '1px solid var(--color-border)',
   padding: '6px 10px',
   fontFamily: MONO,
   fontSize: 12,
@@ -4952,9 +5852,10 @@ const inputStyle: React.CSSProperties = {
 }
 
 const inputBlockStyle: React.CSSProperties = {
-  background: NEO.bg,
+  // Bg sólido — mesmo motivo do textareaStyle.
+  background: 'var(--color-bg-primary)',
   color: NEO.textPrimary,
-  border: `1px solid ${NEO.border}`,
+  border: '1px solid var(--color-border)',
   padding: '8px 12px',
   fontFamily: MONO,
   fontSize: 13,

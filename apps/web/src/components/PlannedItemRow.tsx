@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import type { ActiveSession, Area, Quest } from '../types'
 import {
   fetchSessions, fetchTaskSessions, fetchRoutineSessions,
@@ -8,14 +8,22 @@ import {
 import { useAppInvalidator } from '../lib/app-queries'
 import { tabSync } from '../lib/tabsync'
 import { RunnableControls } from './RunnableControls'
-import { BlockEditor, isBlockDocEmpty } from './BlockEditor'
+import { isBlockDocEmpty } from './block-utils'
 import { alertDialog } from '../lib/dialog'
+
+// BlockEditor é pesado (~1.1 MB de @blocknote) — só baixa quando o user
+// expande a descrição de uma quest/task/rotina. Lazy load via React.lazy
+// com Suspense fallback minimalista. `isBlockDocEmpty` segue eager via
+// `block-utils.ts` pra logic de save não esperar o chunk.
+const BlockEditor = lazy(() =>
+  import('./BlockEditor').then(m => ({ default: m.BlockEditor }))
+)
 
 /**
  * Row usado dentro dos períodos (manhã/tarde/noite) da tela Dia.
  * Play/pause/stop completos + cronômetro para qualquer tipo (quest/task/routine).
  */
-export function PlannedItemRow({ item, areas, activeSession, onSessionUpdate, onRemoveFromPlan, target, parentTitle, deliverableTitle, onOpen, migratedFromLabel }: {
+export function PlannedItemRow({ item, areas, activeSession, onSessionUpdate, onRemoveFromPlan, target, parentTitle, deliverableTitle, onOpen, migratedFromLabel, currentPeriod, onMoveToPeriod }: {
   item: any
   areas: Area[]
   activeSession: ActiveSession | null
@@ -31,6 +39,11 @@ export function PlannedItemRow({ item, areas, activeSession, onSessionUpdate, on
   /** Rótulo do turno de origem se o item foi migrado automaticamente
    *  (ex: "manhã"). Renderiza um indicador discreto "↑ veio da manhã". */
   migratedFromLabel?: string
+  /** Turno atual do item (pra esconder o botão "mover pra aqui"). */
+  currentPeriod?: 'morning' | 'afternoon' | 'evening'
+  /** Fallback touch: mover item pra outro turno sem drag-and-drop.
+   *  Renderiza chips M/T/N só em devices com `pointer: coarse`. */
+  onMoveToPeriod?: (period: 'morning' | 'afternoon' | 'evening') => void
 }) {
   const [showDescription, setShowDescription] = useState(false)
   const [descDraft, setDescDraft] = useState<string | null>(null)
@@ -336,6 +349,44 @@ export function PlannedItemRow({ item, areas, activeSession, onSessionUpdate, on
             }
           }}
         />
+        {/* Touch fallback pra drag-and-drop entre turnos. Só aparece em
+            devices com pointer coarse (phones/tablets). Cada chip move o
+            item pro turno correspondente. O turno atual fica escondido
+            pra não poluir. */}
+        {onMoveToPeriod && (
+          <div
+            className="hq-move-period-chips"
+            style={{
+              display: 'none', // override via @media (pointer: coarse) abaixo
+              gap: 4,
+              alignSelf: 'flex-start',
+            }}
+            data-current-period={currentPeriod ?? ''}
+          >
+            {(['morning', 'afternoon', 'evening'] as const).map(p => {
+              if (p === currentPeriod) return null
+              const label = p === 'morning' ? 'M' : p === 'afternoon' ? 'T' : 'N'
+              return (
+                <button
+                  key={p}
+                  onClick={() => onMoveToPeriod(p)}
+                  title={`mover pra ${p === 'morning' ? 'manhã' : p === 'afternoon' ? 'tarde' : 'noite'}`}
+                  style={{
+                    minWidth: 32, minHeight: 32,
+                    background: 'rgba(8, 12, 18, 0.55)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-ice-light)',
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11, fontWeight: 700,
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%)',
+                  }}
+                >{label}</button>
+              )
+            })}
+          </div>
+        )}
         <button
           onClick={onRemoveFromPlan}
           title="remover do plano do dia"
@@ -393,12 +444,23 @@ export function PlannedItemRow({ item, areas, activeSession, onSessionUpdate, on
             <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
             DESCRIPTION
           </div>
-          <BlockEditor
-            value={descDraft ?? item?.description ?? ''}
-            onChange={setDescDraft}
-            placeholder="Digite / pra ver os blocos…"
-            minHeight={80}
-          />
+          <Suspense fallback={
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 9,
+              color: 'var(--color-text-muted)', letterSpacing: '0.18em',
+              textTransform: 'uppercase', padding: '20px 0',
+            }}>
+              <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+              LOADING.EDITOR
+            </div>
+          }>
+            <BlockEditor
+              value={descDraft ?? item?.description ?? ''}
+              onChange={setDescDraft}
+              placeholder="Digite / pra ver os blocos…"
+              minHeight={80}
+            />
+          </Suspense>
         </div>
       </div>
     )}

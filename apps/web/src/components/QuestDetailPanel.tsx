@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { CheckCircle2, CheckCircle, Pencil, Trash2, XCircle, GripVertical } from 'lucide-react'
 import type { Area, Project, Quest, FinParcela, FinPaymentTemplate, FinClient, FinHourlyRateStats } from '../types'
 import {
@@ -20,7 +20,25 @@ import { InlineText } from './ui/InlineText'
 import { Label } from './ui/Label'
 import { PrioritySelect } from './PrioritySelect'
 import { StatusDropdown } from './StatusDropdown'
-import { BlockEditor, isBlockDocEmpty } from './BlockEditor'
+import { isBlockDocEmpty } from './block-utils'
+// BlockEditor lazy — chunk pesado @blocknote (~1.1 MB) só baixa quando
+// usuário expande notas de projeto ou descrição de subtarefa.
+const BlockEditor = lazy(() =>
+  import('./BlockEditor').then(m => ({ default: m.BlockEditor }))
+)
+// Placeholder cyber-styled enquanto o chunk baixa.
+function EditorFallback() {
+  return (
+    <div style={{
+      fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+      color: 'var(--color-text-muted)', letterSpacing: '0.18em',
+      textTransform: 'uppercase', padding: '20px 0',
+    }}>
+      <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+      LOADING.EDITOR
+    </div>
+  )
+}
 import { Card } from './ui/Primitives'
 import {
   modalOverlay as sharedModalOverlay,
@@ -1449,12 +1467,14 @@ export function QuestDetailPanel({
                                   <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
                                   DESCRIPTION
                                 </span>
-                                <BlockEditor
-                                  value={descriptionDraft[q.id] ?? q.description ?? ''}
-                                  onChange={v => setDescriptionDraft(prev => ({ ...prev, [q.id]: v }))}
-                                  placeholder="Digite / pra ver os blocos…"
-                                  minHeight={80}
-                                />
+                                <Suspense fallback={<EditorFallback />}>
+                                  <BlockEditor
+                                    value={descriptionDraft[q.id] ?? q.description ?? ''}
+                                    onChange={v => setDescriptionDraft(prev => ({ ...prev, [q.id]: v }))}
+                                    placeholder="Digite / pra ver os blocos…"
+                                    minHeight={80}
+                                  />
+                                </Suspense>
                               </div>
                               <div>
                                 <span style={{
@@ -1676,12 +1696,14 @@ export function QuestDetailPanel({
       <div style={{ marginTop: 40, paddingTop: 28, borderTop: '1px solid var(--color-divider)' }}>
         <Label>informações detalhadas</Label>
         <div style={{ marginTop: 10 }}>
-          <BlockEditor
-            value={notesDraft ?? project.notes ?? ''}
-            onChange={setNotesDraft}
-            placeholder="Digite / pra escolher o tipo de bloco…"
-            minHeight={200}
-          />
+          <Suspense fallback={<EditorFallback />}>
+            <BlockEditor
+              value={notesDraft ?? project.notes ?? ''}
+              onChange={setNotesDraft}
+              placeholder="Digite / pra escolher o tipo de bloco…"
+              minHeight={200}
+            />
+          </Suspense>
         </div>
       </div>
 

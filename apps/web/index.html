@@ -1369,6 +1369,22 @@
         background: var(--glass-bg-hover);
       }
 
+      /* Tap targets WCAG (44×44px) em touch devices. Mantemos 32px no
+         desktop pra densidade cyber HUD — touch screens precisam de área
+         maior pra dedo. `pointer: coarse` matcheia phones e tablets. */
+      @media (pointer: coarse) {
+        .hq-icon-btn, .hq-icon-btn-bare {
+          min-width: 44px;
+          min-height: 44px;
+          padding: var(--space-3);
+        }
+        /* Chips M/T/N pra mover item entre turnos (fallback de drag-and-drop
+           em touch) — aparecem só aqui. Desktop usa drag normal. */
+        .hq-move-period-chips {
+          display: flex !important;
+        }
+      }
+
       /* ─── Row hoverable ─── */
       .hq-row-hoverable {
         transition:

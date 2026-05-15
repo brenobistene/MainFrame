@@ -135,7 +135,7 @@ export function RulesModal({ categories, accounts, onClose }: {
     <div onClick={onClose} style={modalOverlay()}>
       <div onClick={e => e.stopPropagation()} style={{
         ...modalShell(),
-        minWidth: 560, maxWidth: 720, maxHeight: '80vh',
+        width: 'min(720px, calc(100vw - 16px))', maxHeight: '80vh',
         display: 'flex', flexDirection: 'column',
       }}>
         <div style={modalHairline} />
