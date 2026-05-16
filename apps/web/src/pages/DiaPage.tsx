@@ -483,12 +483,20 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
         .map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })))
     }
     if (plannerTypes.has('ritual')) {
-      // Rituais ativos. `id` derivado de cadencia (only-one-per-cadencia model).
-      // `done` quando ultima_execucao == hoje (já cumpriu o ciclo de hoje).
-      // Não filtra por priority (rituais não têm). Não filtra por range
-      // (rituais têm cadência própria, não scheduled_date).
+      // Rituais ativos filtrados pela janela do planner.
+      //  - Atrasados (dias_atraso > 0) sempre aparecem — são pendência viva
+      //    que precisa de slot independente da janela escolhida.
+      //  - Senão, só aparecem se a próxima execução prevista (proxima_data)
+      //    cai dentro do range. Ritual semanal com proxima_data daqui 30 dias
+      //    não deve aparecer no planner de hoje.
+      //  - `done` quando ultima_execucao == hoje (ciclo cumprido).
+      //  - Rituais não têm priority — bypass do priorityOK.
       items.push(...rituals
-        .filter(r => r.ativo)
+        .filter(r => {
+          if (!r.ativo) return false
+          if (r.dias_atraso > 0) return true
+          return withinRange(r.proxima_data)
+        })
         .map(r => ({
           ...r,
           id: `ritual:${r.cadencia}`,
@@ -2670,6 +2678,15 @@ function RitualPlannedRow({
   )
 }
 
+/**
+ * Planned row de pendência (Mind / health_item diários) — espelha o
+ * visual de `PlannedItemRow` (thumbnail à esquerda + main card à direita)
+ * pra alinhar com quests/tasks/routines. Diferenças:
+ *   - typeCode: MND pra Mind, HLT pra health_item
+ *   - typeAccent: cor da pendência (roxo Mind, cor do item Health)
+ *   - Botão INICIAR no lugar de RunnableControls (abre modal — sem
+ *     cronômetro, registra a sessão e some)
+ */
 function PendenciaPlannedRow({
   item,
   onRemoveFromPlan,
@@ -2679,98 +2696,235 @@ function PendenciaPlannedRow({
   onRemoveFromPlan: () => void
   onExecute: (item: any) => void
 }) {
-  const cor = item.cor || '#7fb8a8'
   const isMind = item.origem === 'mind'
+  const cor = item.cor || (isMind ? '#9b88c4' : '#7fb8a8')
+  const typeCode = isMind ? 'MND' : 'HLT'
+  const durMin = item.estimated_minutes ?? 0
+  const durLabel = durMin > 0
+    ? (durMin >= 60
+      ? `${Math.floor(durMin / 60)}H${durMin % 60 ? ` ${durMin % 60}M` : ''}`
+      : `${durMin}M`)
+    : '—'
+  const borderColor = 'rgba(143, 191, 211, 0.22)'
+
   return (
     <div
       style={{
-        background: 'rgba(8, 12, 18, 0.55)',
-        border: '1px solid rgba(143, 191, 211, 0.22)',
-        borderLeft: `2px solid ${cor}`,
-        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
-        padding: '10px 14px',
         display: 'flex',
-        alignItems: 'center',
-        gap: 10,
+        flexDirection: 'column',
+        gap: 0,
+        width: '100%',
+        boxSizing: 'border-box',
+        minWidth: 0,
+        maxWidth: '100%',
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'stretch',
+          gap: 6,
+          position: 'relative',
+          transition: 'transform var(--motion-fast) var(--ease-smooth)',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.transform = 'translateX(2px)'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.transform = 'translateX(0)'
+        }}
+      >
+        {/* THUMBNAIL — mesmo visual de PlannedItemRow (gradient + chamfer) */}
         <div
           style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 13,
-            fontWeight: 600,
-            color: 'var(--color-text-primary)',
-            letterSpacing: '0.03em',
-            textTransform: 'uppercase',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {item.title}
-        </div>
-        <div
-          style={{
-            marginTop: 3,
+            width: 64,
+            flexShrink: 0,
+            background: `linear-gradient(135deg, ${cor}22, ${cor}08 60%, transparent)`,
+            border: `1px solid ${borderColor}`,
             display: 'flex',
-            gap: 8,
+            flexDirection: 'column',
             alignItems: 'center',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9,
-            fontWeight: 700,
-            color: 'var(--color-text-muted)',
-            letterSpacing: '0.15em',
-            textTransform: 'uppercase',
-            flexWrap: 'wrap',
+            justifyContent: 'center',
+            gap: 4,
+            clipPath: 'polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px)',
+            transition: 'border-color var(--motion-fast) var(--ease-smooth)',
           }}
         >
-          <span style={{ color: cor }}>
-            {isMind ? 'Mind · Meditação' : 'Health · Pendência diária'}
-          </span>
-          {item.estimated_minutes > 0 && (
-            <>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>{item.estimated_minutes} min</span>
-            </>
-          )}
-          {item.horario_sugerido && (
-            <>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>~{item.horario_sugerido}</span>
-            </>
-          )}
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              fontWeight: 700,
+              color: cor,
+              letterSpacing: '0.12em',
+              lineHeight: 1,
+              textShadow: `0 0 6px ${cor}55`,
+            }}
+          >
+            {typeCode}
+          </div>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 9,
+              fontWeight: 700,
+              color: 'var(--color-text-muted)',
+              letterSpacing: '0.08em',
+              lineHeight: 1,
+            }}
+          >
+            {durLabel}
+          </div>
+          <div
+            aria-hidden="true"
+            style={{ width: 5, height: 5, background: cor, marginTop: 2 }}
+          />
+        </div>
+
+        {/* MAIN CARD */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            background: 'rgba(8, 12, 18, 0.55)',
+            border: `1px solid ${borderColor}`,
+            borderRadius: 0,
+            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%)',
+            padding: '10px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            transition: 'border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
+            e.currentTarget.style.boxShadow = '0 0 12px rgba(143, 191, 211, 0.18)'
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = borderColor
+            e.currentTarget.style.boxShadow = 'none'
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              flexWrap: 'wrap',
+              width: '100%',
+              minWidth: 0,
+            }}
+          >
+            <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+              <div
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  color: 'var(--color-text-primary)',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  letterSpacing: '0.03em',
+                  textTransform: 'uppercase',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {item.title}
+              </div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  color: 'var(--color-text-muted)',
+                  letterSpacing: '0.15em',
+                  textTransform: 'uppercase',
+                  fontWeight: 600,
+                  marginTop: 4,
+                  display: 'flex',
+                  gap: 6,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ color: cor }}>
+                  {isMind ? 'Mind' : 'Health'}
+                </span>
+                {item.horario_sugerido && (
+                  <>
+                    <span style={{ opacity: 0.4 }}>·</span>
+                    <span>~{item.horario_sugerido}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                flexShrink: 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => onExecute(item)}
+                title="Iniciar — abre modal pra registrar"
+                style={{
+                  background: `${cor}22`,
+                  color: cor,
+                  border: `1px solid ${cor}`,
+                  padding: '5px 12px',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.18em',
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = `${cor}44`
+                  e.currentTarget.style.boxShadow = `0 0 10px ${cor}55`
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = `${cor}22`
+                  e.currentTarget.style.boxShadow = 'none'
+                }}
+              >
+                ▶ INICIAR
+              </button>
+              <button
+                type="button"
+                onClick={onRemoveFromPlan}
+                title="Remover do plano"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-muted)',
+                  padding: '5px 8px',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  cursor: 'pointer',
+                  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.color = 'var(--color-accent-light)'
+                  e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.color = 'var(--color-text-muted)'
+                  e.currentTarget.style.borderColor = 'var(--color-border)'
+                }}
+              >
+                ×
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={() => onExecute(item)}
-        className="hq-btn hq-btn--primary"
-        style={{
-          fontSize: 11,
-          padding: '7px 14px',
-          fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.15em',
-          textTransform: 'uppercase',
-        }}
-      >
-        FAZER
-      </button>
-      <button
-        type="button"
-        onClick={onRemoveFromPlan}
-        className="hq-icon-btn-bare"
-        style={{
-          minWidth: 22,
-          minHeight: 22,
-          padding: 3,
-          color: 'var(--color-text-muted)',
-        }}
-        title="Remover do plano (volta pra pendências)"
-        aria-label="Remover do plano"
-      >
-        ×
-      </button>
     </div>
   )
 }
