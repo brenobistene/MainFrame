@@ -115,39 +115,47 @@ function routineMatchesDay(r: Routine, jsDay: number): boolean {
 }
 
 /**
- * Resolve em qual minuto do dia um item (ritual/health-item/mind) deve
- * aparecer no timeline.
+ * Resolve onde no timeline cada item (ritual/health-item/mind) deve
+ * aparecer, processando TODOS de uma vez pra evitar empilhamento no início
+ * do período.
  *
- * Prioridade:
- *  1. `horario_sugerido` ("HH:MM") se preenchido
- *  2. dayPlan do dia (localStorage `hq-day-plan-${dateIso}`): início do
- *     período onde o item foi alocado
- *  3. null = não renderizar como block (mantém só marker no header)
+ * Lógica em duas fases:
+ *  1. Items com `horario_sugerido` preenchido ganham slot FIXO na hora
+ *     informada (não entram no cascade).
+ *  2. Items SEM hora caem no cascade do período onde foram alocados via
+ *     dayPlan (localStorage `hq-day-plan-${dateIso}`). Dentro do período,
+ *     items se encadeiam: o 1° começa no início do período, o 2° começa
+ *     onde o 1° acaba, etc. Cap no fim do período pra não vazar.
  *
- * Retorna `{ startMin, endMin }` em minutos desde meia-noite do dia,
- * usando `duracaoMin` pra calcular endMin. Se duracaoMin <= 0, usa 30
- * como mínimo razoável pra dar presença visual.
+ * Items que não têm hora E não foram alocados ficam fora do map (não
+ * renderizam como block — continuam visíveis só como marker no header).
  */
-function resolveItemSlot(
-  itemId: string,
-  dateIso: string,
-  horarioSugerido: string | null | undefined,
-  duracaoMin: number,
-): { startMin: number; endMin: number } | null {
-  const dur = Math.max(15, duracaoMin || 30)
+interface CalendarDayItem {
+  id: string
+  duracaoMin: number
+  horarioSugerido?: string | null | undefined
+}
 
-  // 1. horario_sugerido direto
-  if (horarioSugerido && /^\d{2}:\d{2}$/.test(horarioSugerido)) {
-    const [h, m] = horarioSugerido.split(':').map(Number)
-    const start = h * 60 + m
-    return { startMin: start, endMin: start + dur }
+function buildDayItemSlots(
+  items: CalendarDayItem[],
+  dateIso: string,
+): Map<string, { startMin: number; endMin: number }> {
+  const result = new Map<string, { startMin: number; endMin: number }>()
+  const durOf = (item: CalendarDayItem) => Math.max(15, item.duracaoMin || 30)
+
+  // Fase 1: horarios fixos.
+  for (const item of items) {
+    if (item.horarioSugerido && /^\d{2}:\d{2}$/.test(item.horarioSugerido)) {
+      const [h, m] = item.horarioSugerido.split(':').map(Number)
+      const start = h * 60 + m
+      result.set(item.id, { startMin: start, endMin: start + durOf(item) })
+    }
   }
 
-  // 2. dayPlan do dia — lê localStorage diretamente (sem hook pra
-  //    funcionar em qualquer dateIso, inclusive dias futuros sem hook).
+  // Fase 2: cascade no período alocado via dayPlan.
   try {
     const raw = localStorage.getItem(`hq-day-plan-${dateIso}`)
-    if (!raw) return null
+    if (!raw) return result
     const plan = JSON.parse(raw) as {
       morning?: string[]
       afternoon?: string[]
@@ -155,18 +163,27 @@ function resolveItemSlot(
     }
     const periods = loadDayPeriods()
     const ranges = periodRangesMinFrom(periods)
-    if (plan.morning?.includes(itemId)) {
-      return { startMin: ranges.morning[0], endMin: ranges.morning[0] + dur }
-    }
-    if (plan.afternoon?.includes(itemId)) {
-      return { startMin: ranges.afternoon[0], endMin: ranges.afternoon[0] + dur }
-    }
-    if (plan.evening?.includes(itemId)) {
-      return { startMin: ranges.evening[0], endMin: ranges.evening[0] + dur }
+    const periodKeys: Array<'morning' | 'afternoon' | 'evening'> = ['morning', 'afternoon', 'evening']
+
+    for (const periodName of periodKeys) {
+      const ids = plan[periodName] ?? []
+      const periodStart = ranges[periodName][0]
+      const periodEnd = ranges[periodName][1]
+      let cursor = periodStart
+      for (const id of ids) {
+        // Item já posicionado por horario_sugerido tem prioridade — pula.
+        if (result.has(id)) continue
+        const item = items.find(i => i.id === id)
+        if (!item) continue
+        const dur = durOf(item)
+        const end = Math.min(cursor + dur, periodEnd)
+        result.set(id, { startMin: cursor, endMin: end })
+        cursor = end
+      }
     }
   } catch { /* ignore */ }
 
-  return null
+  return result
 }
 
 /**
@@ -257,6 +274,33 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })()
   const { data: dayPendencias = [] } = useDiaPendencias(dateIsoTmp)
+
+  // Slot map: resolve onde cada item (ritual/health/mind) cai no timeline,
+  // processando todos juntos pra evitar empilhamento (vários blocks na
+  // mesma hora). Items com horario_sugerido têm hora fixa; items só
+  // alocados via dayPlan cascateiam dentro do período. Recalcula quando
+  // a data muda OU listas mudam.
+  const dayItemSlots = useMemo(() => {
+    const items: CalendarDayItem[] = []
+    const ritualCadenciasNoDia = ritualsByDate.get(dateIsoTmp) ?? []
+    for (const cadencia of ritualCadenciasNoDia) {
+      const ritual = ritualByCadencia.get(cadencia)
+      if (!ritual) continue
+      items.push({
+        id: `ritual:${cadencia}`,
+        duracaoMin: ritual.duracao_alvo_min,
+        horarioSugerido: null,
+      })
+    }
+    for (const p of dayPendencias) {
+      items.push({
+        id: p.pendencia_id,
+        duracaoMin: p.duracao_min ?? 0,
+        horarioSugerido: p.horario_sugerido,
+      })
+    }
+    return buildDayItemSlots(items, dateIsoTmp)
+  }, [dateIsoTmp, ritualsByDate, ritualByCadencia, dayPendencias])
 
   useEffect(() => {
     const update = () => setCurrentTime(new Date())
@@ -417,34 +461,25 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
       evs.push({ id: `r:${routine.id}`, startMin: sMin, endMin: eMin })
     })
 
-    // Rituais — só viram block se alocados via dayPlan (não têm
-    // horario_sugerido próprio). Markers no header continuam pros não
-    // alocados (renderizados em mês/semana view).
+    // Rituais — slot vem do dayItemSlots map (cascade dentro do período).
+    // Items sem hora fixa nem allocation ficam fora do map → só marker.
     const ritualCadenciasNoDia = ritualsByDate.get(dateIso) ?? []
     for (const cadencia of ritualCadenciasNoDia) {
-      const ritual = ritualByCadencia.get(cadencia)
-      if (!ritual) continue
       const itemId = `ritual:${cadencia}`
-      const slot = resolveItemSlot(itemId, dateIso, null, ritual.duracao_alvo_min)
+      const slot = dayItemSlots.get(itemId)
       if (slot) evs.push({ id: itemId, startMin: slot.startMin, endMin: slot.endMin })
     }
 
-    // Health items + Mind — usam horario_sugerido (vem do backend) com
-    // fallback pra dayPlan. Pendências não-feitas do dia ainda em
-    // `dayPendencias` (já filtra por `done` no backend via dia.py).
+    // Health items + Mind — slot vem do mesmo map. horario_sugerido tem
+    // prioridade; cascade entra como fallback.
     for (const p of dayPendencias) {
-      const slot = resolveItemSlot(
-        p.pendencia_id,
-        dateIso,
-        p.horario_sugerido,
-        p.duracao_min ?? 0,
-      )
+      const slot = dayItemSlots.get(p.pendencia_id)
       if (slot) evs.push({ id: `pen:${p.pendencia_id}`, startMin: slot.startMin, endMin: slot.endMin })
     }
 
     return computeEventLayout(evs)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quests, tasks, routines, allSessions, allTaskSessions, allRoutineSessions, dateIso, ritualsByDate, ritualByCadencia, dayPendencias])
+  }, [quests, tasks, routines, allSessions, allTaskSessions, allRoutineSessions, dateIso, ritualsByDate, dayPendencias, dayItemSlots])
 
   return (
     <div style={{ color: 'var(--color-text-primary)' }}>
@@ -1443,13 +1478,13 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                   )
                 })}
 
-                {/* Rituais alocados — só renderiza quando resolveItemSlot
-                    devolve slot (via dayPlan). Sem horario_sugerido próprio. */}
+                {/* Rituais alocados — slot vem do dayItemSlots map (cascade
+                    no período; items sem hora nem allocation ficam fora). */}
                 {(ritualsByDate.get(dateIso) ?? []).map((cadencia) => {
                   const ritual = ritualByCadencia.get(cadencia)
                   if (!ritual) return null
                   const itemId = `ritual:${cadencia}`
-                  const slot = resolveItemSlot(itemId, dateIso, null, ritual.duracao_alvo_min)
+                  const slot = dayItemSlots.get(itemId)
                   if (!slot) return null
                   const topPercent = 20 + (slot.startMin / 60) * 60 * timelineZoom
                   const heightPercent = ((slot.endMin - slot.startMin) / 60) * 60 * timelineZoom
@@ -1498,15 +1533,10 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                   )
                 })}
 
-                {/* Pendências (Health items + Mind) — usam horario_sugerido
-                    ou dayPlan period. Mind = roxo, health = cor do domain. */}
+                {/* Pendências (Health items + Mind) — slot vem do
+                    dayItemSlots map. Mind = roxo, health = cor do domain. */}
                 {dayPendencias.map((p) => {
-                  const slot = resolveItemSlot(
-                    p.pendencia_id,
-                    dateIso,
-                    p.horario_sugerido,
-                    p.duracao_min ?? 0,
-                  )
+                  const slot = dayItemSlots.get(p.pendencia_id)
                   if (!slot) return null
                   const topPercent = 20 + (slot.startMin / 60) * 60 * timelineZoom
                   const heightPercent = ((slot.endMin - slot.startMin) / 60) * 60 * timelineZoom
