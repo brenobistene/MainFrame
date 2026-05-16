@@ -96,7 +96,7 @@ export function QuestDetailPanel({
   void area; void onSessionUpdate;
   // Invalidator pra propagar mutações pro cache global. Sem isso, criar/editar
   // entregável aqui não refletia em outras páginas que consomem os mesmos
-  // hooks (DiaPage, Build) até F5. FinanceBlock instancia seu próprio
+  // hooks (ExecPage, Build) até F5. FinanceBlock instancia seu próprio
   // finInv pra parcelas (Hub Finance).
   const appInv = useAppInvalidator()
   // Subtasks carregadas do backend (escopadas ao projeto). Usamos estado

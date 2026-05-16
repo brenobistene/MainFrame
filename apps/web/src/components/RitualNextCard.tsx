@@ -9,7 +9,7 @@
  * - Senão: card sóbrio mostrando próxima execução (label + countdown)
  * - Click → navega pra /build
  *
- * Reusável em DashboardPage hoje. Pode entrar em DiaPage / CalendarPage no
+ * Reusável em DashboardPage hoje. Pode entrar em ExecPage / CalendarPage no
  * futuro se a surface ali fizer sentido.
  */
 import { useNavigate } from 'react-router-dom'
