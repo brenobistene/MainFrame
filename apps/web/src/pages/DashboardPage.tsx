@@ -723,33 +723,14 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         style={{
           padding: 'var(--space-5) var(--space-6) var(--space-10)',
           position: 'relative',
-          overflow: 'hidden',
-          background: `
-            radial-gradient(ellipse 50% 35% at 50% 12%, rgba(220, 224, 228, 0.14), transparent 75%),
-            radial-gradient(ellipse 90% 55% at 50% 18%, rgba(50, 62, 73, 0.40), transparent 75%),
-            radial-gradient(ellipse 40% 35% at 100% 45%, rgba(143, 191, 211, 0.10), transparent 70%),
-            radial-gradient(ellipse 55% 45% at 0% 75%, rgba(40, 50, 57, 0.30), transparent 70%),
-            radial-gradient(ellipse 50% 35% at 0% 8%, rgba(159, 18, 57, 0.07), transparent 60%),
-            radial-gradient(ellipse 110% 70% at 50% 115%, rgba(0, 0, 0, 0.85), transparent 70%),
-            #06080c
-          `,
+          // Atmosphere global do body (em index.html) já faz o trabalho pesado:
+          // halo branco, fog azul, grain SVG, vinheta. Aqui mantemos só um
+          // whisper sutil no topo pra ancorar o veredito. Glow é signal, não
+          // textura (DESIGN.md §Atmosphere-Is-Layer-Zero).
+          background:
+            'radial-gradient(ellipse 60% 30% at 50% 0%, rgba(143, 191, 211, 0.06), transparent 70%)',
         }}
       >
-        {/* Grain extra-denso só no dashboard body (acima do grain global)
-            pra reforçar a textura "filme/scene" sem afetar o resto do app. */}
-        <div
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            pointerEvents: 'none',
-            opacity: 0.13,
-            mixBlendMode: 'overlay',
-            backgroundImage:
-              "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='dn'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0.6 0 0 0 0.45  0.7 0 0 0 0.55  0.85 0 0 0 0.7  0 0 0 0.8 0'/></filter><rect width='100%25' height='100%25' filter='url(%23dn)'/></svg>\")",
-            zIndex: 0,
-          }}
-        />
         <div style={{ position: 'relative', zIndex: 1 }}>
 
       {/* ─── VEREDITO (data display frame estilo "score readout" CP2077) ─── */}
@@ -951,13 +932,16 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           collapsed={collapsedSections['matrix'] === undefined ? true : !!collapsedSections['matrix']}
           onToggle={() => toggleSection('matrix')}
         />
+        {/* Collapse via grid-template-rows 0fr → 1fr (não causa layout
+            thrash como max-height). Filho wrapper com overflow hidden. */}
         <div style={{
-          maxHeight: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? 0 : 9999,
-          overflow: 'hidden',
+          display: 'grid',
+          gridTemplateRows: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? '0fr' : '1fr',
           opacity: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? 0 : 1,
-          transition: 'opacity var(--motion-base) var(--ease-emphasis), max-height var(--motion-base) var(--ease-emphasis)',
+          transition: 'opacity var(--motion-base) var(--ease-emphasis), grid-template-rows var(--motion-base) var(--ease-emphasis), margin-top var(--motion-base) var(--ease-emphasis)',
           marginTop: (collapsedSections['matrix'] === undefined || collapsedSections['matrix']) ? 0 : 14,
         }}>
+        <div style={{ overflow: 'hidden', minHeight: 0 }}>
           {totalProjectsInMatrix === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
               Nenhum projeto cadastrado.
@@ -1039,6 +1023,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
             </div>
           )}
         </div>
+        </div>
       </section>
 
       {/* ─── Projetos em risco ─── */}
@@ -1051,12 +1036,13 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           accent={riskProjects.some(p => p.status === 'overdue') ? 'oxblood' : 'ice'}
         />
         <div style={{
-          maxHeight: collapsedSections['pressure'] ? 0 : 9999,
-          overflow: 'hidden',
+          display: 'grid',
+          gridTemplateRows: collapsedSections['pressure'] ? '0fr' : '1fr',
           opacity: collapsedSections['pressure'] ? 0 : 1,
-          transition: 'opacity var(--motion-base) var(--ease-emphasis), max-height var(--motion-base) var(--ease-emphasis)',
+          transition: 'opacity var(--motion-base) var(--ease-emphasis), grid-template-rows var(--motion-base) var(--ease-emphasis), margin-top var(--motion-base) var(--ease-emphasis)',
           marginTop: collapsedSections['pressure'] ? 0 : 14,
         }}>
+        <div style={{ overflow: 'hidden', minHeight: 0 }}>
 
         {visibleProjects.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
@@ -1115,6 +1101,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           </button>
         )}
         </div>
+        </div>
       </section>
 
       {/* ─── Próximas deadlines ─── */}
@@ -1127,12 +1114,13 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           accent={upcomingItems.some(i => i.isOverdue) ? 'oxblood' : 'ice'}
         />
         <div style={{
-          maxHeight: collapsedSections['deadlines'] ? 0 : 9999,
-          overflow: 'hidden',
+          display: 'grid',
+          gridTemplateRows: collapsedSections['deadlines'] ? '0fr' : '1fr',
           opacity: collapsedSections['deadlines'] ? 0 : 1,
-          transition: 'opacity var(--motion-base) var(--ease-emphasis), max-height var(--motion-base) var(--ease-emphasis)',
+          transition: 'opacity var(--motion-base) var(--ease-emphasis), grid-template-rows var(--motion-base) var(--ease-emphasis), margin-top var(--motion-base) var(--ease-emphasis)',
           marginTop: collapsedSections['deadlines'] ? 0 : 14,
         }}>
+        <div style={{ overflow: 'hidden', minHeight: 0 }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: 12, marginBottom: 18, flexWrap: 'wrap',
@@ -1196,7 +1184,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                   : 'Nenhuma deadline nessa janela.'}
                 {deadlinesOutsideWindow > 0 && !deadlineTypeFilter && (
                   <span style={{ display: 'block', marginTop: 6, color: 'var(--color-text-tertiary)', fontStyle: 'normal' }}>
-                    {deadlinesOutsideWindow} deadline{deadlinesOutsideWindow !== 1 ? 's' : ''} fora da janela — ajuste o intervalo acima pra ver.
+                    {deadlinesOutsideWindow} deadline{deadlinesOutsideWindow !== 1 ? 's' : ''} fora da janela. Ajuste o intervalo acima pra ver.
                   </span>
                 )}
               </div>
@@ -1307,6 +1295,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           </div>
           )
         })()}
+        </div>
         </div>
       </section>
 
@@ -1539,9 +1528,10 @@ function ProjectCell({
       style={{
         position: 'relative',
         width: '100%',
-        background: dimmed ? 'rgba(8, 12, 18, 0.35)' : 'rgba(8, 12, 18, 0.55)',
+        background: dimmed
+          ? `linear-gradient(135deg, ${areaColor}0a 0%, transparent 55%), rgba(8, 12, 18, 0.35)`
+          : `linear-gradient(135deg, ${areaColor}14 0%, transparent 55%), rgba(8, 12, 18, 0.55)`,
         border: `1px solid ${borderColor}`,
-        borderLeft: `2px solid ${areaColor}${dimmed ? '55' : 'aa'}`,
         borderRadius: 0,
         clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
         cursor: 'pointer',

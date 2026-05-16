@@ -66,9 +66,10 @@ export function RitualNextCard({ urgentOnly = false }: { urgentOnly?: boolean })
       type="button"
       onClick={() => navigate('/build')}
       style={{
-        background: 'transparent',
+        background: isAtrasado
+          ? `linear-gradient(90deg, ${accent}0d 0%, transparent 45%), transparent`
+          : 'transparent',
         border: `1px solid ${isAtrasado ? accent : 'var(--color-border)'}`,
-        borderLeft: `2px solid ${accent}`,
         padding: '10px 14px',
         display: 'flex',
         alignItems: 'center',

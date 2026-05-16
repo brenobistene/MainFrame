@@ -502,8 +502,9 @@ function DomainPanel({ domain }: { domain: HealthDomain }) {
         color: 'inherit',
         padding: '14px 18px',
         position: 'relative',
-        borderLeft: `3px solid ${cor}`,
-        boxShadow: `inset 1px 0 8px -4px ${cor}`,
+        // Tint diagonal sutil na cor do domínio em vez de side-stripe.
+        // Identifica o domínio sem violar o ban de border-stripe da DESIGN.md.
+        backgroundImage: `linear-gradient(135deg, ${cor}14 0%, transparent 50%)`,
       }}
     >
       {/* HEADER */}

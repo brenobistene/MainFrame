@@ -292,8 +292,9 @@ function DomainHero({
         position: 'relative',
         padding: 'var(--space-5) var(--space-6)',
         marginBottom: 'var(--space-4)',
-        borderLeft: `3px solid ${cor}`,
-        boxShadow: `inset 1px 0 8px -4px ${cor}`,
+        // Tint diagonal sutil na cor do domínio em vez de side-stripe.
+        // Identifica o domínio sem violar o ban de border-stripe da DESIGN.md.
+        backgroundImage: `linear-gradient(135deg, ${cor}1a 0%, transparent 45%)`,
       }}
     >
       {/* Hairline ice no topo, assinatura CP2077 hero card */}
@@ -583,8 +584,9 @@ function RecordRow({
         marginBottom: 4,
         fontSize: 12,
         fontFamily: MONO,
-        borderLeft: `3px solid ${cor}`,
-        boxShadow: `inset 1px 0 6px -3px ${cor}`,
+        // Tint diagonal sutil em vez de side-stripe. PulseSquare (esquerda)
+        // já carrega a cor do domínio como leading sigil.
+        backgroundImage: `linear-gradient(90deg, ${cor}0d 0%, transparent 30%)`,
       }}
     >
       <div
