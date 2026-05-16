@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search } from 'lucide-react'
-import type { ActiveSession, Area, Deliverable, Project, Quest, Routine, Task } from '../types'
+import type { ActiveSession, Area, BuildRitual, Deliverable, Project, Quest, Routine, Task } from '../types'
 import { fetchDeliverables, updateTask, deleteTask, reportApiError } from '../api'
 import { useTasks, useRoutines, useRoutinesForDate, useAppInvalidator } from '../lib/app-queries'
+import { useDiaPendencias, useInvalidateDiaPendencias } from '../lib/dia-queries'
+import { useRituals } from '../lib/build-queries'
 import { tabSync } from '../lib/tabsync'
 import { confirmDialog } from '../lib/dialog'
+import MindRegisterModal from '../components/mind/MindRegisterModal'
+import RegisterModal from '../components/health/RegisterModal'
 import { isoToLocalYmd } from '../utils/datetime'
 import { effectiveQuestDeadline } from '../utils/quests'
 import type { DateRange } from '../utils/dateRange'
@@ -44,6 +48,7 @@ function normalize(s: string): string {
 
 function itemDurationMin(item: any): number {
   if (item.isTask) return item.duration_minutes ?? 0
+  if (item.isRitual) return item.duracao_alvo_min ?? 0
   // quests e rotinas usam estimated_minutes.
   return item.estimated_minutes ?? 0
 }
@@ -100,10 +105,29 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   // Routines via React Query — substituiu useState + fetchAllRoutines.
   const routinesQ = useRoutines()
   const routines: Routine[] = routinesQ.data ?? []
+  // Rituais (Build) — agendáveis pelos períodos do dia. `ritual.ultima_execucao`
+  // diz se já foi cumprido hoje (vem do backend, calculado por session).
+  const ritualsQ = useRituals()
+  const rituals: BuildRitual[] = ritualsQ.data ?? []
+  // Pendências do dia (Mind + health_items diários). Cards arrastáveis no
+  // pool de itens disponíveis. Doc: routers/dia.py.
+  const todayIso = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  const { data: diaPendencias = [] } = useDiaPendencias(todayIso)
+  const invalidateDia = useInvalidateDiaPendencias()
+  // Modal aberto a partir de pendência (Mind ou Health register). null =
+  // fechado. Após fechar com save, invalida pendências → some da lista.
+  const [openPendenciaModal, setOpenPendenciaModal] = useState<
+    | { type: 'mind' }
+    | { type: 'health_register'; domain: any; cor: string; item_id: number }
+    | null
+  >(null)
   const [showPlanner, setShowPlanner] = useState(false)
   const [plannerRange, setPlannerRange] = useState<DateRange>(() => computeRange('7d'))
-  const [plannerTypes, setPlannerTypes] = useState<Set<'quest' | 'task' | 'routine'>>(
-    new Set(['quest', 'task', 'routine'])
+  const [plannerTypes, setPlannerTypes] = useState<Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>>(
+    new Set(['quest', 'task', 'routine', 'ritual', 'mind', 'health'])
   )
   const [plannerIncludeUndated, setPlannerIncludeUndated] = useState(true)
   // Mostrar quests de TODOS os entregáveis (não só o ativo de cada projeto).
@@ -458,8 +482,48 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
       items.push(...routines.filter(r => routineAppliesInRange(r, plannerRange.from, plannerRange.to) && priorityOK((r as any).priority))
         .map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })))
     }
+    if (plannerTypes.has('ritual')) {
+      // Rituais ativos. `id` derivado de cadencia (only-one-per-cadencia model).
+      // `done` quando ultima_execucao == hoje (já cumpriu o ciclo de hoje).
+      // Não filtra por priority (rituais não têm). Não filtra por range
+      // (rituais têm cadência própria, não scheduled_date).
+      items.push(...rituals
+        .filter(r => r.ativo)
+        .map(r => ({
+          ...r,
+          id: `ritual:${r.cadencia}`,
+          title: r.nome || `Ritual ${r.cadencia}`,
+          isRitual: true,
+          done: r.ultima_execucao ? r.ultima_execucao.slice(0, 10) === todayIso : false,
+        })))
+    }
+    // Pendências (Mind / health_items diários). Não tem deadline nem
+    // scheduled_date — sempre "hoje" no contexto do agregador. Filtra por
+    // origem pra respeitar os chips do planner (mind vs health).
+    if (plannerTypes.has('mind') || plannerTypes.has('health')) {
+      for (const p of diaPendencias) {
+        if (p.origem === 'mind' && !plannerTypes.has('mind')) continue
+        if (p.origem === 'health_item' && !plannerTypes.has('health')) continue
+        items.push({
+          id: p.pendencia_id,
+          title: p.titulo,
+          estimated_minutes: p.duracao_min ?? 0,
+          isPendencia: true,
+          origem: p.origem,
+          modal_type: p.modal_type,
+          target: p.target,
+          cor: p.cor,
+          horario_sugerido: p.horario_sugerido,
+          done: false,
+        })
+      }
+    }
 
     return items.sort((a, b) => {
+      // Pendências vão pro fim — depois de quests/tasks/routines, antes
+      // de tudo desordenar.
+      if (a.isPendencia && !b.isPendencia) return 1
+      if (!a.isPendencia && b.isPendencia) return -1
       if (a.isRoutine && !b.isRoutine) return 1
       if (!a.isRoutine && b.isRoutine) return -1
       const ad = (a as any).deadline ?? (a as any).scheduled_date ?? ''
@@ -501,10 +565,27 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   const filteredItems = getFilteredItems()
   const plannedItemIds = [...dayPlan.morning, ...dayPlan.afternoon, ...dayPlan.evening]
   // Pool completo (ignora filtros do planner) pra contar tudo que está no dia.
+  // Pendências (Mind + health_items diários) entram como cards com flag
+  // `isPendencia` — arrastáveis igual quests/tasks/routines.
   const fullPool: any[] = [
     ...quests.filter(q => q.status !== 'done'),
     ...allTasks.filter(t => !t.done).map(t => ({ ...t, isTask: true })),
     ...routines.map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })),
+    ...diaPendencias.map(p => ({
+      id: p.pendencia_id,
+      title: p.titulo,
+      // Mapeia campos pra interface comum do pool — itemDurationMin lê
+      // estimated_minutes, sort pra esse fim.
+      estimated_minutes: p.duracao_min ?? 0,
+      isPendencia: true,
+      origem: p.origem,
+      modal_type: p.modal_type,
+      target: p.target,
+      cor: p.cor,
+      horario_sugerido: p.horario_sugerido,
+      // done sempre false aqui — se foi feita, backend já tira da lista
+      done: false,
+    })),
   ]
   const plannedItems = fullPool.filter(item => plannedItemIds.includes(item.id))
   const questCount = plannedItems.filter(i => !i.isTask && !i.isRoutine).length
@@ -915,6 +996,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
             quests={quests}
             allTasks={allTasks}
             routines={routines}
+            rituals={rituals}
             doneRoutineIds={doneRoutineIds}
             areas={areas}
             activeSession={activeSession}
@@ -951,6 +1033,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
               })
             }}
             onOpenPlanner={() => setShowPlanner(true)}
+            diaPendencias={diaPendencias}
             onOpenQuest={(q) => {
               // Clique numa quest (subtask) → abre o PROJETO PAI em
               // /areas/{slug}. A AreaDetailView só mostra detalhe pra quests
@@ -958,6 +1041,25 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
               if (!q.project_id) return
               onSelectProject(q.project_id)
               navigate(`/areas/${q.area_slug}`)
+            }}
+            onExecutePendencia={(item) => {
+              // Dispatch por modal_type pra abrir o modal correto.
+              if (item.modal_type === 'mind') {
+                setOpenPendenciaModal({ type: 'mind' })
+              } else if (item.modal_type === 'health_register') {
+                const t = item.target ?? {}
+                setOpenPendenciaModal({
+                  type: 'health_register',
+                  domain: {
+                    slug: t.domain_slug,
+                    nome: t.domain_nome,
+                    template: t.domain_template,
+                    cor: t.domain_cor,
+                  },
+                  cor: t.domain_cor ?? '#7fb8a8',
+                  item_id: t.item_id,
+                })
+              }
             }}
           />
         ))}
@@ -1005,9 +1107,32 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
           dayPeriods={dayPeriods}
           doneRoutineIds={doneRoutineIds}
           nowMin={nowMin}
+          diaPendencias={diaPendencias}
           onClose={() => setShowPlanner(false)}
         />,
         document.body,
+      )}
+
+      {/* Modais disparados por pendência arrastada pro plano. Após o close
+          invalida as pendências — backend retira a feita do agregador. */}
+      {openPendenciaModal?.type === 'mind' && (
+        <MindRegisterModal
+          onClose={() => {
+            setOpenPendenciaModal(null)
+            invalidateDia()
+          }}
+        />
+      )}
+      {openPendenciaModal?.type === 'health_register' && (
+        <RegisterModal
+          domain={openPendenciaModal.domain}
+          cor={openPendenciaModal.cor}
+          preselectedItemId={openPendenciaModal.item_id}
+          onClose={() => {
+            setOpenPendenciaModal(null)
+            invalidateDia()
+          }}
+        />
       )}
     </PageShell>
   )
@@ -1016,11 +1141,13 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
 // ─── PeriodSection ─────────────────────────────────────────────────────────
 
 function PeriodSection({
-  period, dayPeriods, dayPlan, projects, quests, allTasks, routines, doneRoutineIds,
+  period, dayPeriods, dayPlan, projects, quests, allTasks, routines, rituals, doneRoutineIds,
   areas, activeSession, delivsByProject, todayIsoForTasks, nowMin, migratedFrom,
   onSessionUpdate, onRemoveFromPlan, onMoveToPeriod, onOpenPlanner, onOpenQuest,
+  onExecutePendencia, diaPendencias,
 }: {
   period: 'morning' | 'afternoon' | 'evening'
+  rituals: BuildRitual[]
   dayPeriods: DayPeriods
   dayPlan: { morning: string[]; afternoon: string[]; evening: string[] }
   projects: Project[]
@@ -1043,6 +1170,12 @@ function PeriodSection({
   onMoveToPeriod: (itemId: string, target: 'morning' | 'afternoon' | 'evening') => void
   onOpenPlanner: () => void
   onOpenQuest: (q: Quest) => void
+  /** Click "FAZER" em planned item de pendência (Mind / health_item) abre
+   *  o modal certo. Resolvido no parent (DiaView) que tem state do modal. */
+  onExecutePendencia: (item: any) => void
+  /** Pendências do dia — necessárias pra resolver IDs do dayPlan ("mind",
+   *  "health_item:X") no allItems local. */
+  diaPendencias: import('../types').DiaPendencia[]
 }) {
   const periodLabelPt: Record<'morning' | 'afternoon' | 'evening', string> = {
     morning: 'manhã', afternoon: 'tarde', evening: 'noite',
@@ -1082,6 +1215,29 @@ function PeriodSection({
     ...quests,
     ...routines.map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })),
     ...allTasks.map(t => ({ ...t, isTask: true })),
+    // Rituais alocados pelos períodos. ID composto pra não colidir com quests
+    // (cadencia é single-instance, não tem UUID por instância).
+    ...rituals.filter(r => r.ativo).map(r => ({
+      ...r,
+      id: `ritual:${r.cadencia}`,
+      title: r.nome || `Ritual ${r.cadencia}`,
+      isRitual: true,
+      done: r.ultima_execucao ? r.ultima_execucao.slice(0, 10) === todayIso : false,
+    })),
+    // Pendências (Mind / health_items diários) — id = pendencia_id no
+    // dayPlan. Sem isso aqui, item arrastado pro bloco some da view.
+    ...diaPendencias.map(p => ({
+      id: p.pendencia_id,
+      title: p.titulo,
+      estimated_minutes: p.duracao_min ?? 0,
+      isPendencia: true,
+      origem: p.origem,
+      modal_type: p.modal_type,
+      target: p.target,
+      cor: p.cor,
+      horario_sugerido: p.horario_sugerido,
+      done: false,
+    })),
   ]
   // Renderiza NA ORDEM do dayPlan (e não na ordem do pool) pra respeitar a
   // reordenação que o user faz via drag-and-drop.
@@ -1182,6 +1338,30 @@ function PeriodSection({
       {periodItems.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {periodItems.map(item => {
+            // Pendência (Mind / health_item diário) — não tem cronômetro;
+            // só botão FAZER que abre o modal correto.
+            if ((item as any).isPendencia) {
+              return (
+                <PendenciaPlannedRow
+                  key={item.id}
+                  item={item}
+                  onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
+                  onExecute={onExecutePendencia}
+                />
+              )
+            }
+            // Ritual (Build) — alocação simples por período. Player completo
+            // continua no DiaPendenciasBlock no topo do /dia. Aqui é só sinal
+            // de "planejado pra este período".
+            if ((item as any).isRitual) {
+              return (
+                <RitualPlannedRow
+                  key={item.id}
+                  item={item}
+                  onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
+                />
+              )
+            }
             let parentTitle: string | null = null
             let deliverableTitle: string | null = null
             if (!(item as any).isTask && !(item as any).isRoutine) {
@@ -1265,6 +1445,7 @@ function PlannerDrawer({
   delivsByProject,
   dayPeriods,
   nowMin,
+  diaPendencias,
   onClose,
 }: {
   filteredItems: any[]
@@ -1272,8 +1453,8 @@ function PlannerDrawer({
   setDayPlan: (fn: (prev: any) => any) => void
   plannerRange: DateRange
   setPlannerRange: (r: DateRange) => void
-  plannerTypes: Set<'quest' | 'task' | 'routine'>
-  setPlannerTypes: (fn: (prev: Set<'quest' | 'task' | 'routine'>) => Set<'quest' | 'task' | 'routine'>) => void
+  plannerTypes: Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>
+  setPlannerTypes: (fn: (prev: Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>) => Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>) => void
   plannerIncludeUndated: boolean
   setPlannerIncludeUndated: (v: boolean) => void
   plannerShowAllDeliverables: boolean
@@ -1293,6 +1474,9 @@ function PlannerDrawer({
   /** Minutos desde meia-noite local. Usado pra calcular janela viva
    *  do período (mesma matemática da PeriodSection no Dia). */
   nowMin: number
+  /** Pendências do dia (Mind + health_items diários) — passadas pelo parent
+   *  pra garantir lookup correto quando pendência tá em dayPlan. */
+  diaPendencias: import('../types').DiaPendencia[]
   onClose: () => void
 }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -1329,10 +1513,13 @@ function PlannerDrawer({
     dayPlan.evening.includes(draggedItem.id)
   )
 
-  const typeChips: { key: 'quest' | 'task' | 'routine'; label: string }[] = [
+  const typeChips: { key: 'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'; label: string }[] = [
     { key: 'quest', label: 'Quests' },
     { key: 'task', label: 'Tarefas' },
     { key: 'routine', label: 'Rotinas' },
+    { key: 'ritual', label: 'Rituais' },
+    { key: 'mind', label: 'Mind' },
+    { key: 'health', label: 'Exercícios' },
   ]
 
   return (
@@ -1779,6 +1966,22 @@ function PlannerDrawer({
                 ...quests,
                 ...routines.map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })),
                 ...allTasks.map(t => ({ ...t, isTask: true })),
+                // Pendências (Mind/health_items) — precisam estar aqui pra
+                // serem resolvidas quando aparecem em dayPlan. Sem isso,
+                // arrastar pendência pra um período faz ela desaparecer
+                // (não acha o id no pool).
+                ...diaPendencias.map(p => ({
+                  id: p.pendencia_id,
+                  title: p.titulo,
+                  estimated_minutes: p.duracao_min ?? 0,
+                  isPendencia: true,
+                  origem: p.origem,
+                  modal_type: p.modal_type,
+                  target: p.target,
+                  cor: p.cor,
+                  horario_sugerido: p.horario_sugerido,
+                  done: false,
+                })),
               ]
               // Renderiza NA ORDEM do dayPlan pra refletir reordenação por drag.
               const periodItems = dayPlan[period]
@@ -2322,7 +2525,254 @@ function OverdueTasksBanner({ tasks, onToToday, onReschedule, onDiscard }: {
 function itemIsDone(item: any): boolean {
   if (item?.isTask) return !!item.done
   if (item?.isRoutine) return !!item.done
+  // Pendência só existe na lista enquanto não foi feita — backend filtra.
+  // Se ficou na lista, status = pendente.
+  if (item?.isPendencia) return false
   return item?.status === 'done'
+}
+
+/**
+ * Planned item row pra pendências (Mind / health_item diários). Diferente
+ * de quests/tasks/routines: não tem cronômetro, só botão FAZER que abre
+ * o modal correto (MindRegisterModal ou RegisterModal de Health). Após
+ * salvar, backend tira da lista de pendências e o item some.
+ */
+// ─── RitualPlannedRow ─────────────────────────────────────────────────────
+
+/**
+ * Card de ritual alocado no período. Versão enxuta: sem cronômetro próprio
+ * (rituais usam o player do DiaPendenciasBlock no topo da página, que tem
+ * a lógica completa de play/pause/stop persistido em localStorage).
+ *
+ * Mostra: título, cadência, duração alvo, e indicador done quando o ritual
+ * já foi executado hoje (vem de `ultima_execucao === todayIso`).
+ */
+function RitualPlannedRow({
+  item,
+  onRemoveFromPlan,
+}: {
+  item: any
+  onRemoveFromPlan: () => void
+}) {
+  const navigate = useNavigate()
+  const accent = '#dc2531' // Neomilitarism red (mesma do RitualNextCard)
+  const done = !!item.done
+  const cadenciaLabel = item.cadencia
+    ? item.cadencia.charAt(0).toUpperCase() + item.cadencia.slice(1)
+    : 'Ritual'
+
+  return (
+    <div
+      style={{
+        // Tint diagonal sutil em vez de border-stripe (DESIGN.md ban).
+        background: `linear-gradient(135deg, ${accent}0d 0%, transparent 45%), rgba(8, 12, 18, 0.55)`,
+        border: '1px solid rgba(143, 191, 211, 0.22)',
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
+        padding: '10px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        opacity: done ? 0.5 : 1,
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--color-text-primary)',
+            letterSpacing: '0.03em',
+            textTransform: 'uppercase',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            textDecoration: done ? 'line-through' : 'none',
+          }}
+        >
+          {item.title}
+        </div>
+        <div
+          style={{
+            marginTop: 3,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9,
+            fontWeight: 700,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ color: accent }}>Ritual · {cadenciaLabel}</span>
+          {item.duracao_alvo_min > 0 && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>{item.duracao_alvo_min} min</span>
+            </>
+          )}
+          {done && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span style={{ color: 'var(--color-success)' }}>cumprido hoje</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate('/build')}
+        title="Abrir no /build"
+        style={{
+          background: 'rgba(8, 12, 18, 0.55)',
+          border: '1px solid var(--color-border)',
+          color: 'var(--color-text-tertiary)',
+          cursor: 'pointer',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 9,
+          fontWeight: 700,
+          padding: '5px 10px',
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          borderRadius: 0,
+          clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%)',
+          transition: 'color var(--motion-fast) var(--ease-smooth)',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-ice-light)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-tertiary)')}
+      >
+        Abrir
+      </button>
+      <button
+        type="button"
+        onClick={onRemoveFromPlan}
+        title="Tirar do plano"
+        aria-label="Tirar do plano"
+        style={{
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          color: 'var(--color-text-muted)',
+          padding: '4px 6px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          transition: 'color var(--motion-fast) var(--ease-smooth)',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-accent-light)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
+      >
+        <X size={12} strokeWidth={1.8} />
+      </button>
+    </div>
+  )
+}
+
+function PendenciaPlannedRow({
+  item,
+  onRemoveFromPlan,
+  onExecute,
+}: {
+  item: any
+  onRemoveFromPlan: () => void
+  onExecute: (item: any) => void
+}) {
+  const cor = item.cor || '#7fb8a8'
+  const isMind = item.origem === 'mind'
+  return (
+    <div
+      style={{
+        background: 'rgba(8, 12, 18, 0.55)',
+        border: '1px solid rgba(143, 191, 211, 0.22)',
+        borderLeft: `2px solid ${cor}`,
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
+        padding: '10px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--color-text-primary)',
+            letterSpacing: '0.03em',
+            textTransform: 'uppercase',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {item.title}
+        </div>
+        <div
+          style={{
+            marginTop: 3,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9,
+            fontWeight: 700,
+            color: 'var(--color-text-muted)',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ color: cor }}>
+            {isMind ? 'Mind · Meditação' : 'Health · Pendência diária'}
+          </span>
+          {item.estimated_minutes > 0 && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>{item.estimated_minutes} min</span>
+            </>
+          )}
+          {item.horario_sugerido && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>~{item.horario_sugerido}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onExecute(item)}
+        className="hq-btn hq-btn--primary"
+        style={{
+          fontSize: 11,
+          padding: '7px 14px',
+          fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.15em',
+          textTransform: 'uppercase',
+        }}
+      >
+        FAZER
+      </button>
+      <button
+        type="button"
+        onClick={onRemoveFromPlan}
+        className="hq-icon-btn-bare"
+        style={{
+          minWidth: 22,
+          minHeight: 22,
+          padding: 3,
+          color: 'var(--color-text-muted)',
+        }}
+        title="Remover do plano (volta pra pendências)"
+        aria-label="Remover do plano"
+      >
+        ×
+      </button>
+    </div>
+  )
 }
 
 /**
@@ -2355,13 +2805,15 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
   onDragStart: (item: any) => void
   onDragEnd: () => void
 }) {
-  // Particiona em quests / tasks / routines preservando a ordem original
-  // (que já vem ordenada pelo getFilteredItems do parent — deadline asc).
+  // Particiona em pendência / quests / tasks / routines preservando a
+  // ordem original. Pendências (Mind/Health diários) ganham seção própria.
   const questItems: any[] = []
   const taskItems: any[] = []
   const routineItems: any[] = []
+  const pendenciaItems: any[] = []
   for (const it of items) {
-    if (it.isTask) taskItems.push(it)
+    if (it.isPendencia) pendenciaItems.push(it)
+    else if (it.isTask) taskItems.push(it)
     else if (it.isRoutine) routineItems.push(it)
     else questItems.push(it)
   }
@@ -2493,6 +2945,28 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
           </div>
         </div>
       )}
+
+      {pendenciaItems.length > 0 && (
+        <div>
+          <div style={sectionHeaderStyle}>
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+            PENDÊNCIAS DO DIA
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {pendenciaItems.map(item => (
+              <AvailableCard
+                key={item.id}
+                item={item}
+                areas={areas}
+                projects={projects}
+                delivsByProject={delivsByProject}
+                onDragStart={() => onDragStart(item)}
+                onDragEnd={onDragEnd}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2507,26 +2981,37 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
 }) {
   const isRoutine = !!item.isRoutine
   const isTask = !!item.isTask
+  const isPendencia = !!item.isPendencia
   const done = itemIsDone(item)
-  const area = !isTask && !isRoutine
+  // Quest é o catch-all: só calcula area/parent/deliverable quando NÃO é
+  // task/routine/pendência, pra não confundir tipos.
+  const isQuest = !isTask && !isRoutine && !isPendencia
+  const area = isQuest
     ? areas.find(a => a.slug === (item as Quest).area_slug)
     : null
-  const color = isTask
-    ? 'var(--color-gold)'
-    : isRoutine
-      ? 'var(--color-routine-block)'
-      : (area?.color ?? 'var(--color-text-tertiary)')
+  const color = isPendencia
+    ? (item.cor || '#7fb8a8')
+    : isTask
+      ? 'var(--color-gold)'
+      : isRoutine
+        ? 'var(--color-routine-block)'
+        : (area?.color ?? 'var(--color-text-tertiary)')
 
   const duration = itemDurationMin(item)
-  // Quests são sempre subtasks agora; procura projeto pai + entregável.
-  const parent = !isTask && !isRoutine && (item as Quest).project_id
+  const parent = isQuest && (item as Quest).project_id
     ? projects.find(p => p.id === (item as Quest).project_id)
     : null
   const deliverable = parent && (item as Quest).deliverable_id
     ? delivsByProject[parent.id]?.find(d => d.id === (item as Quest).deliverable_id)
     : null
-  // Tipo primário no topo: pra quest = nome da área; pra tarefa/rotina = rótulo.
-  const typeLabel = isTask ? 'Tarefa' : isRoutine ? 'Rotina' : (area?.name ?? (item as Quest).area_slug)
+  // Tipo primário no topo
+  const typeLabel = isPendencia
+    ? (item.origem === 'mind' ? 'Mind · pendência' : 'Health · pendência')
+    : isTask
+      ? 'Tarefa'
+      : isRoutine
+        ? 'Rotina'
+        : (area?.name ?? (item as Quest).area_slug)
 
   return (
     <div
