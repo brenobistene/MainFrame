@@ -1,11 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search } from 'lucide-react'
+import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search, Play } from 'lucide-react'
 import type { ActiveSession, Area, BuildRitual, Deliverable, Project, Quest, Routine, Task } from '../types'
 import { fetchDeliverables, updateTask, deleteTask, reportApiError } from '../api'
 import { useTasks, useRoutines, useRoutinesForDate, useAppInvalidator } from '../lib/app-queries'
-import { useDiaPendencias, useInvalidateDiaPendencias } from '../lib/dia-queries'
+import {
+  useDiaPendencias,
+  useInvalidateDiaPendencias,
+  useDiscardHealthItemSession,
+  useDiscardMindSession,
+  useHealthItemSession,
+  useLinkHealthItemSessionToRecord,
+  useLinkMindSessionToRecord,
+  useMindSession,
+  usePauseHealthItemSession,
+  usePauseMindSession,
+  useResumeHealthItemSession,
+  useResumeMindSession,
+  useStartHealthItemSession,
+  useStartMindSession,
+} from '../lib/dia-queries'
+import type { DiaSessionCluster } from '../api'
+
+type DiaSessionClusterLike = DiaSessionCluster
 import { useRituals } from '../lib/build-queries'
 import { tabSync } from '../lib/tabsync'
 import { confirmDialog } from '../lib/dialog'
@@ -119,11 +137,18 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   const invalidateDia = useInvalidateDiaPendencias()
   // Modal aberto a partir de pendência (Mind ou Health register). null =
   // fechado. Após fechar com save, invalida pendências → some da lista.
+  type PendenciaPrefill = {
+    started_at: string
+    ended_at: string | null
+    duracao_min: number
+  } | undefined
   const [openPendenciaModal, setOpenPendenciaModal] = useState<
-    | { type: 'mind' }
-    | { type: 'health_register'; domain: any; cor: string; item_id: number }
+    | { type: 'mind'; prefill: PendenciaPrefill }
+    | { type: 'health_register'; domain: any; cor: string; item_id: number; prefill: PendenciaPrefill }
     | null
   >(null)
+  const linkMindToRecord = useLinkMindSessionToRecord()
+  const linkHealthItemToRecord = useLinkHealthItemSessionToRecord()
   const [showPlanner, setShowPlanner] = useState(false)
   const [plannerRange, setPlannerRange] = useState<DateRange>(() => computeRange('7d'))
   const [plannerTypes, setPlannerTypes] = useState<Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>>(
@@ -1050,10 +1075,18 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
               onSelectProject(q.project_id)
               navigate(`/areas/${q.area_slug}`)
             }}
-            onExecutePendencia={(item) => {
-              // Dispatch por modal_type pra abrir o modal correto.
+            onExecutePendencia={(item, cluster) => {
+              // Carrega prefill da sessão cronometrada — duração média + horários.
+              const durMin = Math.max(1, Math.floor((cluster.elapsed_seconds || 0) / 60))
+              const prefill = cluster.started_at
+                ? {
+                    started_at: cluster.started_at,
+                    ended_at: cluster.ended_at,
+                    duracao_min: durMin,
+                  }
+                : undefined
               if (item.modal_type === 'mind') {
-                setOpenPendenciaModal({ type: 'mind' })
+                setOpenPendenciaModal({ type: 'mind', prefill })
               } else if (item.modal_type === 'health_register') {
                 const t = item.target ?? {}
                 setOpenPendenciaModal({
@@ -1066,6 +1099,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
                   },
                   cor: t.domain_cor ?? '#7fb8a8',
                   item_id: t.item_id,
+                  prefill,
                 })
               }
             }}
@@ -1121,10 +1155,15 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
         document.body,
       )}
 
-      {/* Modais disparados por pendência arrastada pro plano. Após o close
-          invalida as pendências — backend retira a feita do agregador. */}
+      {/* Modais disparados por FINALIZAR de pendência cronometrada. Prefill
+          vem da sessão (started_at + duracao_min). Após save, linka cluster
+          ao record_id criado → backend tira da lista de pendências. */}
       {openPendenciaModal?.type === 'mind' && (
         <MindRegisterModal
+          prefillFromSession={openPendenciaModal.prefill}
+          onSessionLink={(recordId) => {
+            linkMindToRecord.mutate(recordId)
+          }}
           onClose={() => {
             setOpenPendenciaModal(null)
             invalidateDia()
@@ -1136,6 +1175,15 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
           domain={openPendenciaModal.domain}
           cor={openPendenciaModal.cor}
           preselectedItemId={openPendenciaModal.item_id}
+          prefillFromSession={openPendenciaModal.prefill}
+          onSessionLink={(recordId) => {
+            linkHealthItemToRecord.mutate({
+              itemId: openPendenciaModal.type === 'health_register'
+                ? openPendenciaModal.item_id
+                : 0,
+              recordId,
+            })
+          }}
           onClose={() => {
             setOpenPendenciaModal(null)
             invalidateDia()
@@ -1178,9 +1226,10 @@ function PeriodSection({
   onMoveToPeriod: (itemId: string, target: 'morning' | 'afternoon' | 'evening') => void
   onOpenPlanner: () => void
   onOpenQuest: (q: Quest) => void
-  /** Click "FAZER" em planned item de pendência (Mind / health_item) abre
-   *  o modal certo. Resolvido no parent (DiaView) que tem state do modal. */
-  onExecutePendencia: (item: any) => void
+  /** Click "FINALIZAR" em planned item de pendência (Mind / health_item)
+   *  abre o modal certo pré-preenchido com cluster da sessão. Resolvido no
+   *  parent (DiaView) que tem state do modal + sabe linkar o record. */
+  onExecutePendencia: (item: any, cluster: DiaSessionClusterLike) => void
   /** Pendências do dia — necessárias pra resolver IDs do dayPlan ("mind",
    *  "health_item:X") no allItems local. */
   diaPendencias: import('../types').DiaPendencia[]
@@ -1354,7 +1403,8 @@ function PeriodSection({
                   key={item.id}
                   item={item}
                   onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
-                  onExecute={onExecutePendencia}
+                  onFinalize={onExecutePendencia}
+                  onSessionUpdate={onSessionUpdate}
                 />
               )
             }
@@ -1554,8 +1604,6 @@ function PlannerDrawer({
         backdropFilter: 'var(--glass-blur-strong)',
         WebkitBackdropFilter: 'var(--glass-blur-strong)',
         borderTop: '1px solid var(--color-border-strong)',
-        borderTopLeftRadius: 'var(--radius-lg)',
-        borderTopRightRadius: 'var(--radius-lg)',
         zIndex: 999, height: '92vh', maxHeight: '92vh',
         display: 'flex', flexDirection: 'column',
         animation: 'dia-slide-up 0.32s var(--ease-emphasis)',
@@ -2679,24 +2727,33 @@ function RitualPlannedRow({
 }
 
 /**
- * Planned row de pendência (Mind / health_item diários) — espelha o
- * visual de `PlannedItemRow` (thumbnail à esquerda + main card à direita)
- * pra alinhar com quests/tasks/routines. Diferenças:
- *   - typeCode: MND pra Mind, HLT pra health_item
- *   - typeAccent: cor da pendência (roxo Mind, cor do item Health)
- *   - Botão INICIAR no lugar de RunnableControls (abre modal — sem
- *     cronômetro, registra a sessão e some)
+ * Planned row de pendência (Mind / health_item diários) — espelha visual
+ * de PlannedItemRow + integra sessões cronometradas (mind_session ou
+ * health_item_session). Comportamento idêntico a quest/task/routine:
+ *   - PLAY: cria session, banner global mostra
+ *   - PAUSE/RESUME: gerencia cluster (record_id IS NULL)
+ *   - FINALIZAR: pausa + sinaliza parent pra abrir modal pré-preenchido
+ *   - Click no card: expande painel inline com info (cluster, rows)
+ *
+ * Após save do modal, parent dispara linkRecordToSession → cluster fecha.
  */
 function PendenciaPlannedRow({
   item,
   onRemoveFromPlan,
-  onExecute,
+  onFinalize,
+  onSessionUpdate,
 }: {
   item: any
   onRemoveFromPlan: () => void
-  onExecute: (item: any) => void
+  /** Sinaliza parent que user quer finalizar — parent abre modal correto
+   *  com prefill do cluster ativo. Recebe item + cluster data. */
+  onFinalize: (item: any, cluster: DiaSessionClusterLike) => void
+  /** Avisa o App pra refetch o activeSession (mantém banner global em sync
+   *  imediatamente — RQ invalidate sozinho não atinge o useState do App). */
+  onSessionUpdate: () => void
 }) {
   const isMind = item.origem === 'mind'
+  const itemId = isMind ? null : parseInt(String(item.id).split(':')[1] ?? '0', 10)
   const cor = item.cor || (isMind ? '#9b88c4' : '#7fb8a8')
   const typeCode = isMind ? 'MND' : 'HLT'
   const durMin = item.estimated_minutes ?? 0
@@ -2706,6 +2763,104 @@ function PendenciaPlannedRow({
       : `${durMin}M`)
     : '—'
   const borderColor = 'rgba(143, 191, 211, 0.22)'
+
+  // ─── Sessões cronometradas — ambos hooks sempre chamados (regra de
+  // hooks); o `enabled` no useHealthItemSession evita fetch quando isMind.
+  // Mind sempre fetch — uma query a mais por card é tolerável.
+  const mindSessionQ = useMindSession()
+  const healthSessionQ = useHealthItemSession(isMind ? null : itemId)
+  const cluster = (isMind ? mindSessionQ.data : healthSessionQ.data) ?? {
+    has_active: false,
+    is_running: false,
+    started_at: null,
+    ended_at: null,
+    elapsed_seconds: 0,
+    rows: [],
+  }
+
+  const startMind = useStartMindSession()
+  const pauseMind = usePauseMindSession()
+  const resumeMind = useResumeMindSession()
+  const discardMind = useDiscardMindSession()
+  const startHealth = useStartHealthItemSession()
+  const pauseHealth = usePauseHealthItemSession()
+  const resumeHealth = useResumeHealthItemSession()
+  const discardHealth = useDiscardHealthItemSession()
+
+  function doStart() {
+    const opts = { onSuccess: () => onSessionUpdate() }
+    if (isMind) startMind.mutate(undefined, opts)
+    else if (itemId) startHealth.mutate(itemId, opts)
+  }
+  function doPause() {
+    const opts = { onSuccess: () => onSessionUpdate() }
+    if (isMind) pauseMind.mutate(undefined, opts)
+    else if (itemId) pauseHealth.mutate(itemId, opts)
+  }
+  function doResume() {
+    const opts = { onSuccess: () => onSessionUpdate() }
+    if (isMind) resumeMind.mutate(undefined, opts)
+    else if (itemId) resumeHealth.mutate(itemId, opts)
+  }
+  function doDiscard() {
+    const opts = { onSuccess: () => onSessionUpdate() }
+    if (isMind) discardMind.mutate(undefined, opts)
+    else if (itemId) discardHealth.mutate(itemId, opts)
+  }
+  function doFinalize() {
+    // Pausa se rodando, depois abre modal com cluster atual.
+    const handleAfterPause = () => { onSessionUpdate(); onFinalize(item, cluster) }
+    if (cluster.is_running) {
+      if (isMind) pauseMind.mutate(undefined, { onSuccess: handleAfterPause })
+      else if (itemId) pauseHealth.mutate(itemId, { onSuccess: handleAfterPause })
+    } else {
+      handleAfterPause()
+    }
+  }
+
+  // Live timer — atualiza cada segundo quando rodando.
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!cluster.is_running) return
+    const t = setInterval(() => setTick(x => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [cluster.is_running])
+  // Computa elapsed: soma dos rows fechados + (now - last open started_at)
+  let liveElapsedSec = cluster.elapsed_seconds
+  if (cluster.is_running) {
+    const lastOpen = cluster.rows.find(r => r.ended_at === null)
+    if (lastOpen) {
+      try {
+        const start = new Date(lastOpen.started_at.replace('Z', '+00:00')).getTime()
+        // Rows fechadas já estão somadas em elapsed_seconds; precisamos só
+        // adicionar o tempo desde started_at da row ATUAL ABERTA. Mas o
+        // backend já incluiu o tempo decorrido na response (usa now() quando
+        // ended_at=null). Pra timer local, recalculamos: closed sum + (now - start)
+        const closedSec = cluster.rows
+          .filter(r => r.ended_at !== null)
+          .reduce((acc, r) => {
+            try {
+              const s = new Date(r.started_at.replace('Z', '+00:00')).getTime()
+              const e = new Date(r.ended_at!.replace('Z', '+00:00')).getTime()
+              return acc + Math.max(0, Math.floor((e - s) / 1000))
+            } catch { return acc }
+          }, 0)
+        liveElapsedSec = closedSec + Math.max(0, Math.floor((Date.now() - start) / 1000))
+      } catch {}
+    }
+  }
+  void tick  // re-render dependency
+
+  function fmtElapsed(sec: number): string {
+    const h = Math.floor(sec / 3600)
+    const m = Math.floor((sec % 3600) / 60)
+    const s = sec % 60
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
+  }
+
+  // ─── Painel inline expansível (INFO) ─────────────────────────────────
+  const [showInfo, setShowInfo] = useState(false)
 
   return (
     <div
@@ -2858,71 +3013,270 @@ function PendenciaPlannedRow({
               </div>
             </div>
 
+            {/* Controles dinâmicos — espelha visual de RunnableControls */}
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
+                display: 'inline-flex',
                 gap: 6,
                 flexShrink: 0,
+                alignSelf: 'flex-start',
+                alignItems: 'center',
               }}
             >
+              {/* Live timer quando rodando ou pausado */}
+              {cluster.has_active && (
+                <span
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: cluster.is_running ? cor : 'var(--color-text-muted)',
+                    letterSpacing: '0.04em',
+                    textShadow: cluster.is_running ? `0 0 8px ${cor}55` : 'none',
+                    minWidth: 56,
+                    textAlign: 'right',
+                  }}
+                  title={cluster.is_running ? 'em execução' : 'pausado'}
+                >
+                  {fmtElapsed(liveElapsedSec)}
+                </span>
+              )}
+              {/* INFO toggle */}
               <button
-                type="button"
-                onClick={() => onExecute(item)}
-                title="Iniciar — abre modal pra registrar"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowInfo(v => !v)
+                }}
+                title={showInfo ? 'ocultar info' : 'ver info'}
                 style={{
-                  background: `${cor}22`,
-                  color: cor,
-                  border: `1px solid ${cor}`,
-                  padding: '5px 12px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
                   fontFamily: 'var(--font-mono)',
-                  fontSize: 10,
+                  color: 'var(--color-text-muted)',
+                  fontSize: 9,
+                  padding: '2px 4px',
                   fontWeight: 700,
                   letterSpacing: '0.18em',
-                  textTransform: 'uppercase',
-                  cursor: 'pointer',
-                  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
-                  transition: 'all 0.15s',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  transition: 'color 0.15s',
+                  flexShrink: 0,
                 }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = `${cor}44`
-                  e.currentTarget.style.boxShadow = `0 0 10px ${cor}55`
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = `${cor}22`
-                  e.currentTarget.style.boxShadow = 'none'
-                }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-ice-light)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
               >
-                ▶ INICIAR
+                <span>{showInfo ? '▼' : '▶'}</span> INFO
               </button>
+              {!cluster.has_active && (
+                /* PLAY — idle */
+                <button
+                  type="button"
+                  onClick={doStart}
+                  title="iniciar sessão"
+                  style={{
+                    cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 10px',
+                    letterSpacing: '0.18em', textTransform: 'uppercase',
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    transition: 'all 0.15s',
+                    background: 'rgba(143, 191, 211, 0.10)',
+                    border: '1px solid rgba(143, 191, 211, 0.45)',
+                    color: 'var(--color-ice-light)',
+                    boxShadow: '0 0 10px rgba(143, 191, 211, 0.15)',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(143, 191, 211, 0.20)'
+                    e.currentTarget.style.boxShadow = '0 0 16px rgba(143, 191, 211, 0.40)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(143, 191, 211, 0.10)'
+                    e.currentTarget.style.boxShadow = '0 0 10px rgba(143, 191, 211, 0.15)'
+                  }}
+                >
+                  <Play size={9} strokeWidth={2} fill="currentColor" />
+                  PLAY
+                </button>
+              )}
+              {cluster.has_active && cluster.is_running && (
+                /* PAUSE */
+                <button
+                  type="button"
+                  onClick={doPause}
+                  title="pausar"
+                  style={{
+                    cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 10px',
+                    letterSpacing: '0.18em', textTransform: 'uppercase',
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                    background: 'rgba(192, 138, 58, 0.10)',
+                    border: '1px solid rgba(192, 138, 58, 0.55)',
+                    color: 'var(--color-warning)',
+                  }}
+                >
+                  ❚❚ PAUSE
+                </button>
+              )}
+              {cluster.has_active && !cluster.is_running && (
+                /* RESUME */
+                <button
+                  type="button"
+                  onClick={doResume}
+                  title="retomar"
+                  style={{
+                    cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 10px',
+                    letterSpacing: '0.18em', textTransform: 'uppercase',
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                    background: 'rgba(143, 191, 211, 0.10)',
+                    border: '1px solid rgba(143, 191, 211, 0.45)',
+                    color: 'var(--color-ice-light)',
+                  }}
+                >
+                  <Play size={9} strokeWidth={2} fill="currentColor" />
+                  RESUME
+                </button>
+              )}
+              {cluster.has_active && (
+                /* FINALIZAR */
+                <button
+                  type="button"
+                  onClick={doFinalize}
+                  title="finalizar — abre modal pra registrar"
+                  style={{
+                    cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 10px',
+                    letterSpacing: '0.18em', textTransform: 'uppercase',
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                    background: `${cor}22`,
+                    border: `1px solid ${cor}`,
+                    color: cor,
+                    boxShadow: `0 0 10px ${cor}33`,
+                  }}
+                >
+                  ▣ FINALIZAR
+                </button>
+              )}
+              {cluster.has_active && (
+                /* DISCARD — joga fora o cluster (não cria record) */
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (confirm('Descartar essa sessão? Não vai criar registro.')) {
+                      doDiscard()
+                    }
+                  }}
+                  title="descartar"
+                  style={{
+                    cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 8px',
+                    background: 'transparent',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-text-muted)',
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                  }}
+                >
+                  ⌫
+                </button>
+              )}
+              {/* X de remover — espelho do PlannedItemRow */}
               <button
-                type="button"
                 onClick={onRemoveFromPlan}
-                title="Remover do plano"
+                title="remover do plano do dia"
                 style={{
-                  background: 'transparent',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text-muted)',
-                  padding: '5px 8px',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 10,
+                  background: 'none',
+                  border: 'none',
                   cursor: 'pointer',
-                  clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
-                  transition: 'all 0.15s',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--color-text-muted)',
+                  fontSize: 12,
+                  padding: '0 6px',
+                  opacity: 0.55,
+                  transition: 'opacity 0.15s, color 0.15s',
+                  lineHeight: 1,
+                  flexShrink: 0,
                 }}
                 onMouseEnter={e => {
+                  e.currentTarget.style.opacity = '1'
                   e.currentTarget.style.color = 'var(--color-accent-light)'
-                  e.currentTarget.style.borderColor = 'var(--color-accent-primary)'
                 }}
                 onMouseLeave={e => {
+                  e.currentTarget.style.opacity = '0.55'
                   e.currentTarget.style.color = 'var(--color-text-muted)'
-                  e.currentTarget.style.borderColor = 'var(--color-border)'
                 }}
               >
-                ×
+                ✕
               </button>
             </div>
           </div>
+
+          {/* PAINEL INLINE — INFO expansível */}
+          {showInfo && (
+            <div
+              style={{
+                marginTop: 6,
+                paddingTop: 6,
+                borderTop: '1px dashed var(--color-divider)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.05em',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+              }}
+            >
+              {cluster.has_active ? (
+                <>
+                  <div>
+                    <span style={{ color: cor }}>STATUS:</span>{' '}
+                    {cluster.is_running ? 'em execução' : 'pausado'}
+                  </div>
+                  {cluster.started_at && (
+                    <div>
+                      <span style={{ color: 'var(--color-text-tertiary)' }}>INÍCIO:</span>{' '}
+                      {new Date(cluster.started_at).toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  )}
+                  <div>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>DURAÇÃO:</span>{' '}
+                    {fmtElapsed(liveElapsedSec)} ({Math.floor(liveElapsedSec / 60)} min)
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>SUB-SESSÕES:</span>{' '}
+                    {cluster.rows.length} (play/pause cycles)
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <span style={{ color: cor }}>STATUS:</span> ocioso — sem sessão iniciada
+                  </div>
+                  {item.estimated_minutes > 0 && (
+                    <div>
+                      <span style={{ color: 'var(--color-text-tertiary)' }}>DURAÇÃO PREVISTA:</span>{' '}
+                      {item.estimated_minutes} min
+                    </div>
+                  )}
+                  {item.horario_sugerido && (
+                    <div>
+                      <span style={{ color: 'var(--color-text-tertiary)' }}>HORÁRIO SUGERIDO:</span>{' '}
+                      ~{item.horario_sugerido}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
