@@ -7,6 +7,7 @@ import { getAllBlockRangesForDay } from '../utils/blocks'
 import type { UnproductiveBlock } from '../utils/blocks'
 import { ProfileEditModal } from '../components/ProfileEditModal'
 import { AnimatedNumber, SkeletonBlock } from '../components/ui/Motion'
+import { HudListItem, HudDateThumbnail } from '../components/ui/HudListItem'
 import { RitualNextCard } from '../components/RitualNextCard'
 import HealthDashboardCard from '../components/health/HealthDashboardCard'
 import LibraryDashboardCard from '../components/library/LibraryDashboardCard'
@@ -1215,90 +1216,39 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                 : 'var(--color-ice)'
               const [, mm, dd] = item.date.split('-')
               return (
-                <div
+                <HudListItem
                   key={idx}
-                  style={{
-                    position: 'relative',
-                    display: 'flex', alignItems: 'stretch', gap: 6,
-                    marginBottom: 10,
-                    opacity: item.done ? 0.45 : 1,
-                    transition: 'transform var(--motion-fast) var(--ease-smooth)',
-                  }}
-                >
-                  {/* THUMBNAIL: data como display tactical */}
-                  <div style={{
-                    width: 56, flexShrink: 0,
-                    background: `linear-gradient(135deg, ${item.color}22, ${item.color}08 60%, transparent)`,
-                    border: `1px solid ${itemBorderColor}`,
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center',
-                    gap: 2,
-                    clipPath: 'polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px)',
-                  }}>
-                    <div style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 14, fontWeight: 700,
-                      color: itemAccentColor,
-                      letterSpacing: '0.05em',
-                      lineHeight: 1,
-                    }}>
-                      {dd}/{mm}
-                    </div>
-                    <div style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 8, fontWeight: 700,
-                      color: 'var(--color-text-muted)',
-                      letterSpacing: '0.12em',
-                      marginTop: 3,
-                    }}>
-                      {dayLabel}
-                    </div>
-                  </div>
-
-                  {/* MAIN CARD */}
-                  <div style={{
-                    flex: 1, minWidth: 0,
-                    background: item.isOverdue
-                      ? 'rgba(159, 18, 57, 0.08)'
-                      : 'rgba(8, 12, 18, 0.55)',
-                    border: `1px solid ${itemBorderColor}`,
-                    padding: '10px 16px',
-                    display: 'flex', alignItems: 'center', gap: 16,
-                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
-                  }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontFamily: 'var(--font-display)',
-                        fontSize: 14, fontWeight: 600,
-                        color: 'var(--color-text-primary)',
-                        letterSpacing: '0.03em',
-                        textTransform: 'uppercase',
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        textDecoration: item.done ? 'line-through' : 'none',
-                        lineHeight: 1.2,
-                      }}>
-                        {item.title}
-                      </div>
-                      <div style={{
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: 9, fontWeight: 600,
-                        color: 'var(--color-text-muted)',
-                        letterSpacing: '0.15em',
-                        textTransform: 'uppercase',
-                        marginTop: 4,
-                        display: 'flex', alignItems: 'center', gap: 8,
-                      }}>
-                        <span style={{ color: item.color }}>{item.type}</span>
-                        {item.context && (
-                          <>
-                            <span style={{ opacity: 0.4 }}>·</span>
-                            <span>{item.context}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  thumbnail={
+                    <HudDateThumbnail
+                      day={dd}
+                      month={mm}
+                      relative={dayLabel}
+                      accentColor={itemAccentColor}
+                      dateSize={14}
+                    />
+                  }
+                  thumbnailWidth={56}
+                  tintColor={item.color}
+                  borderColor={itemBorderColor}
+                  accentColor={itemAccentColor}
+                  severe={item.isOverdue}
+                  title={item.title}
+                  titleSize={14}
+                  done={item.done}
+                  dimmed={item.done ? 0.45 : undefined}
+                  mainPadding="10px 16px"
+                  caption={
+                    <>
+                      <span style={{ color: item.color }}>{item.type}</span>
+                      {item.context && (
+                        <>
+                          <span style={{ opacity: 0.4 }}>·</span>
+                          <span>{item.context}</span>
+                        </>
+                      )}
+                    </>
+                  }
+                />
               )
             })}
           </div>
@@ -1683,138 +1633,69 @@ function ProjectRiskRow({ pp, areaColor, areaName, onOpen }: { pp: ProjectPressu
   // Vira a 3ª linha do body em mono technical readout.
   const delivCount = pp.deliverables.length
 
+  const statusLabel = pp.status === 'overdue' ? 'ATRASADO'
+    : pp.status === 'impossible' ? 'IMPOSSÍVEL'
+    : pp.status === 'tight' ? 'APERTADO'
+    : pp.status === 'ok' ? 'EM DIA'
+    : pp.status === 'done' ? 'CONCLUÍDO'
+    : 'SEM PRAZO'
+
   return (
-    <div
+    <HudListItem
       onClick={onOpen}
-      style={{
-        position: 'relative',
-        display: 'flex', alignItems: 'stretch', gap: 6,
-        marginBottom: 10,
-        cursor: 'pointer',
-        transition: 'transform var(--motion-fast) var(--ease-smooth)',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = 'translateX(2px)'
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = 'translateX(0)'
-      }}
-    >
-      {/* THUMBNAIL — data deadline + relativo. Top-left chamfer angular. */}
-      <div
-        style={{
-          width: 64, flexShrink: 0,
-          background: `linear-gradient(135deg, ${areaColor}22, ${areaColor}08 60%, transparent)`,
-          border: `1px solid ${borderColor}`,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-          gap: 2,
-          clipPath: 'polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px)',
-        }}
-      >
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 15, fontWeight: 700,
-          color: accentColor,
-          letterSpacing: '0.02em',
-          lineHeight: 1,
-        }}>
-          {thumbDateDay}{thumbDateMonth ? `/${thumbDateMonth}` : ''}
-        </div>
-        <div style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 8, fontWeight: 700,
-          color: 'var(--color-text-muted)',
-          letterSpacing: '0.12em',
-          marginTop: 4,
-        }}>
-          {thumbRelative}
-        </div>
-      </div>
-
-      {/* MAIN CARD — corpo principal: title + caption + stats row.
-          Bottom-right chamfer assinatura CP2077. */}
-      <div
-        style={{
-          flex: 1, minWidth: 0,
-          background: isSevere
-            ? 'rgba(159, 18, 57, 0.08)'
-            : 'rgba(8, 12, 18, 0.55)',
-          border: `1px solid ${borderColor}`,
-          padding: '12px 18px',
-          display: 'flex', alignItems: 'center', gap: 16,
-          clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
-          transition: 'background var(--motion-fast) var(--ease-smooth)',
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
-          {/* L1: Title em Rajdhani uppercase */}
-          <div style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 15, fontWeight: 600,
-            color: 'var(--color-text-primary)',
-            letterSpacing: '0.03em',
-            textTransform: 'uppercase',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            lineHeight: 1.2,
-          }}>
-            {pp.project.title}
-          </div>
-
-          {/* L2: Area · Status (sem deadline — já tá na thumbnail) */}
-          <div style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9, fontWeight: 600,
-            letterSpacing: '0.15em',
-            textTransform: 'uppercase',
-            display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span style={{ color: areaColor }}>{areaName}</span>
-            <span style={{ opacity: 0.4, color: 'var(--color-text-muted)' }}>·</span>
-            <span style={{ color: accentColor, fontWeight: 700 }}>
-              {pp.status === 'overdue' ? 'ATRASADO' : pp.status === 'impossible' ? 'IMPOSSÍVEL' : pp.status === 'tight' ? 'APERTADO' : pp.status === 'ok' ? 'EM DIA' : pp.status === 'done' ? 'CONCLUÍDO' : 'SEM PRAZO'}
+      hoverTranslate
+      thumbnail={
+        <HudDateThumbnail
+          day={thumbDateDay}
+          month={thumbDateMonth}
+          relative={thumbRelative}
+          accentColor={accentColor}
+          dateSize={15}
+        />
+      }
+      thumbnailWidth={64}
+      tintColor={areaColor}
+      borderColor={borderColor}
+      accentColor={accentColor}
+      severe={isSevere}
+      title={pp.project.title}
+      titleSize={15}
+      caption={
+        <>
+          <span style={{ color: areaColor }}>{areaName}</span>
+          <span style={{ opacity: 0.4, color: 'var(--color-text-muted)' }}>·</span>
+          <span style={{ color: accentColor, fontWeight: 700 }}>
+            {statusLabel}
+          </span>
+        </>
+      }
+      stats={
+        <>
+          <span>
+            <span style={{ color: 'var(--color-ice-deep)', marginRight: 4 }}>//</span>
+            EXEC
+            <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
+              {pp.totalWorkedMin > 0 ? fmtHM(pp.totalWorkedMin) : '0H'}
             </span>
-          </div>
-
-          {/* L3: Stats technical readout (// EXEC · EST · QUEUE) */}
-          <div style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9, fontWeight: 600,
-            color: 'var(--color-text-muted)',
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            display: 'flex', alignItems: 'center', gap: 12,
-          }}>
-            <span>
-              <span style={{ color: 'var(--color-ice-deep)', marginRight: 4 }}>//</span>
-              EXEC
-              <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
-                {pp.totalWorkedMin > 0 ? fmtHM(pp.totalWorkedMin) : '0H'}
-              </span>
+          </span>
+          <span style={{ opacity: 0.3 }}>·</span>
+          <span>
+            EST
+            <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
+              {pp.totalEstimatedMin > 0 ? fmtHM(pp.totalEstimatedMin) : '—'}
             </span>
-            <span style={{ opacity: 0.3 }}>·</span>
-            <span>
-              EST
-              <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
-                {pp.totalEstimatedMin > 0 ? fmtHM(pp.totalEstimatedMin) : '—'}
-              </span>
+          </span>
+          <span style={{ opacity: 0.3 }}>·</span>
+          <span>
+            QUEUE
+            <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
+              {delivCount} {delivCount === 1 ? 'ENTREGÁVEL' : 'ENTREGÁVEIS'}
             </span>
-            <span style={{ opacity: 0.3 }}>·</span>
-            <span>
-              QUEUE
-              <span style={{ color: 'var(--color-text-secondary)', marginLeft: 6, fontWeight: 700 }}>
-                {delivCount} {delivCount === 1 ? 'ENTREGÁVEL' : 'ENTREGÁVEIS'}
-              </span>
-            </span>
-          </div>
-        </div>
-
-        {/* METRICS RIGHT: pendente + % com mini segmented progress bar */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-          gap: 6, flexShrink: 0,
-          fontFamily: 'var(--font-mono)',
-        }}>
+          </span>
+        </>
+      }
+      metricsRight={
+        <>
           <div style={{
             display: 'flex', gap: 18, alignItems: 'baseline',
             fontSize: 11,
@@ -1835,7 +1716,6 @@ function ProjectRiskRow({ pp, areaColor, areaName, onOpen }: { pp: ProjectPressu
               </span>
             )}
           </div>
-
           {/* Segmented progress bar — 10 chunks ice/oxblood (estilo HUD progress) */}
           {pct !== null && (
             <div style={{
@@ -1861,9 +1741,9 @@ function ProjectRiskRow({ pp, areaColor, areaName, onOpen }: { pp: ProjectPressu
               })}
             </div>
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
   )
 }
 
