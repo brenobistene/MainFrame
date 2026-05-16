@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM Hub Quest — setup automatico
+REM MAINFRAME — setup automatico
 REM ============================================================
 REM Instala Python, Node.js e Git via winget (se ainda nao
 REM tiverem) e roda os installs de dependencias do backend
@@ -17,7 +17,7 @@ REM ============================================================
 setlocal
 set "PROJECT_DIR=%~dp0"
 echo.
-echo === Hub Quest setup ===
+echo === MAINFRAME setup ===
 echo Pasta: %PROJECT_DIR%
 echo.
 
@@ -104,8 +104,8 @@ echo.
 echo ============================================================
 echo  Setup concluido com sucesso.
 echo.
-echo  Pra iniciar o Hub Quest:
-echo    - Duplo clique em "Hub Quest" no Desktop, OU
+echo  Pra iniciar o MAINFRAME:
+echo    - Duplo clique em "MAINFRAME" no Desktop, OU
 echo    - Duplo clique em start-hub.bat aqui na raiz
 echo.
 echo  O app vai abrir em http://localhost:5174/

@@ -5,7 +5,7 @@ sem dívida — essas vêm em fases posteriores. Doc autoritativa:
 docs/hub-finance/PLAN.md.
 
 Convenção de paths: /api/finance/<resource>. Mantém isolado dos outros
-módulos do Hub Quest e fica claro no swagger/docs.
+módulos do MAINFRAME e fica claro no swagger/docs.
 """
 from __future__ import annotations
 
@@ -2900,7 +2900,7 @@ def exchange_rate(
     pair = f"{from_.upper()}-{to.upper()}"
     url = f"https://economia.awesomeapi.com.br/last/{pair}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "hub.quest/0.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "mainframe/0.1"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError) as e:

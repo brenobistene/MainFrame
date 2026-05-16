@@ -452,8 +452,99 @@ export const editRoutineSession = (sessionId: number, body: { started_at?: strin
 export const deleteRoutineSessionById = (sessionId: number) =>
   deleteSession(`/api/routine-sessions/${sessionId}`)
 
+export const editMindSession = (sessionId: number, body: { started_at?: string; ended_at?: string | null }) =>
+  patchSession(`/api/mind-sessions/${sessionId}`, body)
+export const deleteMindSessionRow = (sessionId: number) =>
+  deleteSession(`/api/mind-sessions/${sessionId}`)
+
+export const editHealthItemSession = (sessionId: number, body: { started_at?: string; ended_at?: string | null }) =>
+  patchSession(`/api/health-item-sessions/${sessionId}`, body)
+export const deleteHealthItemSessionRow = (sessionId: number) =>
+  deleteSession(`/api/health-item-sessions/${sessionId}`)
+
+// Range queries pro calendário — retornam rows de mind/health sessions
+// (com started_at/ended_at) pra renderizar como blocos executados na
+// timeline. Inclui rows fechadas E ativas (record_id NULL ou NOT NULL).
+export interface MindSessionRangeRow {
+  id: number
+  session_num: number
+  started_at: string
+  ended_at: string | null
+  record_id: number | null
+}
+
+export interface HealthItemSessionRangeRow {
+  id: number
+  item_id: number
+  item_nome: string
+  item_cor: string | null
+  domain_slug: string | null
+  session_num: number
+  started_at: string
+  ended_at: string | null
+  record_id: number | null
+}
+
+export const fetchMindSessionsRange = (from: string, to: string) =>
+  get<MindSessionRangeRow[]>(`/api/mind-sessions?from=${from}&to=${to}`)
+
+export const fetchHealthItemSessionsRange = (from: string, to: string) =>
+  get<HealthItemSessionRangeRow[]>(`/api/health-item-sessions?from=${from}&to=${to}`)
+
+// Ritual cluster — cronometrado pra rituais executados pelo /Dia.
+// Mesmo shape do DiaSessionCluster mas com record_id TEXT (id de
+// build_ritual_session é uuid string, não int).
+export interface RitualClusterRangeRow {
+  id: number
+  cadencia: string
+  session_num: number
+  started_at: string
+  ended_at: string | null
+  record_id: string | null
+}
+
+export const fetchRitualCluster = (cadencia: string) =>
+  get<DiaSessionCluster>(`/api/build/rituals/${cadencia}/cluster`)
+
+export const startRitualCluster = (cadencia: string) =>
+  jsonFetch<DiaSessionCluster>(`/api/build/rituals/${cadencia}/cluster/start`, {
+    method: 'POST',
+  })
+
+export const pauseRitualCluster = (cadencia: string) =>
+  jsonFetch<DiaSessionCluster>(`/api/build/rituals/${cadencia}/cluster/pause`, {
+    method: 'POST',
+  })
+
+export const resumeRitualCluster = (cadencia: string) =>
+  jsonFetch<DiaSessionCluster>(`/api/build/rituals/${cadencia}/cluster/resume`, {
+    method: 'POST',
+  })
+
+export const discardRitualCluster = (cadencia: string) =>
+  jsonFetch<void>(`/api/build/rituals/${cadencia}/cluster/discard`, {
+    method: 'POST',
+  })
+
+export const linkRitualClusterToRecord = (cadencia: string, recordId: string) =>
+  jsonFetch<void>(`/api/build/rituals/${cadencia}/cluster/link-record`, {
+    method: 'POST',
+    body: JSON.stringify({ record_id: recordId }),
+  })
+
+export const editRitualClusterSession = (
+  sessionId: number,
+  body: { started_at?: string; ended_at?: string | null },
+) => patchSession(`/api/ritual-cluster-sessions/${sessionId}`, body)
+
+export const deleteRitualClusterRow = (sessionId: number) =>
+  deleteSession(`/api/ritual-cluster-sessions/${sessionId}`)
+
+export const fetchRitualClusterRange = (from: string, to: string) =>
+  get<RitualClusterRangeRow[]>(`/api/ritual-cluster-sessions?from=${from}&to=${to}`)
+
 export interface ActiveSession {
-  type: 'quest' | 'task' | 'routine'
+  type: 'quest' | 'task' | 'routine' | 'library' | 'mind' | 'health_item' | 'ritual'
   id: string
   title: string
   area_slug: string | null
@@ -2108,3 +2199,89 @@ export const reorderSagaItems = (sagaId: number, itemIds: number[]) =>
       body: JSON.stringify({ item_ids: itemIds }),
     },
   )
+
+// /Dia — pendências agregadas
+export const fetchDiaPendencias = (data: string) =>
+  get<import('./types').DiaPendencia[]>(
+    `/api/dia/pendencias?data=${encodeURIComponent(data)}`,
+  )
+
+export const fetchDiaDoneToday = (data: string) =>
+  get<{ done: string[] }>(
+    `/api/dia/pendencias/done-today?data=${encodeURIComponent(data)}`,
+  )
+
+// ─── Sessões cronometradas Mind + health_item ───────────────────────────
+// Comportamento idêntico a quest_sessions: play/pause/resume cria/fecha
+// rows. record_id IS NULL define o "cluster ativo" (não finalizado).
+// Finalize = pause + abrir modal pré-preenchido → save linka rows ao
+// health_record criado.
+
+export interface DiaSessionRow {
+  id: number
+  session_num: number
+  started_at: string
+  ended_at: string | null
+  record_id: number | null
+}
+
+export interface DiaSessionCluster {
+  has_active: boolean
+  is_running: boolean
+  started_at: string | null
+  ended_at: string | null
+  elapsed_seconds: number
+  rows: DiaSessionRow[]
+}
+
+// Mind session
+export const fetchMindSession = () =>
+  get<DiaSessionCluster>('/api/mind/session')
+
+export const startMindSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/mind/session/start', { method: 'POST' })
+
+export const pauseMindSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/mind/session/pause', { method: 'POST' })
+
+export const resumeMindSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/mind/session/resume', { method: 'POST' })
+
+export const discardMindSession = () =>
+  jsonFetch<void>('/api/mind/session/discard', { method: 'POST' })
+
+export const linkMindSessionToRecord = (recordId: number) =>
+  jsonFetch<void>('/api/mind/session/link-record', {
+    method: 'POST',
+    body: JSON.stringify({ record_id: recordId }),
+  })
+
+// Health item session
+export const fetchHealthItemSession = (itemId: number) =>
+  get<DiaSessionCluster>(`/api/health/items/${itemId}/session`)
+
+export const startHealthItemSession = (itemId: number) =>
+  jsonFetch<DiaSessionCluster>(`/api/health/items/${itemId}/session/start`, {
+    method: 'POST',
+  })
+
+export const pauseHealthItemSession = (itemId: number) =>
+  jsonFetch<DiaSessionCluster>(`/api/health/items/${itemId}/session/pause`, {
+    method: 'POST',
+  })
+
+export const resumeHealthItemSession = (itemId: number) =>
+  jsonFetch<DiaSessionCluster>(`/api/health/items/${itemId}/session/resume`, {
+    method: 'POST',
+  })
+
+export const discardHealthItemSession = (itemId: number) =>
+  jsonFetch<void>(`/api/health/items/${itemId}/session/discard`, {
+    method: 'POST',
+  })
+
+export const linkHealthItemSessionToRecord = (itemId: number, recordId: number) =>
+  jsonFetch<void>(`/api/health/items/${itemId}/session/link-record`, {
+    method: 'POST',
+    body: JSON.stringify({ record_id: recordId }),
+  })

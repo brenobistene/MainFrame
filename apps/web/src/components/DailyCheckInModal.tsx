@@ -141,8 +141,8 @@ export function DailyCheckInModal({
               icon={<AlertTriangle size={14} strokeWidth={2} />}
               accent="var(--color-accent-light)"
               title={`${overdueTasks.length} ${overdueTasks.length === 1 ? 'tarefa atrasada' : 'tarefas atrasadas'}`}
-              subtitle="Vai pra Dia pra trazer pra hoje ou adiar"
-              onClick={() => { dismiss(); navigate('/dia') }}
+              subtitle="Vai pra EXEC pra trazer pra hoje ou adiar"
+              onClick={() => { dismiss(); navigate('/exec') }}
             />
           )}
           {upcomingBillsCount > 0 && (

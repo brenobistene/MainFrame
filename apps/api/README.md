@@ -1,11 +1,11 @@
-# Hub Quest API (Fase 0)
+# MAINFRAME API (Fase 0)
 
 Backend FastAPI reaproveitando `calendar_service.py` do projeto original.
 
 ## Setup
 
 ```bash
-cd "/home/bstn/projects/Hub Quest/apps/api"
+cd "/home/bstn/projects/MAINFRAME/apps/api"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 `credentials.json` e `token.json` já estão copiados do `lifeX_bot`.
 
-## Criar o calendário dedicado "Hub Quest" (uma vez só)
+## Criar o calendário dedicado "MAINFRAME" (uma vez só)
 
 ```bash
 python create_hub_calendar.py

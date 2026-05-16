@@ -1,5 +1,5 @@
 /**
- * /build — Página da camada estratégica do Hub Quest.
+ * /build — Página da camada estratégica do MAINFRAME.
  *
  * Layout v0: Character Sheet inicial com 3 painéis principais
  *  - Propósito (texto livre + lista de princípios negativos)
@@ -1819,7 +1819,7 @@ function RitualsPanel() {
       try {
         new Notification('Rituais atrasados', {
           body: `${totalAtrasados} ritual${totalAtrasados === 1 ? '' : 'is'} esperando revisão`,
-          tag: 'hub-quest-rituais',
+          tag: 'mainframe-rituais',
         })
         sessionStorage.setItem(key, '1')
       } catch {

@@ -1,6 +1,6 @@
 /**
  * Tokens visuais do Hub Health — wrapper FINO sobre o sistema de design
- * global do Hub Quest (definido em apps/web/index.html `:root`).
+ * global do MAINFRAME (definido em apps/web/index.html `:root`).
  *
  * Estilo: **Kitsch biomonitor adaptado**, mas integrado ao tronco comum
  * (CP2077/Hell Is Us): chrome+ice como brand, oxblood semântico-only,

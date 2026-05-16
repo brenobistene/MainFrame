@@ -1,6 +1,6 @@
 /**
  * Cyberpunk shell — componentes shared pra estabelecer linguagem
- * CP2077 + Hell Is Us em todas as páginas do Hub Quest.
+ * CP2077 + Hell Is Us em todas as páginas do MAINFRAME.
  *
  * Referências master: Dashboard (DashboardPage), Sidebar, Banner.
  * Estética: header band com tab marker ice + // labels mono uppercase

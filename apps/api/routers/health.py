@@ -300,7 +300,16 @@ def _hydrate_domain(row) -> dict:
 
 
 def _hydrate_item(row) -> dict:
-    return {**dict(row), "arquivado": bool(row["arquivado"])}
+    d = dict(row)
+    return {
+        **d,
+        "arquivado": bool(d.get("arquivado") or 0),
+        # Novos campos de agenda — vêm None/0 em DBs migrados; defaults aqui
+        # garantem que o pydantic não estoure se a coluna não foi setada.
+        "diario": bool(d.get("diario") or 0),
+        "duracao_media_min": d.get("duracao_media_min"),
+        "horario_sugerido": d.get("horario_sugerido"),
+    }
 
 
 def _hydrate_record(row) -> dict:
@@ -449,7 +458,9 @@ def delete_domain(slug: str):
 
 ITEM_COLUMNS = (
     "id, domain_slug, nome, unidade, horario_esperado, descricao, cor, "
-    "arquivado, arquivado_em, ordem, criado_em, atualizado_em"
+    "arquivado, arquivado_em, ordem, "
+    "diario, duracao_media_min, horario_sugerido, "
+    "criado_em, atualizado_em"
 )
 
 
@@ -495,8 +506,9 @@ def create_item(slug: str, body: ItemCreate):
         cur = conn.execute(
             "INSERT INTO health_item"
             "(domain_slug, nome, unidade, horario_esperado, descricao, cor,"
-            " ordem, criado_em, atualizado_em) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ordem, diario, duracao_media_min, horario_sugerido,"
+            " criado_em, atualizado_em) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 slug,
                 body.nome,
@@ -505,6 +517,9 @@ def create_item(slug: str, body: ItemCreate):
                 body.descricao,
                 body.cor,
                 ordem,
+                1 if body.diario else 0,
+                body.duracao_media_min,
+                body.horario_sugerido,
                 now,
                 now,
             ),
@@ -780,15 +795,20 @@ SETTINGS_COLUMNS = (
     "hora_lembrete_sono, dashboard_card_visivel, "
     "mind_challenge_ativo, mind_challenge_min_aparicoes, "
     "mind_challenge_janela_dias, mind_suspender_por_dias, "
+    "mind_diario, mind_duracao_media_min, mind_horario_sugerido, "
     "atualizado_em"
 )
 
 
 def _hydrate_settings(row) -> dict:
+    d = dict(row)
     return {
-        **dict(row),
-        "dashboard_card_visivel": bool(row["dashboard_card_visivel"]),
-        "mind_challenge_ativo": bool(row["mind_challenge_ativo"]),
+        **d,
+        "dashboard_card_visivel": bool(d.get("dashboard_card_visivel") or 0),
+        "mind_challenge_ativo": bool(d.get("mind_challenge_ativo") or 0),
+        "mind_diario": bool(d.get("mind_diario") or 0),
+        "mind_duracao_media_min": d.get("mind_duracao_media_min") or 20,
+        "mind_horario_sugerido": d.get("mind_horario_sugerido"),
     }
 
 

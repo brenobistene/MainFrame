@@ -67,7 +67,7 @@ export function CommandPalette({
   const allItems = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [
       { id: 'page:dashboard', type: 'page', title: 'Dashboard', subtitle: 'Visão geral', navigate: () => navigate('/dashboard') },
-      { id: 'page:dia', type: 'page', title: 'Dia', subtitle: 'Foco de hoje', navigate: () => navigate('/dia') },
+      { id: 'page:exec', type: 'page', title: 'EXEC', subtitle: 'Foco de hoje', navigate: () => navigate('/exec') },
       { id: 'page:calendario', type: 'page', title: 'Calendário', subtitle: 'Semana e mês', navigate: () => navigate('/calendario') },
       { id: 'page:areas', type: 'page', title: 'Áreas', subtitle: 'Mapa de vida', navigate: () => navigate('/areas') },
       { id: 'page:tarefas', type: 'page', title: 'Tarefas', subtitle: 'Caixa de tarefas', navigate: () => navigate('/tarefas') },

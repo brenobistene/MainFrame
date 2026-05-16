@@ -24,6 +24,7 @@ import { domainIconFor } from '../../components/health/domainIcon'
 import Heatmap30d from '../../components/health/Heatmap30d'
 import ItemsManagerModal from '../../components/health/ItemsManagerModal'
 import MetricsPanel from '../../components/health/MetricsPanel'
+import MyExercisesPanel from '../../components/health/MyExercisesPanel'
 import PendingPanel from '../../components/health/PendingPanel'
 import RegisterModal from '../../components/health/RegisterModal'
 import Sparkline from '../../components/health/Sparkline'
@@ -117,6 +118,15 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
   const [registerOpen, setRegisterOpen] = useState(false)
   const [itemsOpen, setItemsOpen] = useState(false)
   const [editing, setEditing] = useState<HealthRecord | null>(null)
+  // Item pré-selecionado ao abrir o RegisterModal. Setado quando o usuário
+  // clica num card do MyExercisesPanel (atividade_tipo) — abre o modal já
+  // com aquele exercício escolhido em modo retroativo. Null = fluxo genérico
+  // (botão REGISTRAR do header).
+  const [pickedItemId, setPickedItemId] = useState<number | null>(null)
+  // Atividade_tipo (Exercício) tem fluxo principal via /dia (play→stop cria
+  // record). Aqui mostra MyExercisesPanel como ponto focal e oferece
+  // "+ retroativo" discreto pra registrar sem timer.
+  const isAtividade = domain.template === 'atividade_tipo'
 
   // ─── BigStat "SEM FUMAR" ─────────────────────────────────────────────────
   // Só ativa quando o domínio é `vicios` e existe item ativo "Cigarro"/"Cigarros".
@@ -166,11 +176,30 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
             : null
         }
         onOpenItems={() => setItemsOpen(true)}
-        onOpenRegister={() => setRegisterOpen(true)}
+        onOpenRegister={() => {
+          setPickedItemId(null)
+          setRegisterOpen(true)
+        }}
+        hideRegister={isAtividade}
         hasCigarro={!!cigarroItem}
         tempoSemFumar={tempoSemFumar}
         cigarrosHoje={cigarrosHoje}
       />
+
+      {/* ─── Meus exercícios (atividade_tipo) — substitui REGISTRAR
+            gigante como ponto focal. Click num card abre RegisterModal
+            com item pré-selecionado em modo retroativo. */}
+      {isAtividade && (
+        <MyExercisesPanel
+          domain={domain}
+          items={items}
+          records={records30d}
+          onPickItem={(id) => {
+            setPickedItemId(id)
+            setRegisterOpen(true)
+          }}
+        />
+      )}
 
       {/* ─── Pendências do dia (filtradas por este domínio) ────────── */}
       <PendingPanel filterDomain={domain.slug} />
@@ -216,12 +245,47 @@ function DomainContent({ domain }: { domain: HealthDomain }) {
         </div>
       )}
 
+      {/* Link discreto pra registrar retroativo em atividade_tipo —
+          fluxo principal é via /dia (play→stop), mas usuário pode ter
+          esquecido de cronometrar. Não compete com o MyExercisesPanel. */}
+      {isAtividade && records30d.length > 0 && (
+        <div
+          style={{
+            marginTop: 'var(--space-3)',
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setPickedItemId(null)
+              setRegisterOpen(true)
+            }}
+            className="hq-btn hq-btn--ghost"
+            style={{
+              fontSize: 10,
+              padding: '6px 10px',
+              opacity: 0.7,
+            }}
+            title="Registrar sessão sem timer (esqueceu de dar play?)"
+          >
+            <Plus size={11} strokeWidth={2} />
+            REGISTRAR RETROATIVO
+          </button>
+        </div>
+      )}
+
       {/* Modais */}
       {registerOpen && (
         <RegisterModal
           domain={domain}
           cor={cor}
-          onClose={() => setRegisterOpen(false)}
+          preselectedItemId={pickedItemId ?? undefined}
+          onClose={() => {
+            setRegisterOpen(false)
+            setPickedItemId(null)
+          }}
         />
       )}
       {editing && (
@@ -261,6 +325,7 @@ function DomainHero({
   ultimoRegistro,
   onOpenItems,
   onOpenRegister,
+  hideRegister,
   hasCigarro,
   tempoSemFumar,
   cigarrosHoje,
@@ -275,6 +340,10 @@ function DomainHero({
   ultimoRegistro: string | null
   onOpenItems: () => void
   onOpenRegister: () => void
+  /** Esconde o CTA primário REGISTRAR no header. Usado em atividade_tipo,
+   *  onde o fluxo principal é play→stop no /dia e o card de exercício
+   *  abaixo cobre o caso retroativo. */
+  hideRegister?: boolean
   hasCigarro: boolean
   tempoSemFumar: string | null
   cigarrosHoje: number | null
@@ -352,15 +421,17 @@ function DomainHero({
               ITENS
             </button>
           )}
-          <button
-            type="button"
-            onClick={onOpenRegister}
-            className="hq-btn hq-btn--primary"
-            style={{ fontSize: 11, padding: '7px 14px' }}
-          >
-            <Plus size={13} strokeWidth={2.5} />
-            REGISTRAR
-          </button>
+          {!hideRegister && (
+            <button
+              type="button"
+              onClick={onOpenRegister}
+              className="hq-btn hq-btn--primary"
+              style={{ fontSize: 11, padding: '7px 14px' }}
+            >
+              <Plus size={13} strokeWidth={2.5} />
+              REGISTRAR
+            </button>
+          )}
         </div>
       </div>
 

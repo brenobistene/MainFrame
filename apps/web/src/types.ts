@@ -203,7 +203,7 @@ export interface Deliverable {
 }
 
 export interface ActiveSession {
-  type: 'quest' | 'task' | 'routine'
+  type: 'quest' | 'task' | 'routine' | 'library' | 'mind' | 'health_item' | 'ritual'
   id: string
   title: string
   area_slug: string | null
@@ -915,6 +915,11 @@ export interface HealthItem {
   arquivado: boolean
   arquivado_em: string | null
   ordem: number
+  // Agenda diária — quando `diario=true`, item gera pendência arrastável
+  // em /Dia. Doc: docs/library/PLAN.md (mesmo padrão).
+  diario: boolean
+  duracao_media_min: number | null
+  horario_sugerido: string | null     // HH:MM
   criado_em: string
   atualizado_em: string
 }
@@ -926,6 +931,9 @@ export interface HealthItemCreate {
   descricao?: string | null
   cor?: string | null
   ordem?: number
+  diario?: boolean
+  duracao_media_min?: number | null
+  horario_sugerido?: string | null
 }
 
 export type HealthItemUpdate = Partial<HealthItemCreate>
@@ -963,6 +971,10 @@ export interface HealthSettings {
   mind_challenge_min_aparicoes: number
   mind_challenge_janela_dias: number
   mind_suspender_por_dias: number
+  // Mind agenda — quando `mind_diario=true`, Mind gera pendência diária em /Dia.
+  mind_diario: boolean
+  mind_duracao_media_min: number
+  mind_horario_sugerido: string | null    // HH:MM
   atualizado_em: string
 }
 
@@ -973,6 +985,9 @@ export type HealthSettingsUpdate = Partial<{
   mind_challenge_min_aparicoes: number
   mind_challenge_janela_dias: number
   mind_suspender_por_dias: number
+  mind_diario: boolean
+  mind_duracao_media_min: number
+  mind_horario_sugerido: string | null
 }>
 
 // ─── Mind — Observação Estruturada ────────────────────────────────────────
@@ -1544,6 +1559,28 @@ export interface LibraryBacklink {
   item_autor: string | null
   nota: string | null
   criado_em: string
+}
+
+// ─── /Dia pendências ──────────────────────────────────────────────────────
+// Pendências agregadas (Mind + health_items com `diario=true`) que aparecem
+// como cards arrastáveis em /Dia. Endpoint: GET /api/dia/pendencias?data=.
+
+export type DiaPendenciaOrigem = 'mind' | 'health_item'
+export type DiaPendenciaModalType = 'mind' | 'health_register'
+
+export interface DiaPendencia {
+  origem: DiaPendenciaOrigem
+  /** ID estável usado pelo frontend pra colocar em dayPlan (localStorage).
+   *  "mind" pra Mind, "health_item:<id>" pra health items. */
+  pendencia_id: string
+  titulo: string
+  duracao_min: number | null
+  horario_sugerido: string | null
+  cor: string | null
+  modal_type: DiaPendenciaModalType
+  /** Refs adicionais pro modal — pra health: { domain_slug, domain_nome,
+   *  domain_template, domain_cor, item_id, item_nome }. */
+  target: Record<string, unknown>
 }
 
 // ─── Saga ────────────────────────────────────────────────────────────────

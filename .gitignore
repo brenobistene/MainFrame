@@ -49,6 +49,15 @@ token.json
 # Claude Code runtime lock files
 .claude/scheduled_tasks.lock
 
+# Skills (Claude Code / multi-tool) instalados via npx skills add — junções
+# pra D:\IAs\Skills claude\, não devem ir pro repo público.
+.claude/skills/
+.agents/
+skills-lock.json
+
+# Cobertura de testes (regenerada por `npm test`)
+apps/web/coverage/
+
 # Personal avatar images served locally from public/ — não vão pro repo público
 apps/web/public/foto.jpg
 apps/web/public/breno-perfil.jpg

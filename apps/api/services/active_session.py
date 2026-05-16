@@ -92,4 +92,82 @@ def find_active_session(
         if row:
             return {"type": "library", "id": row["id"], "title": row["title"], "started_at": row["started_at"]}
 
+    # Mind — pendência diária com cronômetro. Sem `id` específico (Mind é
+    # domain-level), title fixo. exclude_type='mind' skip pra evitar
+    # auto-conflito ao reabrir.
+    if exclude_type != "mind":
+        row = conn.execute(
+            "SELECT id, started_at FROM mind_session "
+            "WHERE record_id IS NULL AND ended_at IS NULL LIMIT 1"
+        ).fetchone()
+        if row:
+            return {
+                "type": "mind",
+                "id": "mind",
+                "title": "Meditar",
+                "started_at": row["started_at"],
+            }
+
+    # Health item — exercícios diários cronometrados.
+    if exclude_type != "health_item":
+        row = conn.execute(
+            """SELECT hs.item_id AS id, hi.nome AS title, hs.started_at
+               FROM health_item_session hs
+               JOIN health_item hi ON hs.item_id = hi.id
+               WHERE hs.record_id IS NULL AND hs.ended_at IS NULL LIMIT 1"""
+        ).fetchone()
+        if row:
+            return {
+                "type": "health_item",
+                "id": row["id"],
+                "title": row["title"],
+                "started_at": row["started_at"],
+            }
+    else:
+        row = conn.execute(
+            """SELECT hs.item_id AS id, hi.nome AS title, hs.started_at
+               FROM health_item_session hs
+               JOIN health_item hi ON hs.item_id = hi.id
+               WHERE hs.record_id IS NULL AND hs.ended_at IS NULL
+                 AND hs.item_id != ? LIMIT 1""",
+            (int(exclude_id) if exclude_id and exclude_id.isdigit() else -1,),
+        ).fetchone()
+        if row:
+            return {
+                "type": "health_item",
+                "id": row["id"],
+                "title": row["title"],
+                "started_at": row["started_at"],
+            }
+
+    # Ritual cluster — rituais executados via /Dia.
+    if exclude_type != "ritual":
+        row = conn.execute(
+            """SELECT cadencia AS id, ('Ritual · ' || cadencia) AS title, started_at
+               FROM build_ritual_cluster
+               WHERE record_id IS NULL AND ended_at IS NULL LIMIT 1"""
+        ).fetchone()
+        if row:
+            return {
+                "type": "ritual",
+                "id": row["id"],
+                "title": row["title"],
+                "started_at": row["started_at"],
+            }
+    else:
+        row = conn.execute(
+            """SELECT cadencia AS id, ('Ritual · ' || cadencia) AS title, started_at
+               FROM build_ritual_cluster
+               WHERE record_id IS NULL AND ended_at IS NULL
+                 AND cadencia != ? LIMIT 1""",
+            (exclude_id or "",),
+        ).fetchone()
+        if row:
+            return {
+                "type": "ritual",
+                "id": row["id"],
+                "title": row["title"],
+                "started_at": row["started_at"],
+            }
+
     return None

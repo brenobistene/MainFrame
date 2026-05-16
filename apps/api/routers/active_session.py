@@ -43,6 +43,22 @@ def get_active_session(
                SELECT 'routine' AS type, rs.routine_id AS id, r.title, NULL AS area_slug, rs.started_at, rs.ended_at, rs.id AS sid, rs.date AS routine_date, r.estimated_minutes AS estimated_minutes
                FROM routine_sessions rs JOIN routines r ON rs.routine_id = r.id
                WHERE rs.ended_at IS NULL
+               UNION ALL
+               SELECT 'mind' AS type, 'mind' AS id, 'Meditar' AS title, NULL AS area_slug, ms.started_at, ms.ended_at, ms.id AS sid, NULL AS routine_date, NULL AS estimated_minutes
+               FROM mind_session ms
+               WHERE ms.record_id IS NULL
+                 AND ms.id = (SELECT MAX(id) FROM mind_session WHERE record_id IS NULL)
+               UNION ALL
+               SELECT 'health_item' AS type, CAST(hs.item_id AS TEXT) AS id, hi.nome AS title, NULL AS area_slug, hs.started_at, hs.ended_at, hs.id AS sid, NULL AS routine_date, hi.duracao_media_min AS estimated_minutes
+               FROM health_item_session hs JOIN health_item hi ON hs.item_id = hi.id
+               WHERE hs.record_id IS NULL
+                 AND hs.id = (SELECT MAX(id) FROM health_item_session WHERE record_id IS NULL)
+               UNION ALL
+               SELECT 'ritual' AS type, brc.cadencia AS id, ('Ritual · ' || brc.cadencia) AS title, NULL AS area_slug, brc.started_at, brc.ended_at, brc.id AS sid, NULL AS routine_date, br.duracao_alvo_min AS estimated_minutes
+               FROM build_ritual_cluster brc
+               JOIN build_ritual br ON brc.cadencia = br.cadencia
+               WHERE brc.record_id IS NULL
+                 AND brc.id = (SELECT MAX(id) FROM build_ritual_cluster WHERE record_id IS NULL)
                LIMIT 1"""
         ).fetchone()
 

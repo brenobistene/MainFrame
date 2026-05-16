@@ -13,7 +13,7 @@ import type { PageBlockContextValue } from './PageBlock'
  * Editor estilo Notion — blocos tipados (paragraph, heading 1-3, bullet,
  * numbered, checklist, divider) com menu slash, drag handle e botão "+"
  * no hover. Wrapper em volta do BlockNote pra encaixar no modelo de dados
- * do Hub Quest, que hoje armazena `notes`/`description` como TEXT simples.
+ * do MAINFRAME, que hoje armazena `notes`/`description` como TEXT simples.
  *
  * Compatibilidade com legado: se o valor salvo for texto puro (não JSON),
  * é convertido pra um único bloco paragraph na carga. Na gravação sempre

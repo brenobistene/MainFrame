@@ -3,10 +3,10 @@ import { ChevronLeft, ChevronRight, Target } from 'lucide-react'
 import type { Area, Deliverable, Project, Quest, Routine, Task } from '../types'
 import {
   fetchSessions, fetchTasks, fetchTaskSessions, fetchRoutineSessions, fetchDeliverables,
-  fetchMindSessionsRange, fetchHealthItemSessionsRange,
+  fetchMindSessionsRange, fetchHealthItemSessionsRange, fetchRitualClusterRange,
   deleteRoutine, reportApiError,
 } from '../api'
-import type { MindSessionRangeRow, HealthItemSessionRangeRow } from '../api'
+import type { MindSessionRangeRow, HealthItemSessionRangeRow, RitualClusterRangeRow } from '../api'
 import { useRoutines, useAppInvalidator } from '../lib/app-queries'
 import { tabSync } from '../lib/tabsync'
 import { parseIsoAsUtc } from '../utils/datetime'
@@ -143,6 +143,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
   // — backend retorna por range, frontend só filtra rows do dia visível.
   const [mindSessionRows, setMindSessionRows] = useState<MindSessionRangeRow[]>([])
   const [healthSessionRows, setHealthSessionRows] = useState<HealthItemSessionRangeRow[]>([])
+  const [ritualSessionRows, setRitualSessionRows] = useState<RitualClusterRangeRow[]>([])
   // Deliverables por projeto — usado pra resolver `effectiveQuestDeadline`
   // (quest herda deadline do entregável → projeto). Buscado em paralelo no
   // mount + sempre que a lista de project_ids das quests muda.
@@ -154,6 +155,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
     | { kind: 'quest' | 'task' | 'routine'; entityId: string }
     | { kind: 'mind' }
     | { kind: 'health'; itemId: number }
+    | { kind: 'ritual'; cadencia: string }
     | null
   >(null)
   // Tick por minuto pra linha de "agora" seguir o relógio — antes estava
@@ -327,10 +329,12 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
     Promise.all([
       fetchMindSessionsRange(from, to).catch(() => [] as MindSessionRangeRow[]),
       fetchHealthItemSessionsRange(from, to).catch(() => [] as HealthItemSessionRangeRow[]),
-    ]).then(([mindRows, healthRows]) => {
+      fetchRitualClusterRange(from, to).catch(() => [] as RitualClusterRangeRow[]),
+    ]).then(([mindRows, healthRows, ritualRows]) => {
       if (cancelled) return
       setMindSessionRows(mindRows)
       setHealthSessionRows(healthRows)
+      setRitualSessionRows(ritualRows)
     })
     return () => { cancelled = true }
   }, [currentDate, sessionUpdateTrigger])
@@ -1308,12 +1312,44 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                   const running = !row.ended_at
                   const cor = '#9b88c4'
                   const isShort = durationMin < 25
+                  const displayTitle = 'Meditar'
                   const fmtTime = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })
                   const timeLabel = `${seg.crossesIn ? '↪ ' : ''}${fmtTime(start)} → ${fmtTime(end)}${seg.crossesOut ? ' ↩' : ''}`
                   return (
+                    <Fragment key={`mind-sess-${row.id}-${idx}`}>
+                    {isShort && (
+                      <>
+                        <div
+                          title={`${displayTitle} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 24}px`,
+                            fontSize: 8, fontWeight: 400, lineHeight: 1,
+                            color: 'var(--color-text-muted)',
+                            fontFamily: 'var(--font-mono)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          {timeLabel}
+                        </div>
+                        <div
+                          title={`${displayTitle} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 13}px`,
+                            fontSize: 9, fontWeight: 600, lineHeight: 1.1,
+                            color: 'var(--color-text-primary)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          <span style={{ opacity: 0.55, marginRight: 4 }}>MND</span>{displayTitle}
+                        </div>
+                      </>
+                    )}
                     <div
-                      key={`mind-sess-${row.id}-${idx}`}
-                      title={`Meditar · ${running ? 'rodando' : 'finalizada'} · ${timeLabel} — clique pra editar histórico`}
+                      title={`${displayTitle} · ${running ? 'rodando' : 'finalizada'} · ${timeLabel} — clique pra editar histórico`}
                       onClick={() => setSessionModal({ kind: 'mind' })}
                       style={{
                         position: 'absolute',
@@ -1345,6 +1381,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                         </>
                       )}
                     </div>
+                    </Fragment>
                   )
                 })}
 
@@ -1363,12 +1400,44 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                   const running = !row.ended_at
                   const cor = row.item_cor || '#7fb8a8'
                   const isShort = durationMin < 25
+                  const displayTitle = row.item_nome
                   const fmtTime = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })
                   const timeLabel = `${seg.crossesIn ? '↪ ' : ''}${fmtTime(start)} → ${fmtTime(end)}${seg.crossesOut ? ' ↩' : ''}`
                   return (
+                    <Fragment key={`health-sess-${row.id}-${idx}`}>
+                    {isShort && (
+                      <>
+                        <div
+                          title={`${displayTitle} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 24}px`,
+                            fontSize: 8, fontWeight: 400, lineHeight: 1,
+                            color: 'var(--color-text-muted)',
+                            fontFamily: 'var(--font-mono)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          {timeLabel}
+                        </div>
+                        <div
+                          title={`${displayTitle} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 13}px`,
+                            fontSize: 9, fontWeight: 600, lineHeight: 1.1,
+                            color: 'var(--color-text-primary)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          <span style={{ opacity: 0.55, marginRight: 4 }}>HLT</span>{displayTitle.substring(0, 30)}
+                        </div>
+                      </>
+                    )}
                     <div
-                      key={`health-sess-${row.id}-${idx}`}
-                      title={`${row.item_nome} · ${running ? 'rodando' : 'finalizada'} · ${timeLabel} — clique pra editar histórico`}
+                      title={`${displayTitle} · ${running ? 'rodando' : 'finalizada'} · ${timeLabel} — clique pra editar histórico`}
                       onClick={() => setSessionModal({ kind: 'health', itemId: row.item_id })}
                       style={{
                         position: 'absolute',
@@ -1392,7 +1461,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                       {!isShort && (
                         <>
                           <div style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 600, color: '#fff', letterSpacing: '0.03em', textTransform: 'uppercase', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
-                            <span style={{ opacity: 0.7, marginRight: 4 }}>HLT</span>{row.item_nome.substring(0, 30)}
+                            <span style={{ opacity: 0.7, marginRight: 4 }}>HLT</span>{displayTitle.substring(0, 30)}
                           </div>
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.92)', letterSpacing: '0.08em', marginTop: 2, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
                             {timeLabel}
@@ -1400,6 +1469,95 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                         </>
                       )}
                     </div>
+                    </Fragment>
+                  )
+                })}
+
+                {/* Sessões EXECUTADAS de Rituais — rows de build_ritual_cluster
+                    com started_at/ended_at; cor vermelha (Neomilitarism red). */}
+                {ritualSessionRows.map((row, idx) => {
+                  if (!row.started_at) return null
+                  const start = parseIsoAsUtc(row.started_at)
+                  const end = row.ended_at ? parseIsoAsUtc(row.ended_at) : new Date()
+                  const seg = intersectDay(start, end, dateIso)
+                  if (!seg) return null
+                  const startHour = seg.startMin / 60
+                  const durationMin = seg.endMin - seg.startMin
+                  const topPercent = 20 + startHour * 60 * timelineZoom
+                  const heightPercent = durationMin * timelineZoom
+                  const running = !row.ended_at
+                  const cor = '#dc2531'
+                  const isShort = durationMin < 25
+                  const fmtTime = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })
+                  const timeLabel = `${seg.crossesIn ? '↪ ' : ''}${fmtTime(start)} → ${fmtTime(end)}${seg.crossesOut ? ' ↩' : ''}`
+                  const titulo = `Ritual · ${row.cadencia}`
+                  return (
+                    <Fragment key={`ritual-sess-${row.id}-${idx}`}>
+                    {isShort && (
+                      <>
+                        <div
+                          title={`${titulo} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 24}px`,
+                            fontSize: 8, fontWeight: 400, lineHeight: 1,
+                            color: 'var(--color-text-muted)',
+                            fontFamily: 'var(--font-mono)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          {timeLabel}
+                        </div>
+                        <div
+                          title={`${titulo} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 13}px`,
+                            fontSize: 9, fontWeight: 600, lineHeight: 1.1,
+                            color: 'var(--color-text-primary)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          <span style={{ opacity: 0.55, marginRight: 4 }}>RTL</span>{titulo}
+                        </div>
+                      </>
+                    )}
+                    <div
+                      title={`${titulo} · ${running ? 'rodando' : 'finalizada'} · ${timeLabel} — clique pra editar histórico`}
+                      onClick={() => setSessionModal({ kind: 'ritual', cadencia: row.cadencia })}
+                      style={{
+                        position: 'absolute',
+                        left: '4px', right: '4px',
+                        top: `${topPercent}px`, height: `${heightPercent}px`,
+                        background: `linear-gradient(135deg, ${cor} 0%, ${cor}88 100%)`,
+                        border: running ? '1px dashed var(--color-ice-light)' : '1px solid rgba(255,255,255,0.18)',
+                        borderLeft: `2px solid ${cor}`,
+                        clipPath: seg.crossesIn || seg.crossesOut
+                          ? undefined
+                          : 'polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))',
+                        padding: isShort ? '0' : '4px 6px',
+                        overflow: 'hidden',
+                        opacity: 0.95, cursor: 'pointer',
+                        boxShadow: running
+                          ? `inset 0 0 0 1px rgba(143,191,211,0.35), 0 0 14px ${cor}55`
+                          : `inset 0 0 0 1px rgba(255,255,255,0.18), 0 0 8px ${cor}55`,
+                        zIndex: 4,
+                      }}
+                    >
+                      {!isShort && (
+                        <>
+                          <div style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 600, color: '#fff', letterSpacing: '0.03em', textTransform: 'uppercase', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                            <span style={{ opacity: 0.7, marginRight: 4 }}>RTL</span>{row.cadencia}
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.92)', letterSpacing: '0.08em', marginTop: 2, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                            {timeLabel}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    </Fragment>
                   )
                 })}
 
@@ -3335,6 +3493,14 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
         } else if (sessionModal.kind === 'health') {
           sess = healthSessionRows
             .filter(r => r.item_id === sessionModal.itemId)
+            .map(r => ({
+              id: r.id,
+              started_at: r.started_at,
+              ended_at: r.ended_at,
+            }))
+        } else if (sessionModal.kind === 'ritual') {
+          sess = ritualSessionRows
+            .filter(r => r.cadencia === sessionModal.cadencia)
             .map(r => ({
               id: r.id,
               started_at: r.started_at,

@@ -1,4 +1,4 @@
-"""Script one-shot: cria o calendário dedicado 'Hub Quest' na conta Google.
+"""Script one-shot: cria o calendário dedicado 'MAINFRAME' na conta Google.
 
 Uso:
     python create_hub_calendar.py
@@ -12,8 +12,8 @@ from calendar_service import (
     build_google_calendar_settings_from_env,
 )
 
-CALENDAR_NAME = "Hub Quest"
-CALENDAR_DESCRIPTION = "Tarefas e blocos de tempo criados pelo Hub Quest."
+CALENDAR_NAME = "MAINFRAME"
+CALENDAR_DESCRIPTION = "Tarefas e blocos de tempo criados pelo MAINFRAME."
 
 
 def main() -> None:

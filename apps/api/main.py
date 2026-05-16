@@ -25,6 +25,8 @@ from routers import (
     build,
     calendar,
     deliverables,
+    dia,
+    dia_sessions,
     finance,
     health,
     library,
@@ -93,6 +95,8 @@ app.include_router(build.router)
 app.include_router(health.router)  # Hub Health (/api/health/*)
 app.include_router(library.router)  # Library (/api/library/*)
 app.include_router(time_reports.router)  # Time reports (/api/time-reports/*)
+app.include_router(dia.router)  # /Dia pendências agregadas (/api/dia/*)
+app.include_router(dia_sessions.router)  # Sessões cronometradas Mind + health_item
 
 
 def _service_flags() -> dict:

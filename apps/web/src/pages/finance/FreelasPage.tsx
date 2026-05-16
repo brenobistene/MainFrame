@@ -560,7 +560,7 @@ function ProjectCard({ projeto: p, hourlyStats }: {
   const diff = showCompare ? projetoRate - mediaRate! : 0
   const acimaMedia = diff >= 0
 
-  function openInHubQuest() {
+  function openInMainframe() {
     // Persiste no localStorage (bootstrap do App.tsx) E dispara evento custom
     // pra atualizar o estado React do selectedProjectId que já está montado.
     // App.tsx tem listener pro evento que faz setSelectedProjectId.
@@ -636,7 +636,7 @@ function ProjectCard({ projeto: p, hourlyStats }: {
           </div>
         </div>
         <button
-          onClick={openInHubQuest}
+          onClick={openInMainframe}
           title="abrir projeto no MAINFRAME"
           style={{
             background: 'rgba(8, 12, 18, 0.55)',

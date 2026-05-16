@@ -1923,7 +1923,7 @@ export function QuestDetailPanel({
 // ─── Hub Finance — bloco financeiro do projeto ───────────────────────────
 // Painel que mostra valor acordado, tempo trabalhado, e R$/hora estimado.
 // Cálculo: R$/hora = valor_acordado / (totalExecutedMin / 60).
-// Doc: docs/hub-finance/PLAN.md (v1 — integração com Hub Quest).
+// Doc: docs/hub-finance/PLAN.md (v1 — integração com MAINFRAME).
 
 function FinanceBlock({ project, totalExecutedMin, onUpdateValor, onUpdateCliente }: {
   project: Project

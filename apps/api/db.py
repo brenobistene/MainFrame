@@ -15,7 +15,7 @@ def _try_add_column(conn: sqlite3.Connection, sql: str) -> None:
             return  # idempotente: coluna já existe, tudo certo
         raise
 
-DB_PATH = Path(__file__).parent / "hubquest.db"
+DB_PATH = Path(__file__).parent / "mainframe.db"
 
 AREAS = [
     ("freelas",    "Freelas",    "Entregas com impacto financeiro e prazos reais.", 1, "#e85d3a"),
@@ -1459,6 +1459,20 @@ def init_db() -> None:
         # explicitamente) pra cobrir o caso de DBs migrados.
         _try_add_column(conn, "ALTER TABLE library_item ADD COLUMN saga_id INTEGER")
         _try_add_column(conn, "ALTER TABLE library_item ADD COLUMN saga_ordem INTEGER NOT NULL DEFAULT 0")
+
+        # Agenda diária — health_item ganha config de recorrência/duração
+        # pra aparecer como pendência arrastável no /Dia. Default `diario=0`
+        # (não gera pendência) pra não inundar /Dia com pendências antigas;
+        # usuário ativa item a item nas settings do domain.
+        _try_add_column(conn, "ALTER TABLE health_item ADD COLUMN diario INTEGER NOT NULL DEFAULT 0")
+        _try_add_column(conn, "ALTER TABLE health_item ADD COLUMN duracao_media_min INTEGER")
+        _try_add_column(conn, "ALTER TABLE health_item ADD COLUMN horario_sugerido TEXT")
+
+        # Mind ganha config equivalente em health_settings (Mind não usa
+        # health_item, vive em tabelas próprias).
+        _try_add_column(conn, "ALTER TABLE health_settings ADD COLUMN mind_diario INTEGER NOT NULL DEFAULT 0")
+        _try_add_column(conn, "ALTER TABLE health_settings ADD COLUMN mind_duracao_media_min INTEGER NOT NULL DEFAULT 20")
+        _try_add_column(conn, "ALTER TABLE health_settings ADD COLUMN mind_horario_sugerido TEXT")
         # Agora que as colunas existem (tanto em DBs novos via CREATE TABLE
         # quanto em DBs migrados via ALTER TABLE), cria o índice composto.
         try:
@@ -1469,6 +1483,52 @@ def init_db() -> None:
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
+        # ─── Sessões cronometradas pra pendências do /Dia ────────────────
+        # Mind (meditação) e health_item (cardio/musculação/alongamento)
+        # ganham tabelas de sessão paralelas a quest_sessions/library_session.
+        # Padrão: cada play cria row; pause fecha (ended_at = now); resume
+        # cria nova row (session_num++); finalize = pause + modal pré-
+        # preenchido cria o health_record E linka todas as rows do cluster
+        # ao record_id (record_id NULL = cluster ativo / não finalizado).
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS mind_session (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_num INTEGER NOT NULL,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            record_id   INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_mind_session_active
+            ON mind_session(record_id, ended_at);
+
+        CREATE TABLE IF NOT EXISTS health_item_session (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id     INTEGER NOT NULL REFERENCES health_item(id) ON DELETE CASCADE,
+            session_num INTEGER NOT NULL,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            record_id   INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_health_item_session_active
+            ON health_item_session(item_id, record_id, ended_at);
+
+        -- Cluster de runtime pra rituais (Build). Mesmo padrão de mind/
+        -- health_item: rows com record_id NULL = cluster ativo; após
+        -- finalizar, todas as rows do cluster ganham o id da build_ritual_session
+        -- criada (record_id = build_ritual_session.id, TEXT). Cadencia
+        -- separa clusters por tipo de ritual (diario/semanal/mensal/anual).
+        CREATE TABLE IF NOT EXISTS build_ritual_cluster (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            cadencia    TEXT NOT NULL,
+            session_num INTEGER NOT NULL,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            record_id   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_build_ritual_cluster_active
+            ON build_ritual_cluster(cadencia, record_id, ended_at);
+        """)
 
         if needs_project_split:
             conn.execute("PRAGMA foreign_keys=OFF")

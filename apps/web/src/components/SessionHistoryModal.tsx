@@ -4,7 +4,9 @@ import { Pencil, Trash2, Check, X as XIcon, AlertTriangle } from 'lucide-react'
 import { parseIsoAsUtc, formatHMS } from '../utils/datetime'
 import {
   editQuestSession, editTaskSession, editRoutineSession,
+  editMindSession, editHealthItemSession, editRitualClusterSession,
   deleteQuestSession, deleteTaskSession, deleteRoutineSessionById,
+  deleteMindSessionRow, deleteHealthItemSessionRow, deleteRitualClusterRow,
   reportApiError,
 } from '../api'
 import {
@@ -28,7 +30,7 @@ export function SessionHistoryModal({ sessions, onClose, kind, onChanged }: {
   onClose: () => void
   /** Tipo da entity — necessário pra escolher o endpoint de PATCH/DELETE.
    *  Se omitido, modal fica em modo read-only (sem editar/excluir). */
-  kind?: 'quest' | 'task' | 'routine'
+  kind?: 'quest' | 'task' | 'routine' | 'mind' | 'health' | 'ritual'
   /** Disparado após uma edição/exclusão bem-sucedida. Geralmente é o
    *  `onSessionUpdate` do parent, que refaz fetch global de sessões. */
   onChanged?: () => void
@@ -55,8 +57,22 @@ export function SessionHistoryModal({ sessions, onClose, kind, onChanged }: {
     return Math.max(0, Math.floor((en - st) / 1000))
   }
 
-  const editFn = kind === 'quest' ? editQuestSession : kind === 'task' ? editTaskSession : editRoutineSession
-  const deleteFn = kind === 'quest' ? deleteQuestSession : kind === 'task' ? deleteTaskSession : deleteRoutineSessionById
+  const editFn =
+    kind === 'quest' ? editQuestSession
+    : kind === 'task' ? editTaskSession
+    : kind === 'routine' ? editRoutineSession
+    : kind === 'mind' ? editMindSession
+    : kind === 'health' ? editHealthItemSession
+    : kind === 'ritual' ? editRitualClusterSession
+    : editRoutineSession  // fallback inalcançável (canEdit guarda chamadas)
+  const deleteFn =
+    kind === 'quest' ? deleteQuestSession
+    : kind === 'task' ? deleteTaskSession
+    : kind === 'routine' ? deleteRoutineSessionById
+    : kind === 'mind' ? deleteMindSessionRow
+    : kind === 'health' ? deleteHealthItemSessionRow
+    : kind === 'ritual' ? deleteRitualClusterRow
+    : deleteRoutineSessionById
 
   async function handleDelete(sid: number) {
     if (!canEdit) return

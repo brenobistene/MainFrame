@@ -115,7 +115,7 @@ function buildTightChainTooltip(
  * split disponíveis × períodos), e três blocos minimalistas pra manhã/tarde/
  * noite. Persiste plano em `hq-day-plan` (localStorage).
  */
-export function DiaView({ projects, quests, areas, activeSession, onSessionUpdate, onSelectProject }: {
+export function ExecView({ projects, quests, areas, activeSession, onSessionUpdate, onSelectProject }: {
   projects: Project[]
   quests: Quest[]
   areas: Area[]
@@ -581,13 +581,13 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
   function handleTaskToToday(t: Task) {
     updateTask(t.id, { scheduled_date: todayIsoForTasks })
       .then(() => { appInv.tasks(); tabSync.emit('tasks') })
-      .catch(err => reportApiError('DiaPage', err))
+      .catch(err => reportApiError('ExecPage', err))
   }
   function handleTaskReschedule(t: Task, newDate: string) {
     if (!newDate) return
     updateTask(t.id, { scheduled_date: newDate })
       .then(() => { appInv.tasks(); tabSync.emit('tasks') })
-      .catch(err => reportApiError('DiaPage', err))
+      .catch(err => reportApiError('ExecPage', err))
   }
   async function handleTaskDiscard(t: Task) {
     const ok = await confirmDialog({
@@ -599,7 +599,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
     if (!ok) return
     deleteTask(t.id)
       .then(() => { appInv.tasks(); tabSync.emit('tasks') })
-      .catch(err => reportApiError('DiaPage', err))
+      .catch(err => reportApiError('ExecPage', err))
   }
 
   const filteredItems = getFilteredItems()
@@ -660,17 +660,35 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
     const periodRangesMin = periodRangesMinFrom(dayPeriods)
     const order: Array<'morning' | 'afternoon' | 'evening'> = ['morning', 'afternoon', 'evening']
 
-    const itemIsActive = (id: string): boolean =>
-      !!activeSession && activeSession.id === id && activeSession.is_active
+    // dayPlan ids pra mind/health/ritual usam prefixos ("ritual:diario",
+    // "health_item:5"), mas activeSession.id é "diario", "5" (sem prefixo).
+    // Tradução pra comparar corretamente quando há sessão rodando.
+    const itemIsActive = (id: string): boolean => {
+      if (!activeSession || !activeSession.is_active) return false
+      const aType = activeSession.type
+      const aId = String(activeSession.id)
+      if (id.startsWith('ritual:') && aType === 'ritual') return id.slice(7) === aId
+      if (id.startsWith('health_item:') && aType === 'health_item') return id.slice(12) === aId
+      return aId === id
+    }
 
-    // Resolução do item via 3 stores. Após o gate acima, sabemos que todos
-    // foram fetchados pelo menos uma vez — então findItem não retornar
-    // significa "item não existe mais" (deletado, cancelado), e migrar
-    // ele não faz sentido. Conservador: stays.
+    // Resolução do item via stores conhecidas. Após o gate acima, sabemos
+    // que quests/tasks/routines foram fetchados ao menos uma vez. Pendências
+    // (mind/health_item) e rituais consultam suas próprias arrays — se ainda
+    // estão vazias, findItem retorna null e o item permanece (conservador).
     const findItem = (id: string) => {
       const q = quests.find(x => x.id === id); if (q) return { kind: 'quest' as const, q }
       const t = allTasks.find(x => x.id === id); if (t) return { kind: 'task' as const, t }
       const r = routines.find(x => x.id === id); if (r) return { kind: 'routine' as const, r }
+      if (id.startsWith('ritual:')) {
+        const cad = id.slice(7)
+        const rit = rituals.find(x => x.ativo && x.cadencia === cad)
+        if (rit) return { kind: 'ritual' as const, rit }
+      }
+      if (id === 'mind' || id.startsWith('health_item:')) {
+        const p = diaPendencias.find(x => x.pendencia_id === id)
+        if (p) return { kind: 'pendencia' as const, p }
+      }
       return null
     }
     const itemIsDone = (id: string): boolean => {
@@ -678,7 +696,12 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
       if (!it) return false
       if (it.kind === 'quest') return it.q.status === 'done' || it.q.status === 'cancelled'
       if (it.kind === 'task') return !!it.t.done
-      return doneRoutineIds.has(id)
+      if (it.kind === 'routine') return doneRoutineIds.has(id)
+      // Ritual: backend marca ultima_execucao quando concluído no dia.
+      if (it.kind === 'ritual') return it.rit.ultima_execucao?.slice(0, 10) === todayIso
+      // Pendência só aparece em diaPendencias enquanto está pendente — backend
+      // filtra após registro. Logo, presença em findItem implica não-feita.
+      return false
     }
 
     setDayPlan(prev => {
@@ -736,7 +759,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
     // Confiamos em: (a) tick de nowMin a cada minuto, (b) mudanças nas arrays
     // de dados — qualquer um cobre o caso. itemIsActive usa o closure atual de
     // activeSession, que é refrescado em todo render mesmo sem estar nos deps.
-  }, [nowMin, dayPeriods, quests, allTasks, routines, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded])
+  }, [nowMin, dayPeriods, quests, allTasks, routines, rituals, diaPendencias, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded])
 
   const productiveMinRemaining = (() => {
     let blockRanges: BlockRange[] = []
@@ -1127,7 +1150,7 @@ export function DiaView({ projects, quests, areas, activeSession, onSessionUpdat
                       }
                       invalidateDiaPendencias()
                     },
-                    onError: (err) => reportApiError('DiaPage.autoFinalize', err),
+                    onError: (err) => reportApiError('ExecPage.autoFinalize', err),
                   },
                 )
                 return
@@ -1276,7 +1299,7 @@ function PeriodSection({
   onOpenQuest: (q: Quest) => void
   /** Click "FINALIZAR" em planned item de pendência (Mind / health_item)
    *  abre o modal certo pré-preenchido com cluster da sessão. Resolvido no
-   *  parent (DiaView) que tem state do modal + sabe linkar o record. */
+   *  parent (ExecView) que tem state do modal + sabe linkar o record. */
   onExecutePendencia: (item: any, cluster: DiaSessionClusterLike) => void
   /** Pendências do dia — necessárias pra resolver IDs do dayPlan ("mind",
    *  "health_item:X") no allItems local. */

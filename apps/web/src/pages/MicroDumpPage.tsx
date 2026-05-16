@@ -88,7 +88,7 @@ function ConvertButton({ label, onClick }: { label: string; onClick: () => void 
     </button>
   )
 }
-export function MicroDumpView({ areas, projects, onArchive }: { areas: Area[]; projects: Project[]; onArchive: (idea: any) => void }) {
+export function MicroDumpView({ areas, projects: _projects, onArchive }: { areas: Area[]; projects: Project[]; onArchive: (idea: any) => void }) {
   // MicroTasks via React Query — substituiu useState + fetchMicroTasks manual.
   // Invalidator pro convert-flow (ideia → task/rotina). Sem isso, /tarefas
   // e /rotinas ficavam stale até F5 depois de promover uma ideia.

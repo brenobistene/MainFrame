@@ -1,7 +1,7 @@
 /**
  * Motion primitives — presets de spring + componentes reutilizáveis.
  *
- * Convenção: TODA animação do Hub Quest passa por aqui pra ter feel
+ * Convenção: TODA animação do MAINFRAME passa por aqui pra ter feel
  * consistente. CSS keyframes em index.html ficam só pra background
  * (grain, shimmer chrome, pulse-dot) — coisas que não dependem de
  * estado React e não precisam de spring.

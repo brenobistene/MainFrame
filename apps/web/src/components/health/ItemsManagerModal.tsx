@@ -18,7 +18,16 @@
  * dessaturada do domínio como único acento de cor.
  */
 import { useState } from 'react'
-import { Archive, ArchiveRestore, Pencil, Plus, Trash2, X } from 'lucide-react'
+import {
+  Archive,
+  ArchiveRestore,
+  CalendarClock,
+  Clock,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from 'lucide-react'
 
 import {
   useArchiveHealthItem,
@@ -307,12 +316,88 @@ function ItemRow({
             </span>
           )}
         </div>
+        {/* Agenda chips — config diário visível direto no card */}
+        {(item.diario || item.duracao_media_min || item.horario_sugerido) && (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 6,
+              marginTop: 6,
+              alignItems: 'center',
+            }}
+          >
+            {item.diario && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 10,
+                  fontFamily: DISPLAY,
+                  fontWeight: 600,
+                  letterSpacing: '0.14em',
+                  textTransform: 'uppercase',
+                  padding: '3px 7px',
+                  border: `1px solid ${cor}`,
+                  color: cor,
+                  background: `${cor}14`,
+                  borderRadius: 2,
+                }}
+                title="Item aparece em /Dia como pendência arrastável"
+              >
+                <CalendarClock size={10} strokeWidth={2.2} />
+                AGENDA DIÁRIA
+              </span>
+            )}
+            {item.duracao_media_min != null && item.duracao_media_min > 0 && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 10,
+                  fontFamily: MONO,
+                  letterSpacing: '0.06em',
+                  padding: '3px 7px',
+                  border: '1px solid var(--color-divider)',
+                  color: 'var(--color-text-secondary)',
+                  borderRadius: 2,
+                }}
+                title="Duração média estimada"
+              >
+                ~{item.duracao_media_min} min
+              </span>
+            )}
+            {item.horario_sugerido && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 10,
+                  fontFamily: MONO,
+                  letterSpacing: '0.06em',
+                  padding: '3px 7px',
+                  border: '1px solid var(--color-divider)',
+                  color: 'var(--color-text-secondary)',
+                  borderRadius: 2,
+                }}
+                title="Horário sugerido no /Dia"
+              >
+                <Clock size={10} strokeWidth={2.2} />
+                {item.horario_sugerido}
+              </span>
+            )}
+          </div>
+        )}
         <div
           style={{
             fontSize: 11,
             color: 'var(--color-text-muted)',
-            marginTop: 2,
+            marginTop: 4,
             display: 'flex',
+            flexWrap: 'wrap',
             gap: 12,
             fontFamily: MONO,
             letterSpacing: 0,
@@ -411,6 +496,14 @@ function ItemForm({
   )
   const [descricao, setDescricao] = useState(initial?.descricao ?? '')
   const [itemCor, setItemCor] = useState(initial?.cor ?? '')
+  // Agenda diária — quando `diario=true`, item gera pendência em /Dia.
+  const [diario, setDiario] = useState<boolean>(initial?.diario ?? false)
+  const [duracaoMedia, setDuracaoMedia] = useState<string>(
+    initial?.duracao_media_min != null ? String(initial.duracao_media_min) : '',
+  )
+  const [horarioSugerido, setHorarioSugerido] = useState<string>(
+    initial?.horario_sugerido ?? '',
+  )
 
   // Campos relevantes por template
   const showUnidade =
@@ -422,12 +515,19 @@ function ItemForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
+    const duracaoNum = duracaoMedia.trim()
+      ? parseInt(duracaoMedia, 10)
+      : null
+
     if (isEdit) {
       const patch: HealthItemUpdate = { nome }
       if (showUnidade) patch.unidade = unidade || null
       if (showHorario) patch.horario_esperado = horarioEsperado || null
       if (showDescricao) patch.descricao = descricao || null
       patch.cor = itemCor || null
+      patch.diario = diario
+      patch.duracao_media_min = duracaoNum
+      patch.horario_sugerido = horarioSugerido || null
       update.mutate(
         { id: initial!.id, patch },
         { onSuccess: onDone },
@@ -438,6 +538,9 @@ function ItemForm({
       if (showHorario && horarioEsperado) body.horario_esperado = horarioEsperado
       if (showDescricao && descricao) body.descricao = descricao
       if (itemCor) body.cor = itemCor
+      if (diario) body.diario = true
+      if (duracaoNum != null) body.duracao_media_min = duracaoNum
+      if (horarioSugerido) body.horario_sugerido = horarioSugerido
       create.mutate(
         { domainSlug: domain.slug, body },
         { onSuccess: onDone },
@@ -548,6 +651,68 @@ function ItemForm({
           />
         </Field>
       )}
+
+      {/* AGENDA DIÁRIA — quando ativada, item gera pendência em /Dia */}
+      <div
+        style={{
+          marginTop: 10,
+          paddingTop: 10,
+          borderTop: '1px dashed var(--color-divider)',
+        }}
+      >
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            cursor: 'pointer',
+            fontFamily: BODY,
+            fontSize: 11,
+            color: diario ? cor : 'var(--color-text-muted)',
+            fontWeight: 600,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={diario}
+            onChange={(e) => setDiario(e.target.checked)}
+            style={{ accentColor: cor }}
+          />
+          AGENDA DIÁRIA — aparece como card arrastável em /dia
+        </label>
+        {diario && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              flexWrap: 'wrap',
+              marginTop: 8,
+            }}
+          >
+            <Field label="DURAÇÃO MÉDIA (MIN)" style={{ width: 160 }}>
+              <input
+                type="number"
+                min={1}
+                max={600}
+                value={duracaoMedia}
+                onChange={(e) => setDuracaoMedia(e.target.value)}
+                placeholder="ex: 30"
+                style={inputStyle()}
+              />
+            </Field>
+            <Field label="HORÁRIO SUGERIDO" style={{ width: 140 }}>
+              <input
+                type="time"
+                value={horarioSugerido}
+                onChange={(e) => setHorarioSugerido(e.target.value)}
+                style={inputStyle()}
+              />
+            </Field>
+          </div>
+        )}
+      </div>
 
       {error && (
         <div

@@ -1,4 +1,4 @@
-"""Alembic environment — Hub Quest.
+"""Alembic environment — MAINFRAME.
 
 Projeto usa sqlite3 puro (não SQLAlchemy ORM). Alembic ainda funciona,
 mas:

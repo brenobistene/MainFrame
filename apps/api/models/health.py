@@ -79,6 +79,12 @@ class ItemOut(BaseModel):
     arquivado: bool
     arquivado_em: Optional[str] = None
     ordem: int
+    # Agenda diária — quando `diario=True`, gera pendência em /Dia que pode
+    # ser arrastada pros blocos manhã/tarde/noite. `duracao_media_min` e
+    # `horario_sugerido` dão hint pro planejamento.
+    diario: bool = False
+    duracao_media_min: Optional[int] = None
+    horario_sugerido: Optional[str] = None
     criado_em: str
     atualizado_em: str
 
@@ -90,6 +96,9 @@ class ItemCreate(BaseModel):
     descricao: Optional[str] = Field(None, max_length=500)
     cor: Optional[str] = Field(None, max_length=20)
     ordem: Optional[int] = None
+    diario: Optional[bool] = None
+    duracao_media_min: Optional[int] = Field(None, ge=1, le=600)
+    horario_sugerido: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
 
 
 class ItemUpdate(BaseModel):
@@ -99,6 +108,9 @@ class ItemUpdate(BaseModel):
     descricao: Optional[str] = Field(None, max_length=500)
     cor: Optional[str] = Field(None, max_length=20)
     ordem: Optional[int] = None
+    diario: Optional[bool] = None
+    duracao_media_min: Optional[int] = Field(None, ge=1, le=600)
+    horario_sugerido: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
 
 
 # ─── Record ───────────────────────────────────────────────────────────────
@@ -147,6 +159,10 @@ class SettingsOut(BaseModel):
     mind_challenge_min_aparicoes: int = 5
     mind_challenge_janela_dias: int = 14
     mind_suspender_por_dias: int = 14
+    # Mind — agenda diária. `mind_diario=True` gera pendência em /Dia.
+    mind_diario: bool = False
+    mind_duracao_media_min: int = 20
+    mind_horario_sugerido: Optional[str] = None
     atualizado_em: str
 
 
@@ -157,6 +173,9 @@ class SettingsUpdate(BaseModel):
     mind_challenge_min_aparicoes: Optional[int] = Field(None, ge=2, le=50)
     mind_challenge_janela_dias: Optional[int] = Field(None, ge=7, le=90)
     mind_suspender_por_dias: Optional[int] = Field(None, ge=1, le=90)
+    mind_diario: Optional[bool] = None
+    mind_duracao_media_min: Optional[int] = Field(None, ge=1, le=300)
+    mind_horario_sugerido: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
 
 
 # ─── Mind — Observação Estruturada ────────────────────────────────────────

@@ -13,6 +13,9 @@ import {
   fetchSessions, pauseSession, resumeSession,
   fetchTaskSessions, pauseTaskSession, resumeTaskSession, stopTaskSession,
   fetchRoutineSessions, pauseRoutineSession, resumeRoutineSession, stopRoutineSession,
+  pauseMindSession, resumeMindSession, fetchMindSession,
+  pauseHealthItemSession, resumeHealthItemSession, fetchHealthItemSession,
+  pauseRitualCluster, resumeRitualCluster, fetchRitualCluster,
   reportApiError,
 } from './api'
 import {
@@ -28,7 +31,7 @@ import { SessionHistoryModal } from './components/SessionHistoryModal'
 // Resto vai lazy pra reduzir bundle inicial: cada rota baixa só quando
 // usuário navega pra ela. Reduziu ~50% no chunk principal.
 import { DashboardView } from './pages/DashboardPage'
-import { DiaView } from './pages/DiaPage'
+import { ExecView } from './pages/ExecPage'
 import { AreasView, AreaDetailRoute } from './pages/AreasPage'
 import { DialogPortal } from './components/ui/CyberDialog'
 import { BannerGridOverlay } from './components/BannerGridOverlay'
@@ -84,7 +87,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'MAIN',
     items: [
       { path: '/dashboard',   label: 'Dashboard',   abbr: 'DSH' },
-      { path: '/dia',         label: 'Dia',         abbr: 'DIA' },
+      { path: '/exec',        label: 'EXEC',        abbr: 'EXE' },
       { path: '/calendario',  label: 'Calendário',  abbr: 'CAL' },
       { path: '/areas',       label: 'Áreas',       abbr: 'ARE' },
     ],
@@ -236,7 +239,7 @@ export default function App() {
   const [bannerClosedSec, setBannerClosedSec] = useState(0)
   const [isHydrated, setIsHydrated] = useState(false)
   const [bannerHistoryOpen, setBannerHistoryOpen] = useState(false)
-  const [bannerHistorySessions, setBannerHistorySessions] = useState<{ started_at: string; ended_at: string | null }[]>([])
+  const [bannerHistorySessions, setBannerHistorySessions] = useState<{ id?: number; started_at: string; ended_at: string | null }[]>([])
 
   // Which entity the user has "in focus" right now. Persisted so a reload
   // keeps the banner showing a paused session until the user finalizes it.
@@ -275,6 +278,42 @@ export default function App() {
 
   const onSessionUpdate = () => {
     setSessionUpdateTrigger(prev => prev + 1)
+  }
+
+  // Refaz o fetch de sessões pra histórico do banner. Usado pelo click no
+  // timer (abre modal) e pelo onChanged do modal (após edit/delete) pra
+  // refletir mudanças sem fechar e reabrir.
+  async function reloadBannerHistory() {
+    const cur = activeSession
+    if (!cur) {
+      setBannerHistorySessions([])
+      return
+    }
+    let list: any[] = []
+    if (cur.type === 'quest') {
+      list = await fetchSessions(cur.id)
+    } else if (cur.type === 'task') {
+      list = await fetchTaskSessions(cur.id)
+    } else if (cur.type === 'routine') {
+      list = await fetchRoutineSessions(cur.id)
+    } else if (cur.type === 'mind') {
+      const cluster = await fetchMindSession()
+      list = cluster.rows ?? []
+    } else if (cur.type === 'health_item') {
+      const itemId = parseInt(cur.id, 10)
+      const cluster = await fetchHealthItemSession(itemId)
+      list = cluster.rows ?? []
+    } else if (cur.type === 'ritual') {
+      const cluster = await fetchRitualCluster(cur.id)
+      list = cluster.rows ?? []
+    }
+    setBannerHistorySessions(
+      list.map((s: any) => ({
+        id: typeof s?.id === 'number' ? s.id : undefined,
+        started_at: s?.started_at ?? '',
+        ended_at: s?.ended_at ?? null,
+      })),
+    )
   }
 
   // Mark as hydrated and fetch active session on mount
@@ -455,7 +494,9 @@ export default function App() {
       ? fetchSessions(id)
       : type === 'task'
         ? fetchTaskSessions(id)
-        : fetchRoutineSessions(id, activeSession.routine_date ?? undefined)
+        : type === 'routine'
+          ? fetchRoutineSessions(id, activeSession.routine_date ?? undefined)
+          : Promise.resolve([])  // mind/health_item/library: cluster próprio
     let cancelled = false
     loader
       .then(list => {
@@ -560,8 +601,8 @@ export default function App() {
       if (match) {
         setSelectedQuestId(null)
         navigate('/areas')
-      } else if (path !== '/dia') {
-        navigate('/dia')
+      } else if (path !== '/exec') {
+        navigate('/exec')
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -1109,7 +1150,14 @@ export default function App() {
                   fontFamily: 'var(--font-mono)',
                 }}
               >
-                {activeSession.type === 'quest' ? 'QST' : activeSession.type === 'task' ? 'TSK' : 'RTN'}
+                {activeSession.type === 'quest' ? 'QST'
+                  : activeSession.type === 'task' ? 'TSK'
+                  : activeSession.type === 'routine' ? 'RTN'
+                  : activeSession.type === 'mind' ? 'MND'
+                  : activeSession.type === 'health_item' ? 'HLT'
+                  : activeSession.type === 'library' ? 'LIB'
+                  : activeSession.type === 'ritual' ? 'RTL'
+                  : 'SES'}
               </span>
             </div>
             <div style={{
@@ -1155,18 +1203,7 @@ export default function App() {
             onClick={async () => {
               if (!activeSession) return
               try {
-                const loader = activeSession.type === 'quest'
-                  ? fetchSessions(activeSession.id)
-                  : activeSession.type === 'task'
-                    ? fetchTaskSessions(activeSession.id)
-                    : fetchRoutineSessions(activeSession.id)
-                const list = await loader
-                setBannerHistorySessions(
-                  (list as any[]).map(s => ({
-                    started_at: s?.started_at ?? '',
-                    ended_at: s?.ended_at ?? null,
-                  }))
-                )
+                await reloadBannerHistory()
                 setBannerHistoryOpen(true)
               } catch {
                 setBannerHistorySessions([])
@@ -1230,9 +1267,28 @@ export default function App() {
                 // confundir cross-midnight. Endpoints já são tolerantes a
                 // ausência mas explicitar é mais seguro.
                 const target = type === 'routine' ? routine_date ?? undefined : undefined
-                const call = is_active
-                  ? (type === 'quest' ? pauseSession(id) : type === 'task' ? pauseTaskSession(id) : pauseRoutineSession(id, target))
-                  : (type === 'quest' ? resumeSession(id) : type === 'task' ? resumeTaskSession(id) : resumeRoutineSession(id, target))
+                // Mind: domain-level (sem id específico). Health item: id é o
+                // item_id (vem como string do active-session UNION).
+                const healthItemId = type === 'health_item' ? parseInt(id, 10) : 0
+                // Ritual cluster id é a cadencia (string).
+                let call: Promise<unknown>
+                if (is_active) {
+                  call = type === 'quest' ? pauseSession(id)
+                    : type === 'task' ? pauseTaskSession(id)
+                    : type === 'routine' ? pauseRoutineSession(id, target)
+                    : type === 'mind' ? pauseMindSession()
+                    : type === 'health_item' ? pauseHealthItemSession(healthItemId)
+                    : type === 'ritual' ? pauseRitualCluster(id)
+                    : Promise.resolve()
+                } else {
+                  call = type === 'quest' ? resumeSession(id)
+                    : type === 'task' ? resumeTaskSession(id)
+                    : type === 'routine' ? resumeRoutineSession(id, target)
+                    : type === 'mind' ? resumeMindSession()
+                    : type === 'health_item' ? resumeHealthItemSession(healthItemId)
+                    : type === 'ritual' ? resumeRitualCluster(id)
+                    : Promise.resolve()
+                }
                 call.then(() => onSessionUpdate()).catch(err => reportApiError('App', err))
               }}
               title={activeSession.is_active ? `Pausar ${activeSession.type}` : `Retomar ${activeSession.type}`}
@@ -1282,6 +1338,11 @@ export default function App() {
                   // Passa target=routine_date pra fechar a sessão correta
                   // (cross-midnight) e gravar o log no dia certo.
                   stopRoutineSession(id, routine_date ?? undefined).then(clearBanner).catch(err => reportApiError('App', err))
+                } else if (type === 'mind' || type === 'health_item' || type === 'ritual') {
+                  // Mind/Health/Ritual: finalizar acontece no /Dia (auto-register
+                  // ou modal pré-preenchido). Navegamos pra lá pra reusar a
+                  // lógica do PendenciaPlannedRow / RitualPlannedRow.
+                  navigate('/exec')
                 }
               }}
               title={`Finalizar ${activeSession.type}`}
@@ -1302,6 +1363,23 @@ export default function App() {
       {bannerHistoryOpen && (
         <SessionHistoryModal
           sessions={bannerHistorySessions}
+          kind={
+            activeSession?.type === 'quest' ? 'quest'
+            : activeSession?.type === 'task' ? 'task'
+            : activeSession?.type === 'routine' ? 'routine'
+            : activeSession?.type === 'mind' ? 'mind'
+            : activeSession?.type === 'health_item' ? 'health'
+            : activeSession?.type === 'ritual' ? 'ritual'
+            : undefined
+          }
+          onChanged={() => {
+            // Refresh banner + lista do histórico. onSessionUpdate() bumps
+            // trigger pra reload do activeSession; reloadBannerHistory()
+            // atualiza as rows mostradas no modal sem precisar fechar.
+            onSessionUpdate()
+            reloadBannerHistory().catch(err => reportApiError('App', err))
+            tabSync.emit('session')
+          }}
           onClose={() => setBannerHistoryOpen(false)}
         />
       )}
@@ -1374,9 +1452,9 @@ export default function App() {
           </div>
         }>
         <Routes>
-          <Route path="/" element={<Navigate to="/dia" replace />} />
+          <Route path="/" element={<Navigate to="/exec" replace />} />
           <Route path="/dashboard" element={<DashboardView projects={projects} quests={quests} areas={areas} profile={profile} onProfileUpdate={setProfile} onSelectProject={setSelectedProjectId} />} />
-          <Route path="/dia" element={<DiaView projects={projects} quests={quests} areas={areas} activeSession={activeSession} onSessionUpdate={onSessionUpdate} onSelectProject={setSelectedProjectId} />} />
+          <Route path="/exec" element={<ExecView projects={projects} quests={quests} areas={areas} activeSession={activeSession} onSessionUpdate={onSessionUpdate} onSelectProject={setSelectedProjectId} />} />
           <Route path="/calendario" element={<CalendarView projects={projects} quests={quests} areas={areas} sessionUpdateTrigger={sessionUpdateTrigger} onSessionUpdate={onSessionUpdate} />} />
           <Route path="/rotinas" element={<RoutinesView />} />
           <Route path="/tarefas" element={<TasksView activeSession={activeSession} onSessionUpdate={onSessionUpdate} sessionUpdateTrigger={sessionUpdateTrigger} />} />
@@ -1470,7 +1548,7 @@ export default function App() {
               onQuestDelete={(id) => setQuests(qs => qs.filter(q => q.id !== id))}
             />
           } />
-          <Route path="*" element={<Navigate to="/dia" replace />} />
+          <Route path="*" element={<Navigate to="/exec" replace />} />
         </Routes>
         </Suspense>
         </div>

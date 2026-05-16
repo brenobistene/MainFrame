@@ -43,7 +43,7 @@ Hierarquia: **Área → Projeto → Entregável → Quest**. Cada nível tem sua
 
 - **Frontend:** React 19, Vite, TypeScript, React Router 7. Estilos predominantemente inline; ícones via Lucide; editor Notion-like via BlockNote.
 - **Backend:** FastAPI (Python 3.12), SQLite local via `sqlite3` stdlib — sem ORM.
-- **Sem deploy** — roda na máquina do usuário. Banco em `apps/api/hubquest.db` (ignorado pelo Git).
+- **Sem deploy** — roda na máquina do usuário. Banco em `apps/api/mainframe.db` (ignorado pelo Git).
 
 ---
 
@@ -53,8 +53,8 @@ Hierarquia: **Área → Projeto → Entregável → Quest**. Cada nível tem sua
 
 1. Clonar o repo:
    ```bash
-   git clone https://github.com/brenobistene/hub.quest.git
-   cd hub.quest
+   git clone https://github.com/brenobistene/mainframe.git
+   cd mainframe
    ```
 2. Duplo clique em **`setup.bat`** na raiz. Ele:
    - Verifica e instala **Python 3.12**, **Node.js LTS** e **Git** via `winget` (se ainda não tiverem)
@@ -105,6 +105,6 @@ Sem essas variáveis, o app funciona normalmente sem integração externa.
 
 ## Status
 
-Projeto pessoal em iteração ativa. Versão atual: **v0.1.2**. Breaking changes podem acontecer a qualquer momento — não use em ambiente onde você não seja o próprio usuário.
+Projeto pessoal em iteração ativa. Versão atual: **v0.8.1**. Breaking changes podem acontecer a qualquer momento — não use em ambiente onde você não seja o próprio usuário.
 
 Issues e PRs estão abertos, mas não há compromisso de responder rápido.

@@ -52,8 +52,8 @@ Baixar e instalar manualmente:
 Num terminal, na pasta onde você quer guardar o projeto:
 
 ```bash
-git clone https://github.com/brenobistene/hub.quest.git
-cd hub.quest
+git clone https://github.com/brenobistene/mainframe.git
+cd mainframe
 ```
 
 Confirma que entrou na pasta certa:
@@ -168,7 +168,7 @@ taskkill /PID <numero> /F
 Sempre que quiser puxar atualizações:
 
 ```bash
-cd hub.quest
+cd mainframe
 git pull
 cd apps/api && python -m pip install -r requirements.txt && cd ../..
 cd apps/web && npm install && cd ../..

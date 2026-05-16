@@ -39,9 +39,30 @@ interface Props {
   cor: string
   onClose: () => void
   existing?: HealthRecord            // se passado, modal opera em modo edição
+  /** Disparado por pendência arrastada em /Dia — pré-seleciona o item
+   *  específico (cardio, musculação, alongamento, etc) em vez do primeiro
+   *  ativo. Ignorado em modo edição. */
+  preselectedItemId?: number
+  /** Quando vem de sessão cronometrada (FINALIZAR no /Dia), pré-preenche
+   *  data/horário/duração com base na sessão. Após save, parent linka o
+   *  cluster ao record_id via onSessionLink. */
+  prefillFromSession?: {
+    started_at: string
+    ended_at?: string | null
+    duracao_min: number
+  }
+  onSessionLink?: (recordId: number) => void
 }
 
-export default function RegisterModal({ domain, cor, onClose, existing }: Props) {
+export default function RegisterModal({
+  domain,
+  cor,
+  onClose,
+  existing,
+  preselectedItemId,
+  prefillFromSession: _prefillFromSession,
+  onSessionLink,
+}: Props) {
   const isEdit = existing !== undefined
   const { data: items = [] } = useHealthItems(domain.slug)
   const activeItems = items.filter((i) => !i.arquivado)
@@ -51,7 +72,7 @@ export default function RegisterModal({ domain, cor, onClose, existing }: Props)
   const ep = (existing?.payload ?? {}) as HealthRecordPayload
 
   const [itemId, setItemId] = useState<number | null>(
-    existing?.item_id ?? activeItems[0]?.id ?? null,
+    existing?.item_id ?? preselectedItemId ?? activeItems[0]?.id ?? null,
   )
 
   // Sincroniza itemId quando activeItems é populado tardiamente (useState
@@ -676,7 +697,13 @@ export default function RegisterModal({ domain, cor, onClose, existing }: Props)
     } else {
       createRecord.mutate(
         { domainSlug: domain.slug, body },
-        { onSuccess: onClose },
+        {
+          onSuccess: (created) => {
+            // Pendência cronometrada — linka o cluster ao record criado.
+            if (onSessionLink) onSessionLink(created.id)
+            onClose()
+          },
+        },
       )
     }
   }
