@@ -588,7 +588,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           Faixa solid no topo da página — não é card, é stamp.
           Esquerda: tab `// DASHBOARD` + identidade do user (avatar minúsculo
             + nome + role) como "tab content" estilo CP2077.
-          Direita: stack metadata técnico (SW.LINE, MODE, CONN) + window selector.
+          Direita: window selector (presets + custom range).
           Hairline ice elétrica abaixo separa do body modular. */}
       <header
         style={{
@@ -682,17 +682,8 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           </div>
         </div>
 
-        {/* RIGHT: technical metadata stack + window selector */}
+        {/* RIGHT: window selector (header limpo, sem tech-id decorativo) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
-            <div className="hq-tech-id" style={{ color: 'var(--color-text-muted)' }}>
-              SW.LINE {todayIso.replace(/-/g, '')}.{String(today.getDay()).padStart(2, '0')}
-            </div>
-            <div className="hq-tech-id" style={{ color: 'var(--color-text-muted)', display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span>MODE.TACTICAL</span>
-              <span style={{ color: 'var(--color-success)' }}>· CONN.OK</span>
-            </div>
-          </div>
           <WindowRangeSelector value={windowRange} onChange={setWindowRange} />
         </div>
       </header>
@@ -848,8 +839,14 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                         ? <AnimatedNumber value={todayQuotaMin} format={fmtHM} duration={0.7} />
                         : '—'}
                     </span>
-                    <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
-                      {todayQuotaMin > 0 ? '// PRA FICAR EM DIA' : '// SEM COMPROMISSOS'}
+                    <span style={{
+                      fontFamily: 'var(--font-body)',
+                      fontSize: 10,
+                      color: 'var(--color-text-tertiary)',
+                      fontStyle: 'italic',
+                      letterSpacing: 0,
+                    }}>
+                      {todayQuotaMin > 0 ? 'pra ficar em dia' : 'sem compromissos hoje'}
                     </span>
                   </div>
 
@@ -870,8 +867,14 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                         }}>
                           {mostUrgent.title}
                         </span>
-                        <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
-                          // {mostUrgent.type.toUpperCase()} · {urgencyLabel(mostUrgent.daysAway).toUpperCase()}
+                        <span style={{
+                          fontFamily: 'var(--font-body)',
+                          fontSize: 10,
+                          color: 'var(--color-text-tertiary)',
+                          fontStyle: 'italic',
+                          letterSpacing: 0,
+                        }}>
+                          {mostUrgent.type} · {urgencyLabel(mostUrgent.daysAway)}
                         </span>
                       </>
                     ) : (
@@ -881,8 +884,14 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
                           fontSize: 18, fontWeight: 700,
                           color: 'var(--color-text-tertiary)',
                         }}>—</span>
-                        <span className="hq-tech-id" style={{ color: 'var(--color-text-muted)', fontSize: 9 }}>
-                          // NENHUM ITEM CRÍTICO
+                        <span style={{
+                          fontFamily: 'var(--font-body)',
+                          fontSize: 10,
+                          color: 'var(--color-text-tertiary)',
+                          fontStyle: 'italic',
+                          letterSpacing: 0,
+                        }}>
+                          nenhum item crítico
                         </span>
                       </>
                     )}
@@ -1323,26 +1332,6 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         <LibraryDashboardCard />
       </section>
 
-      {/* ─── FOOTER CAPTION ─── disclaimer técnico mono no rodapé do panel,
-          igual ao "CUSTOM GLITCHES ON UI..." da referência CP2077. */}
-      <div
-        style={{
-          marginTop: 32,
-          paddingTop: 'var(--space-3)',
-          borderTop: '1px solid var(--color-divider)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 9,
-          color: 'var(--color-text-muted)',
-          letterSpacing: '0.12em',
-          lineHeight: 1.6,
-          textTransform: 'uppercase',
-        }}
-      >
-        <div>// DATA RECONCILED · LAST.SYNC: {new Date().toLocaleTimeString('pt-BR')}</div>
-        <div style={{ opacity: 0.6, marginTop: 2 }}>
-          DOCUMENT/D/{todayIso.replace(/-/g, '')}-{profile.name?.replace(/\s+/g, '').slice(0, 6).toUpperCase() || 'GUEST'} · TYPE: TACTICAL.SCAN
-        </div>
-      </div>
         </div>
       </div>
 
