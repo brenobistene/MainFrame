@@ -21,6 +21,8 @@ import {
   pauseHealthItemSession,
   pauseMindSession,
   pauseRitualCluster,
+  reopenDiaPendencia,
+  reopenRitualCluster,
   resumeHealthItemSession,
   resumeMindSession,
   resumeRitualCluster,
@@ -68,6 +70,33 @@ export function useInvalidateDiaPendencias() {
   return () => {
     qc.invalidateQueries({ queryKey: diaKeys.all })
   }
+}
+
+/** Reabre pendência apagando o health_record do dia + descola o cluster
+ *  (record_id → NULL). Backend retorna o cluster atualizado — atualizamos
+ *  o cache SINCRONAMENTE via setQueryData pra que o card reflita
+ *  has_active=true imediatamente (sem flicker do estado stale). */
+export function useReopenDiaPendencia(data: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pendenciaId: string) => reopenDiaPendencia(pendenciaId, data),
+    onSuccess: (clusterData, pendenciaId) => {
+      // Update síncrono do cache do cluster com a resposta do backend.
+      // Sem isso, o card mostra PLAY (stale has_active=false do estado
+      // linkado) em vez de RESUME até o refetch chegar.
+      if (pendenciaId === 'mind') {
+        qc.setQueryData(diaKeys.mindSession(), clusterData)
+      } else if (pendenciaId.startsWith('health_item:')) {
+        const itemId = parseInt(pendenciaId.slice('health_item:'.length), 10)
+        if (!Number.isNaN(itemId)) {
+          qc.setQueryData(diaKeys.healthItemSession(itemId), clusterData)
+        }
+      }
+      qc.invalidateQueries({ queryKey: diaKeys.all })
+      qc.invalidateQueries({ queryKey: ['health'] })
+      qc.invalidateQueries({ queryKey: ['app', 'active-session'] })
+    },
+  })
 }
 
 // ─── Sessões cronometradas pra Mind e health_item ──────────────────────
@@ -254,6 +283,22 @@ export function useDiscardRitualCluster() {
   })
 }
 
+export function useReopenRitualCluster(data: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (cadencia: string) => reopenRitualCluster(cadencia, data),
+    onSuccess: (response, cadencia) => {
+      // setQueryData pra atualização instantânea — sem isso o cluster fica
+      // mostrando estado antigo (REABRIR visível) até o refetch retornar.
+      qc.setQueryData(diaKeys.ritualCluster(cadencia), response)
+      qc.invalidateQueries({ queryKey: diaKeys.ritualCluster(cadencia) })
+      qc.invalidateQueries({ queryKey: diaKeys.all })
+      qc.invalidateQueries({ queryKey: ['build'] })
+      qc.invalidateQueries({ queryKey: ['app', 'active-session'] })
+    },
+  })
+}
+
 export function useLinkRitualClusterToRecord() {
   const qc = useQueryClient()
   return useMutation({
@@ -262,6 +307,10 @@ export function useLinkRitualClusterToRecord() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: diaKeys.ritualCluster(vars.cadencia) })
       qc.invalidateQueries({ queryKey: diaKeys.all })
+      // Linkar flipa `cluster_has_active` pra false no payload de useRituals,
+      // que é o que esconde o lembrete do DiaPendenciasBlock. Sem essa
+      // invalidação o lembrete fica visível até refresh.
+      qc.invalidateQueries({ queryKey: ['build'] })
       qc.invalidateQueries({ queryKey: ['app', 'active-session'] })
     },
   })

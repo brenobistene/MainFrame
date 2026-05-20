@@ -1299,7 +1299,11 @@ def list_mind_sessions(
 
 
 def _fetch_mind_session(conn, record_id: int) -> dict:
-    """Hidrata 1 mind session com record + tags slugs + hipotese."""
+    """Hidrata 1 mind session com record + tags slugs + hipotese + cluster
+    de sessões cronometradas. cluster_rows traz cada segmento play/pause/
+    resume com started_at/ended_at — frontend usa pra mostrar horário real,
+    duração somada e contagem de sub-sessões. Vazio quando user registrou
+    manualmente sem usar o cronômetro do /Dia."""
     rec = conn.execute(
         f"SELECT {RECORD_COLUMNS} FROM health_record WHERE id = ?",
         (record_id,),
@@ -1318,6 +1322,12 @@ def _fetch_mind_session(conn, record_id: int) -> dict:
         "FROM health_mind_hipotese WHERE record_id = ?",
         (record_id,),
     ).fetchone()
+    cluster_rows = conn.execute(
+        "SELECT id, session_num, started_at, ended_at "
+        "FROM mind_session WHERE record_id = ? "
+        "ORDER BY session_num ASC",
+        (record_id,),
+    ).fetchall()
     payload = json.loads(rec["payload"]) if rec["payload"] else {}
     return {
         "id": rec["id"],
@@ -1329,6 +1339,7 @@ def _fetch_mind_session(conn, record_id: int) -> dict:
         "atualizado_em": rec["atualizado_em"],
         "tags": [dict(t) for t in tag_rows],
         "hipotese": dict(hip_row) if hip_row else None,
+        "cluster_rows": [dict(r) for r in cluster_rows],
     }
 
 

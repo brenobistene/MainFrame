@@ -697,6 +697,35 @@ function SessionRow({
   const del = useDeleteMindSession()
   const isRevelacao = session.payload.tipo === 'revelacao'
 
+  // Cluster cronometrado: quando user usa PLAY/PAUSE no /Dia, cada
+  // segmento vira uma row em mind_session. A duração somada das rows
+  // (em minutos) é a ground truth — vs payload.duracao_min que pode
+  // ter sido inserido manualmente. Mostra também o horário do primeiro
+  // segmento e contagem de sub-sessões se > 1.
+  const clusterRows = session.cluster_rows ?? []
+  const clusterStartedAt = clusterRows.length > 0 ? clusterRows[0].started_at : null
+  const clusterTotalMin = clusterRows.reduce((acc, r) => {
+    if (!r.ended_at || !r.started_at) return acc
+    try {
+      const s = new Date(r.started_at.replace('Z', '+00:00')).getTime()
+      const e = new Date(r.ended_at.replace('Z', '+00:00')).getTime()
+      return acc + Math.max(0, Math.floor((e - s) / 60000))
+    } catch { return acc }
+  }, 0)
+  const fmtHHMM = (iso: string | null): string => {
+    if (!iso) return ''
+    try {
+      const d = new Date(iso)
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    } catch { return '' }
+  }
+  // Prioridade pro horário: cluster primeiro segmento > session.horario (manual)
+  const horarioLabel = clusterStartedAt ? fmtHHMM(clusterStartedAt) : session.horario
+  // Prioridade pra duração: soma do cluster (ground truth) > payload.duracao_min
+  const duracaoMin = clusterTotalMin > 0
+    ? clusterTotalMin
+    : (session.payload.duracao_min ?? null)
+
   return (
     <div
       role="button"
@@ -735,13 +764,24 @@ function SessionRow({
           }}
         >
           {formatDateBR(session.data)}
+          {horarioLabel ? ` · ${horarioLabel}` : ''}
         </span>
-        {session.payload.duracao_min != null && (
+        {duracaoMin != null && duracaoMin > 0 && (
           <span
             className="hq-tech-id"
             style={{ color: 'var(--color-text-muted)' }}
+            title={clusterTotalMin > 0 ? 'somatório das sessões cronometradas' : 'duração informada'}
           >
-            {session.payload.duracao_min} min
+            {duracaoMin} min
+          </span>
+        )}
+        {clusterRows.length > 1 && (
+          <span
+            className="hq-tech-id"
+            style={{ color: MIND_COR, borderColor: MIND_COR }}
+            title={`Registro feito em ${clusterRows.length} sub-sessões (play/pause/resume)`}
+          >
+            {clusterRows.length}×
           </span>
         )}
         {isRevelacao && (

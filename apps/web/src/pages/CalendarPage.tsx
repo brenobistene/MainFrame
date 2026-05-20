@@ -13,6 +13,9 @@ import { parseIsoAsUtc } from '../utils/datetime'
 import { effectiveQuestDeadline, getAreaColor } from '../utils/quests'
 import { SessionHistoryModal } from '../components/SessionHistoryModal'
 import type { UnproductiveBlock } from '../utils/blocks'
+import { CompromissoFormModal } from '../components/CompromissoFormModal'
+import { useCompromissos, useCompromissoOccurrences } from '../lib/app-queries'
+import type { Compromisso } from '../types'
 import { getAllBlockRangesForDay } from '../utils/blocks'
 import { Card } from '../components/ui/Primitives'
 import { alertDialog } from '../lib/dialog'
@@ -188,17 +191,39 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
     return { from: null, to: null }
   }, [viewMode, currentDate])
   const { data: ritualSchedule = [] } = useRitualSchedule(scheduleRange.from, scheduleRange.to)
-  const ritualsByDate = useMemo(() => {
-    const map = new Map<string, BuildRitualCadencia[]>()
-    for (const item of ritualSchedule) {
-      for (const dt of item.datas) {
-        const arr = map.get(dt) ?? []
-        arr.push(item.cadencia)
-        map.set(dt, arr)
+
+  // Range pra compromissos — cobre todas as views (inclui 'dia', diferente
+  // do ritualSchedule que só agendamento futuro vale em semana/mês).
+  const compromissoRange = useMemo(() => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const isoOf = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    if (viewMode === 'dia') {
+      const iso = isoOf(currentDate)
+      return { from: iso, to: iso }
+    }
+    if (viewMode === 'semana') {
+      const weekStart = new Date(
+        currentDate.getTime() - ((currentDate.getDay() - 1 + 7) % 7) * 86400000,
+      )
+      const weekEnd = new Date(weekStart.getTime() + 6 * 86400000)
+      return { from: isoOf(weekStart), to: isoOf(weekEnd) }
+    }
+    if (viewMode === 'mês') {
+      const y = currentDate.getFullYear()
+      const m = currentDate.getMonth()
+      const lastDay = new Date(y, m + 1, 0).getDate()
+      return {
+        from: `${y}-${pad(m + 1)}-01`,
+        to: `${y}-${pad(m + 1)}-${pad(lastDay)}`,
       }
     }
-    return map
-  }, [ritualSchedule])
+    return { from: '', to: '' }
+  }, [viewMode, currentDate])
+  const { data: compromissoOccurrences = [] } = useCompromissoOccurrences(
+    compromissoRange.from,
+    compromissoRange.to,
+  )
 
   // Rituais com metadados (cadência, nome, duração) pra resolver em blocks
   // no timeline. ritualSchedule só dá as datas; rituals dá o detalhe.
@@ -226,6 +251,25 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
     return map
   }, [sessSemanal, sessMensal, sessTrimestral, sessAnual])
 
+  // Lembrete (bolinha vermelha) por dia → filtra cadências que JÁ TÊM uma
+  // build_ritual_session pra essa data. Sem isso, depois de FINALIZAR no
+  // /exec a bolinha ficava fantasma — mesmo padrão da fix do DiaPendencias.
+  // Skip também conta como "fechou o slot" (semântica do schedule).
+  const ritualsByDate = useMemo(() => {
+    const map = new Map<string, BuildRitualCadencia[]>()
+    for (const item of ritualSchedule) {
+      const sessions = ritualSessionsByCadencia.get(item.cadencia) ?? []
+      const datasFeitas = new Set(sessions.map(s => s.data_executado))
+      for (const dt of item.datas) {
+        if (datasFeitas.has(dt)) continue
+        const arr = map.get(dt) ?? []
+        arr.push(item.cadencia)
+        map.set(dt, arr)
+      }
+    }
+    return map
+  }, [ritualSchedule, ritualSessionsByCadencia])
+
   useEffect(() => {
     const update = () => setCurrentTime(new Date())
     update()
@@ -242,6 +286,14 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
   const [editingBlock, setEditingBlock] = useState<UnproductiveBlock | null>(null)
   const [showBlockModal, setShowBlockModal] = useState(false)
   const [isCreatingBlock, setIsCreatingBlock] = useState(false)
+  // Compromissos — modal de criar/editar. null = fechado.
+  // `existing: null` = criando, `existing: Compromisso` = editando.
+  const [openCompromissoModal, setOpenCompromissoModal] = useState<
+    { existing: Compromisso | null } | null
+  >(null)
+  const { data: compromissos = [] } = useCompromissos()
+  // Ocorrências expandidas pro range visível — pra render no timeline.
+  // Calculado depois do scheduleRange estar definido.
   // Data específica que o user clicou (YYYY-MM-DD) — define o escopo do "apenas
   // este evento" / "este e seguintes". Vazio quando criando bloco novo.
   const [editingBlockDate, setEditingBlockDate] = useState<string | null>(null)
@@ -506,6 +558,29 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
             {viewMode === 'dia' ? 'VISÃO DO DIA' : viewMode === 'semana' ? 'VISÃO DA SEMANA' : viewMode === 'mês' ? 'VISÃO DO MÊS' : 'VISÃO DO ANO'}
           </div>
         </div>
+        {/* Botão novo compromisso — destaque âmbar (hora improdutiva).
+            Visível em todos os viewModes pra não esconder a affordance. */}
+        <button
+          type="button"
+          onClick={() => setOpenCompromissoModal({ existing: null })}
+          style={{
+            background: 'rgba(192, 138, 58, 0.10)',
+            border: '1px solid var(--color-warning)',
+            color: 'var(--color-warning)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9, fontWeight: 700,
+            padding: '6px 12px',
+            letterSpacing: '0.22em', textTransform: 'uppercase',
+            cursor: 'pointer',
+            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+            boxShadow: '0 0 10px rgba(192, 138, 58, 0.25)',
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            marginRight: 8,
+          }}
+          title="Criar compromisso (hora improdutiva)"
+        >
+          + COMPROMISSO
+        </button>
         {/* Mode tabs — pills cyber chamfered (igual filtros Hub Finance) */}
         <div style={{ display: 'flex', gap: 4 }}>
           {(['dia', 'semana', 'mês', 'ano'] as const).map((mode) => {
@@ -633,6 +708,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
               { label: 'RTL', name: 'RITUAIS', color: '#dc2531' },
               { label: 'EXC', name: 'EXERCÍCIOS', color: 'var(--color-ice-light)' },
               { label: 'MND', name: 'MIND', color: '#9b88c4' },
+              { label: 'CMP', name: 'COMPROMISSOS', color: 'var(--color-warning)' },
               { label: 'IMP', name: 'IMPRODUTIVO', color: 'var(--color-text-muted)' },
             ].map(item => (
               <div
@@ -1561,6 +1637,91 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                   )
                 })}
 
+                {/* COMPROMISSOS — horas improdutivas planejadas. Render
+                    como bloco âmbar igual ao improdutivo, mas com label CMP
+                    + título do compromisso. Click abre modal de edit. */}
+                {compromissoOccurrences
+                  .filter(occ => occ.date === dateIso)
+                  .map((occ, idx) => {
+                    const [sh, sm] = occ.start_time.split(':').map(Number)
+                    const [eh, em] = occ.end_time.split(':').map(Number)
+                    const startTotal = sh + sm / 60
+                    const endTotal = eh + em / 60
+                    const duration = endTotal - startTotal
+                    const topPercent = 20 + startTotal * 60 * timelineZoom
+                    const heightPercent = duration * 60 * timelineZoom
+                    const durationMin = duration * 60
+                    const isShort = durationMin < 25
+                    const cor = 'var(--color-warning)'
+                    const corHex = '#c08a3a'
+                    const timeLabel = `${occ.start_time} – ${occ.end_time}`
+                    const c = compromissos.find(x => x.id === occ.id)
+                    return (
+                      <Fragment key={`cmp-${occ.id}-${idx}`}>
+                        {isShort && (
+                          <>
+                            <div
+                              title={`${occ.title} · ${timeLabel}`}
+                              style={{
+                                position: 'absolute', left: '4px', right: '4px',
+                                top: `${topPercent - 24}px`,
+                                fontSize: 8, fontWeight: 400, lineHeight: 1,
+                                color: 'var(--color-text-muted)',
+                                fontFamily: 'var(--font-mono)',
+                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                              }}
+                            >
+                              {timeLabel}
+                            </div>
+                            <div
+                              title={`${occ.title} · ${timeLabel}`}
+                              style={{
+                                position: 'absolute', left: '4px', right: '4px',
+                                top: `${topPercent - 13}px`,
+                                fontSize: 9, fontWeight: 600, lineHeight: 1.1,
+                                color: 'var(--color-text-primary)',
+                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                              }}
+                            >
+                              <span style={{ opacity: 0.55, marginRight: 4 }}>CMP</span>{occ.title}
+                            </div>
+                          </>
+                        )}
+                        <div
+                          title={`${occ.title} · ${timeLabel} — clique pra editar`}
+                          onClick={() => { if (c) setOpenCompromissoModal({ existing: c }) }}
+                          style={{
+                            position: 'absolute',
+                            left: '4px', right: '4px',
+                            top: `${topPercent}px`, height: `${heightPercent}px`,
+                            background: `linear-gradient(135deg, ${corHex}cc 0%, ${corHex}66 100%)`,
+                            border: '1px solid rgba(255,255,255,0.18)',
+                            borderLeft: `2px solid ${cor}`,
+                            clipPath: 'polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))',
+                            padding: isShort ? '0' : '4px 6px',
+                            overflow: 'hidden',
+                            opacity: 0.95, cursor: 'pointer',
+                            boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.18), 0 0 8px ${corHex}55`,
+                            zIndex: 4,
+                          }}
+                        >
+                          {!isShort && (
+                            <>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 600, color: '#fff', letterSpacing: '0.03em', textTransform: 'uppercase', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                                <span style={{ opacity: 0.7, marginRight: 4 }}>CMP</span>{occ.title}
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.92)', letterSpacing: '0.08em', marginTop: 2, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                                {timeLabel}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </Fragment>
+                    )
+                  })}
+
                 {routinesForDay(dateIso).map((routine) => {
                   if (!routine.start_time || !routine.end_time) return null
 
@@ -1889,6 +2050,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
               { label: 'RTL', name: 'RITUAIS', color: '#dc2531' },
               { label: 'EXC', name: 'EXERCÍCIOS', color: 'var(--color-ice-light)' },
               { label: 'MND', name: 'MIND', color: '#9b88c4' },
+              { label: 'CMP', name: 'COMPROMISSOS', color: 'var(--color-warning)' },
               { label: 'IMP', name: 'IMPRODUTIVO', color: 'var(--color-text-muted)' },
             ].map(item => (
               <div
@@ -2124,6 +2286,54 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                       }}
                     />
                   ))}
+
+                  {/* Compromissos do dia — render como bloco âmbar */}
+                  {compromissoOccurrences
+                    .filter(occ => occ.date === dayIso)
+                    .map((occ, idx) => {
+                      const [sh, sm] = occ.start_time.split(':').map(Number)
+                      const [eh, em] = occ.end_time.split(':').map(Number)
+                      const startTotal = sh + sm / 60
+                      const endTotal = eh + em / 60
+                      const topPercent = 40 + startTotal * 40 * timelineZoom
+                      const heightPercent = (endTotal - startTotal) * 40 * timelineZoom
+                      const c = compromissos.find(x => x.id === occ.id)
+                      return (
+                        <div
+                          key={`cmp-week-${dayIso}-${occ.id}-${idx}`}
+                          onClick={() => { if (c) setOpenCompromissoModal({ existing: c }) }}
+                          title={`${occ.title} · ${occ.start_time}–${occ.end_time}`}
+                          style={{
+                            position: 'absolute',
+                            left: '2px',
+                            right: '2px',
+                            top: `${topPercent}px`,
+                            height: `${Math.max(20, heightPercent)}px`,
+                            background: 'linear-gradient(135deg, rgba(192, 138, 58, 0.85) 0%, rgba(192, 138, 58, 0.50) 100%)',
+                            borderLeft: '2px solid var(--color-warning)',
+                            clipPath: 'polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px))',
+                            zIndex: 2,
+                            cursor: 'pointer',
+                            padding: '2px 4px',
+                            overflow: 'hidden',
+                            boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 0 6px rgba(192, 138, 58, 0.55)',
+                          }}
+                        >
+                          {heightPercent > 18 && (
+                            <div style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: 7, fontWeight: 700,
+                              color: '#fff',
+                              letterSpacing: '0.12em', textTransform: 'uppercase',
+                              textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            }}>
+                              <span style={{ opacity: 0.7, marginRight: 3 }}>CMP</span>{occ.title}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
 
                   {getAllBlockRangesForDay(unproductiveBlocks, dayDate).map((r, idx) => {
                     const topPercent = 40 + r.start * 40 * timelineZoom
@@ -2489,6 +2699,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                 const dayRoutines = routinesForDay(dayIso)
                 const isToday = dayIso === todayIso
                 const dayRituals = ritualsByDate.get(dayIso) ?? []
+                const dayCompromissos = compromissoOccurrences.filter(occ => occ.date === dayIso)
 
                 cells.push(
                   <div key={day} style={{
@@ -2514,27 +2725,47 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                       }}>
                         {day}
                       </div>
-                      {/* Marcadores de ritual — bolinha vermelha por cadência
-                          agendada nesse dia. Hover mostra quais (title nativo). */}
-                      {dayRituals.length > 0 && (
-                        <div
-                          style={{ display: 'flex', gap: 2 }}
-                          title={`Ritual${dayRituals.length === 1 ? '' : 'is'}: ${dayRituals.join(', ')}`}
-                        >
-                          {dayRituals.map((c) => (
-                            <span
-                              key={c}
-                              style={{
-                                width: 5,
-                                height: 5,
-                                borderRadius: '50%',
-                                background: '#dc2531',
-                                boxShadow: '0 0 4px rgba(220, 37, 49, 0.6)',
-                              }}
-                            />
-                          ))}
-                        </div>
-                      )}
+                      {/* Marcadores: rituais (vermelho) + compromissos (âmbar)
+                          como bolinhas no header do dia. Hover mostra detalhes. */}
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        {dayRituals.length > 0 && (
+                          <div
+                            style={{ display: 'flex', gap: 2 }}
+                            title={`Ritual${dayRituals.length === 1 ? '' : 'is'}: ${dayRituals.join(', ')}`}
+                          >
+                            {dayRituals.map((c) => (
+                              <span
+                                key={c}
+                                style={{
+                                  width: 5,
+                                  height: 5,
+                                  borderRadius: '50%',
+                                  background: '#dc2531',
+                                  boxShadow: '0 0 4px rgba(220, 37, 49, 0.6)',
+                                }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {dayCompromissos.length > 0 && (
+                          <div
+                            style={{ display: 'flex', gap: 2 }}
+                            title={`Compromisso${dayCompromissos.length === 1 ? '' : 's'}: ${dayCompromissos.map(c => c.title).join(', ')}`}
+                          >
+                            {dayCompromissos.map((c, i) => (
+                              <span
+                                key={`cmp-mark-${c.id}-${i}`}
+                                style={{
+                                  width: 5,
+                                  height: 5,
+                                  background: 'var(--color-warning)',
+                                  boxShadow: '0 0 4px rgba(192, 138, 58, 0.6)',
+                                }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div style={{
                       flex: 1,
@@ -2544,6 +2775,25 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                       letterSpacing: '0.05em',
                       overflow: 'hidden',
                     }}>
+                      {dayCompromissos.length > 0 && (
+                        <div style={{ marginBottom: 4 }}>
+                          {dayCompromissos.slice(0, 2).map((c, i) => (
+                            <div key={`cmp-list-${c.id}-${i}`} style={{
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                              marginBottom: 2,
+                              color: 'var(--color-warning)',
+                            }}>
+                              <span style={{ opacity: 0.7, marginRight: 3 }}>CMP</span>
+                              {c.title}
+                            </div>
+                          ))}
+                          {dayCompromissos.length > 2 && (
+                            <div style={{ color: 'var(--color-text-muted)' }}>
+                              +{dayCompromissos.length - 2}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {dayQuests.length > 0 && (
                         <div style={{ marginBottom: 4 }}>
                           {dayQuests.slice(0, 2).map(q => (
@@ -2740,6 +2990,18 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
             })}
           </div>
         </div>
+      )}
+
+      {openCompromissoModal && (
+        <CompromissoFormModal
+          existing={openCompromissoModal.existing ?? undefined}
+          defaultDate={
+            viewMode === 'dia'
+              ? `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`
+              : undefined
+          }
+          onClose={() => setOpenCompromissoModal(null)}
+        />
       )}
 
       {showBlockModal && editingBlock && (

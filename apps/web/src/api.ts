@@ -1,5 +1,6 @@
 import type {
   DayData, Project, Quest, Area, Routine, MicroTask, Profile, Task, Deliverable,
+  Compromisso, CompromissoCreate, CompromissoUpdate, CompromissoOccurrence,
   FinAccount, FinCategory, FinTransaction, FinSummary, FinImportSummary,
   FinMonthlySummary, FinCategorizationRule, FinDebt, FinDebtParcela, FinDebtStatus,
   FinParcela, FinPaymentTemplate, FinClient, FinHourlyRateStats, FinFreelaProject,
@@ -532,6 +533,12 @@ export const linkRitualClusterToRecord = (cadencia: string, recordId: string) =>
     body: JSON.stringify({ record_id: recordId }),
   })
 
+export const reopenRitualCluster = (cadencia: string, data: string) =>
+  jsonFetch<DiaSessionCluster>(
+    `/api/build/rituals/${cadencia}/cluster/reopen?data=${encodeURIComponent(data)}`,
+    { method: 'POST' },
+  )
+
 export const editRitualClusterSession = (
   sessionId: number,
   body: { started_at?: string; ended_at?: string | null },
@@ -661,6 +668,38 @@ export async function reorderDeliverables(projectId: string, delivIds: string[])
 }
 
 // Micro Tasks
+// ─── Compromissos (horas improdutivas) ────────────────────────────────────
+
+export const fetchCompromissos = () => get<Compromisso[]>('/api/compromissos')
+
+export const fetchCompromissoOccurrences = (from: string, to: string) =>
+  get<CompromissoOccurrence[]>(`/api/compromissos/occurrences?from=${from}&to=${to}`)
+
+export async function createCompromisso(body: CompromissoCreate): Promise<Compromisso> {
+  const res = await fetch(`${BASE}/api/compromissos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+  return res.json()
+}
+
+export async function updateCompromisso(id: string, patch: CompromissoUpdate): Promise<Compromisso> {
+  const res = await fetch(`${BASE}/api/compromissos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+  return res.json()
+}
+
+export async function deleteCompromisso(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/compromissos/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+}
+
 export const fetchMicroTasks = () => get<MicroTask[]>('/api/micro-tasks')
 
 export async function createMicroTask(title: string): Promise<MicroTask> {
@@ -1263,7 +1302,13 @@ async function jsonFetch<T>(path: string, init: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try { detail = (await res.json())?.detail ?? detail } catch {}
-    throw new Error(detail)
+    const err: any = new Error(detail)
+    err.status = res.status
+    // 409 em /api/.../session/* significa "outra atividade global rodando";
+    // backend coloca o título do conflito em detail. Paridade com
+    // sessionPostConflict (usado por task/routine).
+    if (res.status === 409) err.conflictTitle = detail
+    throw err
   }
   if (res.status === 204) return undefined as T
   return res.json()
@@ -2211,6 +2256,20 @@ export const fetchDiaDoneToday = (data: string) =>
     `/api/dia/pendencias/done-today?data=${encodeURIComponent(data)}`,
   )
 
+// Reabre pendência: dispatcher pra mind/health_item conforme pendencia_id.
+// "mind" → reopenMindSession. "health_item:N" → reopenHealthItemSession(N).
+// Definição efetiva mais abaixo (depois de reopenMindSession/HealthItemSession
+// ficarem declaradas) — o dispatcher só dispara no momento da chamada, então
+// hoisting de const não bloqueia.
+export const reopenDiaPendencia = (pendenciaId: string, data: string) => {
+  if (pendenciaId === 'mind') return reopenMindSession(data)
+  if (pendenciaId.startsWith('health_item:')) {
+    const itemId = parseInt(pendenciaId.slice('health_item:'.length), 10)
+    return reopenHealthItemSession(itemId, data)
+  }
+  throw new Error(`reopenDiaPendencia: pendencia_id inválido "${pendenciaId}"`)
+}
+
 // ─── Sessões cronometradas Mind + health_item ───────────────────────────
 // Comportamento idêntico a quest_sessions: play/pause/resume cria/fecha
 // rows. record_id IS NULL define o "cluster ativo" (não finalizado).
@@ -2256,6 +2315,12 @@ export const linkMindSessionToRecord = (recordId: number) =>
     body: JSON.stringify({ record_id: recordId }),
   })
 
+export const reopenMindSession = (data: string) =>
+  jsonFetch<DiaSessionCluster>(
+    `/api/mind/session/reopen?data=${encodeURIComponent(data)}`,
+    { method: 'POST' },
+  )
+
 // Health item session
 export const fetchHealthItemSession = (itemId: number) =>
   get<DiaSessionCluster>(`/api/health/items/${itemId}/session`)
@@ -2285,3 +2350,9 @@ export const linkHealthItemSessionToRecord = (itemId: number, recordId: number) 
     method: 'POST',
     body: JSON.stringify({ record_id: recordId }),
   })
+
+export const reopenHealthItemSession = (itemId: number, data: string) =>
+  jsonFetch<DiaSessionCluster>(
+    `/api/health/items/${itemId}/session/reopen?data=${encodeURIComponent(data)}`,
+    { method: 'POST' },
+  )

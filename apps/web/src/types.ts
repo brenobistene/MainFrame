@@ -231,6 +231,59 @@ export interface MicroTask {
   created_at: string
 }
 
+/**
+ * Compromisso — hora improdutiva planejada (corte de cabelo, terapia,
+ * consulta). Aparece como alerta sticky no /dashboard (próximos 3 dias) e
+ * card read-only no /exec no dia da ocorrência. Sem play/pause: visualização
+ * pura, não consome capacity de período.
+ *
+ * Recorrência opcional: 'none' (evento único) | 'weekly' (days_of_week) |
+ * 'monthly' (day_of_month). end_date opcional limita a série.
+ */
+export type CompromissoRecurrence = 'none' | 'weekly' | 'monthly'
+
+export interface Compromisso {
+  id: string
+  title: string
+  notes: string | null
+  start_date: string                 // YYYY-MM-DD (primeira ocorrência)
+  start_time: string                 // HH:MM
+  end_time: string                   // HH:MM
+  recurrence: CompromissoRecurrence
+  days_of_week: number[] | null      // 0=Dom, 6=Sab — só p/ weekly
+  day_of_month: number | null        // 1-31 — só p/ monthly
+  end_date: string | null            // fim da série; null = pra sempre
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface CompromissoCreate {
+  title: string
+  notes?: string | null
+  start_date: string
+  start_time: string
+  end_time: string
+  recurrence?: CompromissoRecurrence
+  days_of_week?: number[] | null
+  day_of_month?: number | null
+  end_date?: string | null
+}
+
+export type CompromissoUpdate = Partial<CompromissoCreate>
+
+/** Ocorrência expandida — usada por /api/compromissos/occurrences pra
+ *  retornar 1 entrada por data dentro do range solicitado. */
+export interface CompromissoOccurrence {
+  id: string                         // id do compromisso pai
+  date: string                       // YYYY-MM-DD da ocorrência
+  title: string
+  start_time: string
+  end_time: string
+  notes: string | null
+  recurrence: CompromissoRecurrence
+  is_first: boolean                  // true = primeira data da série
+}
+
 export interface Profile {
   name: string
   role: string
@@ -744,6 +797,14 @@ export interface BuildRitual {
   proxima_data: string | null
   ultima_execucao: string | null
   dias_atraso: number
+  /**
+   * True quando existe row de `build_ritual_cluster` com `record_id IS NULL` —
+   * cluster rodando/pausado OU descolado pós-REABRIR.
+   * Done lógico = `ultima_execucao===todayIso AND !cluster_has_active`.
+   * Após REABRIR o cluster volta a ativo, então o lembrete reaparece sem
+   * deletar o record.
+   */
+  cluster_has_active: boolean
 }
 
 export type BuildRitualUpdate = Partial<{
@@ -1051,6 +1112,13 @@ export interface MindSessionTag {
   cor: string | null
 }
 
+export interface MindClusterRow {
+  id: number
+  session_num: number
+  started_at: string
+  ended_at: string | null
+}
+
 export interface MindSession {
   id: number
   data: string
@@ -1068,6 +1136,9 @@ export interface MindSession {
     criado_em: string
     atualizado_em: string
   } | null
+  /** Segmentos de sessão cronometrada (play/pause/resume). Vazio quando
+   *  usuário registrou direto sem usar o cronômetro do /Dia. */
+  cluster_rows: MindClusterRow[]
 }
 
 export interface MindSessionCreate {
@@ -1581,6 +1652,13 @@ export interface DiaPendencia {
   /** Refs adicionais pro modal — pra health: { domain_slug, domain_nome,
    *  domain_template, domain_cor, item_id, item_nome }. */
   target: Record<string, unknown>
+  /** Já foi registrada hoje? done = (record existe AND não há cluster
+   *  ativo). Após REABRIR, o cluster volta ativo e done vira false. */
+  done: boolean
+  /** ID do health_record do dia (se existe). Usado no FINALIZE pra upsert
+   *  (linka cluster ao record existente em vez de criar novo) — semântica
+   *  "outra sessão da mesma entrada". */
+  existing_record_id: number | null
 }
 
 // ─── Saga ────────────────────────────────────────────────────────────────

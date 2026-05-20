@@ -52,7 +52,9 @@ const WishlistPage    = lazy(() => import('./pages/finance/WishlistPage').then(m
 const FreelasPage     = lazy(() => import('./pages/finance/FreelasPage').then(m => ({ default: m.FreelasPage })))
 const CategoriasPage  = lazy(() => import('./pages/finance/CategoriasPage').then(m => ({ default: m.CategoriasPage })))
 // Build/Health usam default exports → import sem `.then`.
+const BuildLayout     = lazy(() => import('./pages/BuildLayout'))
 const BuildPage       = lazy(() => import('./pages/BuildPage'))
+const BuildHistoriaPage = lazy(() => import('./pages/BuildHistoriaPage'))
 const HealthLayout    = lazy(() => import('./pages/health/HealthLayout'))
 const BiomonitorPage  = lazy(() => import('./pages/health/BiomonitorPage'))
 const DomainPage      = lazy(() => import('./pages/health/DomainPage'))
@@ -106,6 +108,7 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/tarefas',     label: 'Tarefas',     abbr: 'TSK' },
       { path: '/rotinas',     label: 'Rotinas',     abbr: 'ROT' },
       { path: '/micro-dump',  label: 'Dump',        abbr: 'DMP' },
+      { path: '/arquivados',  label: 'Arquivados',  abbr: 'ARQ' },
     ],
   },
   {
@@ -118,12 +121,6 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'HEALTH',
     items: [
       { path: '/health',      label: 'Health',  abbr: 'HLT' },
-    ],
-  },
-  {
-    label: 'ARCHIVE',
-    items: [
-      { path: '/arquivados',  label: 'Arquivados',  abbr: 'ARQ' },
     ],
   },
 ]
@@ -673,10 +670,22 @@ export default function App() {
           padding: 'var(--space-4) 0 var(--space-3)',
           display: 'flex', flexDirection: 'column',
           background: 'rgba(8, 12, 18, 0.62)',
-          backdropFilter: 'blur(28px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-          transform: sidebarTransform,
-          transition: 'width var(--motion-base) var(--ease-emphasis), transform var(--motion-base) var(--ease-emphasis)',
+          // Blur reduzido de 28→10. O blur original (28px) é o maior custo
+          // por frame quando width anima — backdrop-filter re-amostra toda
+          // a área de blur a cada layout change. 10 ainda dá frosted look
+          // mas é ~3× mais barato.
+          backdropFilter: 'blur(10px) saturate(135%)',
+          WebkitBackdropFilter: 'blur(10px) saturate(135%)',
+          // `translate3d` força promoção pro compositor (mesmo quando
+          // sidebarTransform é identity) — backdrop-filter + grain
+          // pseudo-element rasterizam pra um bitmap GPU em vez de re-pintar
+          // por frame.
+          transform: `${sidebarTransform} translateZ(0)`,
+          // Isola re-layout/re-paint dos children — width do aside muda
+          // sem refletir o conteúdo interno toda frame.
+          contain: 'layout paint',
+          willChange: 'transform',
+          transition: 'width 260ms cubic-bezier(0.32, 0.72, 0, 1), transform var(--motion-base) var(--ease-emphasis)',
           height: '100vh', overflowY: 'auto', overflowX: 'hidden',
           zIndex: 100, boxSizing: 'border-box',
         }}
@@ -968,11 +977,19 @@ export default function App() {
         {/* Spacer pra empurrar versão pro fim */}
         <div style={{ flex: 1 }} />
         {/* Footer: HUD readout CP2077 — status conn + versão + system tag.
-            No collapsed só o dot visível (modo compacto). */}
+            No collapsed só o dot visível (modo compacto).
+            Separator: hairline ice mesmo padrão dos section dividers acima
+            (antes era border sólida e text-muted → ficava como "bloco
+            escuro depois de Health" segundo o user). */}
+        {!sidebarCollapsed && (
+          <div
+            aria-hidden="true"
+            className="hq-hairline-ice"
+            style={{ margin: '8px 14px 4px', opacity: 0.5 }}
+          />
+        )}
         <div style={{
-          padding: sidebarCollapsed ? '0 0 0 0' : 'var(--space-3) var(--space-3) var(--space-2)',
-          marginTop: 'var(--space-3)',
-          borderTop: sidebarCollapsed ? 'none' : '1px solid var(--color-border)',
+          padding: sidebarCollapsed ? '0 0 0 0' : 'var(--space-2) var(--space-3) var(--space-3)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: sidebarCollapsed ? 'center' : 'space-between',
@@ -1001,7 +1018,7 @@ export default function App() {
                   fontSize: 9,
                   fontWeight: 700,
                   letterSpacing: '0.15em',
-                  color: 'var(--color-text-muted)',
+                  color: 'var(--color-text-tertiary)',
                 }}
               >
                 <span
@@ -1021,7 +1038,7 @@ export default function App() {
                   fontSize: 9,
                   fontWeight: 600,
                   letterSpacing: '0.15em',
-                  color: 'var(--color-text-muted)',
+                  color: 'var(--color-text-tertiary)',
                 }}
               >
                 v{APP_VERSION}
@@ -1339,10 +1356,17 @@ export default function App() {
                   // (cross-midnight) e gravar o log no dia certo.
                   stopRoutineSession(id, routine_date ?? undefined).then(clearBanner).catch(err => reportApiError('App', err))
                 } else if (type === 'mind' || type === 'health_item' || type === 'ritual') {
-                  // Mind/Health/Ritual: finalizar acontece no /Dia (auto-register
-                  // ou modal pré-preenchido). Navegamos pra lá pra reusar a
-                  // lógica do PendenciaPlannedRow / RitualPlannedRow.
-                  navigate('/exec')
+                  // Mind/Health/Ritual: finalizar mora no /exec (auto-register
+                  // ou modal pré-preenchido). Passa o pendência_id como query
+                  // param — /exec lê e dispara o FINALIZAR no card certo
+                  // automaticamente. Se já estiver em /exec, useEffect detecta
+                  // o param e roda mesmo assim.
+                  const pendenciaId = type === 'mind'
+                    ? 'mind'
+                    : type === 'health_item'
+                      ? `health_item:${id}`
+                      : `ritual:${id}`
+                  navigate(`/exec?finalize=${encodeURIComponent(pendenciaId)}`)
                 }
               }}
               title={`Finalizar ${activeSession.type}`}
@@ -1396,7 +1420,11 @@ export default function App() {
         // empurra pro lado do sidebar pinned.
         marginLeft: isCompact ? 0 : (sidebarCollapsed ? 72 : 220),
         marginTop: (isHydrated && activeSession) ? 64 : 0,
-        transition: 'margin-top var(--motion-base) var(--ease-emphasis), margin-left var(--motion-base) var(--ease-emphasis)',
+        // Duração + curva idênticas ao width do aside pra ambos saírem
+        // sincronizados (sem isso, sidebar termina antes e o conteúdo
+        // "salta" pra ocupar o espaço). Curva Apple-style ease-out longo:
+        // arranca rápido, desacelera devagar = sensação smooth.
+        transition: 'margin-top var(--motion-base) var(--ease-emphasis), margin-left 260ms cubic-bezier(0.32, 0.72, 0, 1)',
         minHeight: '100vh',
         background: 'transparent',
       }}>
@@ -1458,7 +1486,10 @@ export default function App() {
           <Route path="/calendario" element={<CalendarView projects={projects} quests={quests} areas={areas} sessionUpdateTrigger={sessionUpdateTrigger} onSessionUpdate={onSessionUpdate} />} />
           <Route path="/rotinas" element={<RoutinesView />} />
           <Route path="/tarefas" element={<TasksView activeSession={activeSession} onSessionUpdate={onSessionUpdate} sessionUpdateTrigger={sessionUpdateTrigger} />} />
-          <Route path="/build" element={<BuildPage />} />
+          <Route path="/build" element={<BuildLayout />}>
+            <Route index element={<BuildPage />} />
+            <Route path="historia" element={<BuildHistoriaPage />} />
+          </Route>
           {/* Library — módulo de input curado (livros, filmes, podcasts…).
               Doc: docs/library/PLAN.md. Filosofia: destilação > consumo. */}
           <Route path="/library" element={<LibraryPage />} />
@@ -1518,13 +1549,18 @@ export default function App() {
               selectedProjectId={selectedProjectId}
               onSelectProject={setSelectedProjectId}
               onProjectUpdate={(id, patch) => {
-                setProjects(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p))
+                // setProjects é no-op aqui (legado de quando era useState) —
+                // só invalida cache. O patchProject roda async. Sem invalidar
+                // DE NOVO depois do .then(), o refetch disparado pela primeira
+                // invalidação chegava ANTES do PATCH commitar no backend →
+                // cache se acomodava no estado pré-mudança e a UI ficava
+                // mostrando projeto não-finalizado até F5.
                 patchProject(id, patch)
                   .then(() => {
-                    // Arquivar/desarquivar um projeto muda quais quests o
-                    // backend devolve em /api/quests (filtra por archived_at
-                    // do projeto pai). Refetch pra o state global sair de
-                    // sincronia ou continuar sincronizado sem F5.
+                    appInv.projects()
+                    // Arquivar/desarquivar muda quais quests o backend
+                    // devolve em /api/quests (filtra por archived_at do
+                    // projeto pai). Refetch pra state continuar consistente.
                     if ('archived_at' in patch) {
                       appInv.quests()
                     }

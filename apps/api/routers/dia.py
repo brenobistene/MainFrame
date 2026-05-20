@@ -45,13 +45,25 @@ class PendenciaOut(BaseModel):
     modal_type: PendenciaModalType
     # Refs adicionais que o frontend usa pra abrir o modal correto
     target: dict[str, Any] = {}
+    # done = record do dia existe AND não há cluster ativo. Após REABRIR
+    # (que descola cluster mas mantém record), done volta a false porque
+    # cluster está ativo — user pode continuar/finalizar de novo.
+    done: bool = False
+    # ID do health_record do dia (se existe) — frontend usa pra upsert no
+    # FINALIZE, evitando criar record novo quando já tem um (mesma entrada,
+    # outra sessão).
+    existing_record_id: Optional[int] = None
 
 
 @router.get("/pendencias", response_model=list[PendenciaOut])
 def list_pendencias(
     data: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
 ):
-    """Pendências do dia. Cada item já foi feito hoje desaparece da lista.
+    """Pendências do dia, com flag `done` pra itens já registrados.
+
+    Itens done continuam no retorno (paridade com quest/task/rotina, que
+    permanecem visíveis riscados após conclusão). Frontend filtra do planner
+    mas mantém renderizando no dayPlan.
 
     Validação de data: formato YYYY-MM-DD. Não restringimos a "hoje" porque
     o frontend pode pedir pendências de qualquer dia (planejamento, review
@@ -64,55 +76,93 @@ def list_pendencias(
             "SELECT mind_diario, mind_duracao_media_min, mind_horario_sugerido "
             "FROM health_settings WHERE id = 1"
         ).fetchone()
-        if settings and settings["mind_diario"]:
-            # Mind session do dia? Olha health_record com domain 'mind' (Mind
-            # sessions são persistidas como health_record com template
-            # observacao_estruturada, doc: ARCHITECTURE §3).
-            already = conn.execute(
-                "SELECT 1 FROM health_record WHERE domain_slug = 'mind' "
-                "AND data = ? LIMIT 1",
-                (data,),
-            ).fetchone()
-            if not already:
-                out.append(
-                    {
-                        "origem": "mind",
-                        "pendencia_id": "mind",
-                        "titulo": "Meditar",
-                        "duracao_min": settings["mind_duracao_media_min"]
-                        or 20,
-                        "horario_sugerido": settings["mind_horario_sugerido"],
-                        "cor": "#9b88c4",
-                        "modal_type": "mind",
-                        "target": {},
-                    }
-                )
+        # ID do record do dia (se existe) — pro frontend upsert no FINALIZE.
+        mind_rec_row = conn.execute(
+            "SELECT id FROM health_record WHERE domain_slug = 'mind' "
+            "AND data = ? ORDER BY id DESC LIMIT 1",
+            (data,),
+        ).fetchone()
+        mind_rec_id = mind_rec_row["id"] if mind_rec_row else None
+        # Cluster ativo (rows com record_id IS NULL): user pode estar
+        # rodando/pausado OU acabou de reabrir o record (descolou cluster).
+        has_active_cluster = conn.execute(
+            "SELECT 1 FROM mind_session WHERE record_id IS NULL LIMIT 1"
+        ).fetchone()
+        # done = record existe E NÃO há cluster ativo. Pós-REABRIR o cluster
+        # volta ativo → done=false (mesmo com record existindo).
+        mind_done = bool(mind_rec_id) and not bool(has_active_cluster)
+        # Inclui Mind se: diário ativado, record do dia, ou cluster ativo.
+        if (
+            (settings and settings["mind_diario"])
+            or mind_rec_id
+            or has_active_cluster
+        ):
+            out.append(
+                {
+                    "origem": "mind",
+                    "pendencia_id": "mind",
+                    "titulo": "Meditar",
+                    "duracao_min": (settings["mind_duracao_media_min"] if settings else None)
+                    or 20,
+                    "horario_sugerido": settings["mind_horario_sugerido"] if settings else None,
+                    "cor": "#9b88c4",
+                    "modal_type": "mind",
+                    "target": {},
+                    "done": mind_done,
+                    "existing_record_id": mind_rec_id,
+                }
+            )
 
-        # ─── Health items com diario=True ─────────────────────────────────
-        # JOIN com health_domain pra pegar cor + slug pro modal_type. Filtra
-        # items arquivados e items de domínio inativo. ON record: same item
-        # já tem record na data?
+        # ─── Health items ────────────────────────────────────────────────
+        # JOIN com health_domain pra pegar cor + slug pro modal_type. Inclui:
+        #  - Items com diario=1 (sempre — pendência diária)
+        #  - Items com record hoje (mostra struck-through)
+        #  - Items com cluster ativo (record_id IS NULL) — após REABRIR, o
+        #    cluster volta a esse estado, então sem essa cláusula o item
+        #    sumiria do dayPlan
+        #  - Items com cluster linkado a record do dia (cobre janela entre
+        #    link e refetch)
         items = conn.execute(
-            """SELECT i.id, i.nome, i.diario, i.duracao_media_min,
+            """SELECT DISTINCT i.id, i.nome, i.diario, i.duracao_media_min,
                       i.horario_sugerido, i.cor AS item_cor,
                       d.slug AS domain_slug, d.nome AS domain_nome,
                       d.cor AS domain_cor, d.template AS domain_template
                FROM health_item i
                JOIN health_domain d ON d.slug = i.domain_slug
-               WHERE i.diario = 1
-                 AND i.arquivado = 0
+               LEFT JOIN health_record hr
+                 ON hr.item_id = i.id AND hr.data = ?
+               LEFT JOIN health_item_session his
+                 ON his.item_id = i.id
+                 AND (
+                   his.record_id IS NULL
+                   OR his.record_id IN (
+                     SELECT id FROM health_record
+                     WHERE item_id = i.id AND data = ?
+                   )
+                 )
+               WHERE i.arquivado = 0
                  AND d.ativo = 1
-               ORDER BY i.horario_sugerido, i.nome"""
+                 AND (i.diario = 1 OR hr.id IS NOT NULL OR his.id IS NOT NULL)
+               ORDER BY i.horario_sugerido, i.nome""",
+            (data, data),
         ).fetchall()
         for it in items:
-            # Foi registrado hoje?
-            done = conn.execute(
-                "SELECT 1 FROM health_record "
-                "WHERE item_id = ? AND data = ? LIMIT 1",
+            # ID do record do dia (se existe) — frontend usa pra upsert.
+            rec_row = conn.execute(
+                "SELECT id FROM health_record "
+                "WHERE item_id = ? AND data = ? ORDER BY id DESC LIMIT 1",
                 (it["id"], data),
             ).fetchone()
-            if done:
-                continue
+            rec_id = rec_row["id"] if rec_row else None
+            # Cluster ativo desse item? (rows com record_id IS NULL)
+            has_active = conn.execute(
+                "SELECT 1 FROM health_item_session "
+                "WHERE item_id = ? AND record_id IS NULL LIMIT 1",
+                (it["id"],),
+            ).fetchone()
+            # done = record existe E não há cluster ativo. Pós-REABRIR o
+            # cluster volta ativo → done=false (com record ainda existindo).
+            item_done = bool(rec_id) and not bool(has_active)
             cor = it["item_cor"] or it["domain_cor"]
             out.append(
                 {
@@ -131,6 +181,8 @@ def list_pendencias(
                         "item_id": it["id"],
                         "item_nome": it["nome"],
                     },
+                    "done": item_done,
+                    "existing_record_id": rec_id,
                 }
             )
     return out
@@ -166,3 +218,10 @@ def done_today_check(data: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
         for r in rows:
             done_ids.append(f"health_item:{r['id']}")
     return {"done": done_ids}
+
+
+# NOTE: endpoint antigo /pendencias/{id}/reopen removido. Substituído por
+# rotas específicas em dia_sessions.py que mantêm o record (descolam só o
+# cluster) — semântica "outra sessão da mesma entrada". Frontend dispatcher
+# (api.ts reopenDiaPendencia) roteia pra /mind/session/reopen ou
+# /health/items/{id}/session/reopen.

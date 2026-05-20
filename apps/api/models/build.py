@@ -286,6 +286,10 @@ class RitualOut(BaseModel):
     proxima_data: Optional[str] = None                # YYYY-MM-DD
     ultima_execucao: Optional[str] = None             # YYYY-MM-DD da última session
     dias_atraso: int = 0                              # >0 se proxima_data < today
+    # True quando existe row de build_ritual_cluster com record_id IS NULL —
+    # cluster rodando/pausado OU descolado pós-REABRIR. UI usa pra decidir
+    # se mostra o lembrete: done = `ultima_execucao==today AND NOT cluster_has_active`.
+    cluster_has_active: bool = False
 
 
 class RitualUpdate(BaseModel):

@@ -248,6 +248,43 @@ def link_mind_session_to_record(body: dict):
         conn.commit()
 
 
+@router.post(
+    "/api/mind/session/reopen",
+    response_model=SessionClusterOut,
+)
+def reopen_mind_session(data: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    """Desfaz a finalização do Mind do dia. Descola as rows do cluster
+    (record_id → NULL) MAS mantém o health_record — quando user finaliza
+    de novo, o FINALIZE upsert detecta record existente e linka o cluster
+    de novo nele (em vez de criar um novo record). Semântica: "outra
+    sessão da mesma entrada", não uma entrada nova.
+    """
+    with get_conn() as conn:
+        rec = conn.execute(
+            "SELECT id FROM health_record "
+            "WHERE domain_slug = 'mind' AND data = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (data,),
+        ).fetchone()
+        if not rec:
+            # Idempotente: descola orphans (rows com record_id apontando
+            # pra record já inexistente) pra forçar has_active=true.
+            conn.execute(
+                """UPDATE mind_session SET record_id = NULL
+                   WHERE record_id IS NOT NULL
+                   AND record_id NOT IN (SELECT id FROM health_record)"""
+            )
+            conn.commit()
+            return _build_cluster(_fetch_mind_active_rows(conn))
+        record_id = rec["id"]
+        conn.execute(
+            "UPDATE mind_session SET record_id = NULL WHERE record_id = ?",
+            (record_id,),
+        )
+        conn.commit()
+        return _build_cluster(_fetch_mind_active_rows(conn))
+
+
 # ─── Health item sessions ────────────────────────────────────────────────
 
 
@@ -384,6 +421,46 @@ def link_health_item_session_to_record(item_id: int, body: dict):
             (record_id, item_id),
         )
         conn.commit()
+
+
+@router.post(
+    "/api/health/items/{item_id}/session/reopen",
+    response_model=SessionClusterOut,
+)
+def reopen_health_item_session(
+    item_id: int,
+    data: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """Desfaz a finalização do health item. Descola as rows do cluster
+    (record_id → NULL) mas MANTÉM o health_record — quando user finaliza
+    de novo, o FINALIZE upsert detecta record existente e linka o cluster
+    nele em vez de criar um novo.
+    """
+    with get_conn() as conn:
+        rec = conn.execute(
+            "SELECT id FROM health_record "
+            "WHERE item_id = ? AND data = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (item_id, data),
+        ).fetchone()
+        if not rec:
+            conn.execute(
+                """UPDATE health_item_session SET record_id = NULL
+                   WHERE item_id = ?
+                   AND record_id IS NOT NULL
+                   AND record_id NOT IN (SELECT id FROM health_record)""",
+                (item_id,),
+            )
+            conn.commit()
+            return _build_cluster(_fetch_health_item_active_rows(conn, item_id))
+        record_id = rec["id"]
+        conn.execute(
+            "UPDATE health_item_session SET record_id = NULL "
+            "WHERE item_id = ? AND record_id = ?",
+            (item_id, record_id),
+        )
+        conn.commit()
+        return _build_cluster(_fetch_health_item_active_rows(conn, item_id))
 
 
 # ─── Ritual cluster sessions (Build) ─────────────────────────────────────
@@ -527,6 +604,46 @@ def link_ritual_cluster_to_record(cadencia: str, body: dict):
             (record_id, cadencia),
         )
         conn.commit()
+
+
+@router.post(
+    "/api/build/rituals/{cadencia}/cluster/reopen",
+    response_model=SessionClusterOut,
+)
+def reopen_ritual_cluster(
+    cadencia: str,
+    data: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """Desfaz finalização de ritual: estado volta pra PLAY limpo (como
+    quest reaberto). Apaga build_ritual_session de hoje + apaga rows do
+    cluster (unlinked e linkadas à session deletada).
+
+    Antes a gente preservava a session e só descolava o cluster, na ideia
+    de "outra sessão da mesma entrada". Mas isso deixava o card preso em
+    RESUME/FINALIZE (cluster ativo com rows pausadas) — não voltava pra
+    PLAY como o usuário esperava. Proteção contra duplicatas continua
+    garantida pelo upsert do create_ritual_session: se user FINALIZAR de
+    novo hoje sem ter reaberto antes, o INSERT vira UPDATE.
+    """
+    with get_conn() as conn:
+        # Apaga sessão de hoje (idempotente se não existir)
+        conn.execute(
+            "DELETE FROM build_ritual_session "
+            "WHERE cadencia = ? AND data_executado = ?",
+            (cadencia, data),
+        )
+        # Apaga cluster rows: unlinked (record_id IS NULL = cluster ativo
+        # de hoje) + órfãs (record_id apontando pra session inexistente).
+        # Resultado: cluster fica vazio → has_active=false → PLAY aparece.
+        conn.execute(
+            """DELETE FROM build_ritual_cluster
+               WHERE cadencia = ?
+               AND (record_id IS NULL
+                    OR record_id NOT IN (SELECT id FROM build_ritual_session))""",
+            (cadencia,),
+        )
+        conn.commit()
+        return _build_cluster(_fetch_ritual_active_rows(conn, cadencia))
 
 
 # ─── Edição manual de sessão (PATCH) ─────────────────────────────────────
@@ -824,7 +941,14 @@ def list_ritual_cluster_range(
     to: str = "",
 ):
     """Lista rows de build_ritual_cluster com started_at em [from, to].
-    Usado pelo /calendario pra renderizar rituais executados como blocos."""
+    Usado pelo /calendario pra renderizar rituais executados como blocos.
+
+    Filtra órfãs (record_id apontando pra session inexistente) — sem isso o
+    calendário renderiza blocos vermelhos pra rituais que o usuário não
+    reconhece como execuções reais. Mostra:
+      - rows linkadas a session real (record_id IN sessions)
+      - rows ativas/pausadas (record_id IS NULL) — execução em andamento
+    """
     with get_conn() as conn:
         if from_ and to:
             rows = conn.execute(
@@ -832,6 +956,8 @@ def list_ritual_cluster_range(
                    FROM build_ritual_cluster
                    WHERE substr(started_at, 1, 10) >= ?
                      AND substr(started_at, 1, 10) <= ?
+                     AND (record_id IS NULL
+                          OR record_id IN (SELECT id FROM build_ritual_session))
                    ORDER BY started_at ASC""",
                 (from_, to),
             ).fetchall()
@@ -839,6 +965,8 @@ def list_ritual_cluster_range(
             rows = conn.execute(
                 """SELECT id, cadencia, session_num, started_at, ended_at, record_id
                    FROM build_ritual_cluster
+                   WHERE (record_id IS NULL
+                          OR record_id IN (SELECT id FROM build_ritual_session))
                    ORDER BY started_at DESC LIMIT 200"""
             ).fetchall()
     return [dict(r) for r in rows]

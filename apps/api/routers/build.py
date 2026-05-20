@@ -1168,7 +1168,15 @@ def _calc_proxima_data(cadencia: str, schedule_config: dict, ref: date) -> Optio
 
 
 def _hydrate_ritual(conn, row) -> dict:
-    """Adiciona próxima_data, ultima_execucao, dias_atraso. Conexão reusada."""
+    """Adiciona próxima_data, ultima_execucao, dias_atraso, cluster_has_active.
+
+    `cluster_has_active` é true quando existe alguma row de `build_ritual_cluster`
+    pra essa cadência com `record_id IS NULL` (sessão rodando/pausada OU
+    cluster descolado após REABRIR). Usado pela UI pra decidir se o lembrete
+    da pendência deve aparecer: done = `ultima_execucao == today` AND NOT
+    `cluster_has_active`. Após REABRIR o cluster volta a ficar ativo (record
+    preservado), então o lembrete reaparece automaticamente.
+    """
     cfg = json.loads(row["schedule_config"]) if row["schedule_config"] else {}
     today = date.today()
     proxima = _calc_proxima_data(row["cadencia"], cfg, today) if row["ativo"] else None
@@ -1181,6 +1189,14 @@ def _hydrate_ritual(conn, row) -> dict:
         (row["cadencia"],),
     ).fetchone()
     ultima = last_session["data_executado"] if last_session else None
+
+    cluster_has_active = bool(
+        conn.execute(
+            "SELECT 1 FROM build_ritual_cluster "
+            "WHERE cadencia = ? AND record_id IS NULL LIMIT 1",
+            (row["cadencia"],),
+        ).fetchone()
+    )
 
     # dias_atraso: se proxima_data já passou, conta quantos dias
     dias_atraso = 0
@@ -1208,6 +1224,7 @@ def _hydrate_ritual(conn, row) -> dict:
         "proxima_data": proxima.isoformat() if proxima else None,
         "ultima_execucao": ultima,
         "dias_atraso": dias_atraso,
+        "cluster_has_active": cluster_has_active,
     }
 
 
@@ -1369,30 +1386,61 @@ def _session_row_to_dict(r) -> dict:
     status_code=201,
 )
 def create_ritual_session(cadencia: str, body: RitualSessionCreate):
-    """Registra execução do ritual. data_executado default = today."""
+    """Upsert de execução do ritual por (cadencia, data_executado).
+
+    Se já existe sessão pra essa data nessa cadência (o caso após REABRIR +
+    re-FINALIZE no /exec), faz UPDATE in-place mantendo o `id` — assim o
+    cluster que tinha sido linkado nessa sessão continua válido e não viram
+    rows duplicadas pra mesma "entrada do dia". Caso contrário, INSERT
+    normal. Semântica: "outra sessão da mesma entrada", mesmo padrão dos
+    mind/health items.
+    """
     with get_conn() as conn:
         if not conn.execute(
             "SELECT 1 FROM build_ritual WHERE cadencia = ?", (cadencia,)
         ).fetchone():
             raise HTTPException(404, detail=f"Ritual '{cadencia}' não encontrado")
-        session_id = str(uuid.uuid4())[:8]
         data_exec = body.data_executado or date.today().isoformat()
-        conn.execute(
-            "INSERT INTO build_ritual_session"
-            "(id, cadencia, data_executado, duracao_min, notas, foco_proxima_periodo, "
-            " skipped, skip_reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                session_id,
-                cadencia,
-                data_exec,
-                body.duracao_min,
-                body.notas,
-                body.foco_proxima_periodo,
-                int(body.skipped),
-                body.skip_reason,
-            ),
-        )
+        existing = conn.execute(
+            "SELECT id FROM build_ritual_session "
+            "WHERE cadencia = ? AND data_executado = ? "
+            "ORDER BY criado_em DESC LIMIT 1",
+            (cadencia, data_exec),
+        ).fetchone()
+        if existing:
+            session_id = existing["id"]
+            conn.execute(
+                "UPDATE build_ritual_session SET "
+                "  duracao_min = ?, notas = ?, foco_proxima_periodo = ?, "
+                "  skipped = ?, skip_reason = ? "
+                "WHERE id = ?",
+                (
+                    body.duracao_min,
+                    body.notas,
+                    body.foco_proxima_periodo,
+                    int(body.skipped),
+                    body.skip_reason,
+                    session_id,
+                ),
+            )
+        else:
+            session_id = str(uuid.uuid4())[:8]
+            conn.execute(
+                "INSERT INTO build_ritual_session"
+                "(id, cadencia, data_executado, duracao_min, notas, foco_proxima_periodo, "
+                " skipped, skip_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    cadencia,
+                    data_exec,
+                    body.duracao_min,
+                    body.notas,
+                    body.foco_proxima_periodo,
+                    int(body.skipped),
+                    body.skip_reason,
+                ),
+            )
         conn.commit()
         row = conn.execute(
             "SELECT id, cadencia, data_executado, duracao_min, notas, "
@@ -1443,7 +1491,15 @@ def update_ritual_session(cadencia: str, session_id: str, body: RitualSessionUpd
 )
 def delete_ritual_session(cadencia: str, session_id: str):
     """Deleta uma sessão. Permite desfazer 'Concluir Revisão' clicado por
-    engano OU limpar entradas de teste."""
+    engano OU limpar entradas de teste.
+
+    Cascade: rows de `build_ritual_cluster` linkadas a essa session também
+    são deletadas. Sem isso elas viravam órfãs (record_id apontando pra
+    session que não existe mais) e bagunçavam o estado — `reopen` antigo
+    "ressuscitava" essas órfãs setando record_id=NULL, deixando o cluster
+    como ativo com rows fantasmas. Aqui matamos a evidência inteira: se o
+    usuário deletou a session, a execução foi removida do histórico.
+    """
     with get_conn() as conn:
         cur = conn.execute(
             "DELETE FROM build_ritual_session WHERE id = ? AND cadencia = ?",
@@ -1451,6 +1507,10 @@ def delete_ritual_session(cadencia: str, session_id: str):
         )
         if cur.rowcount == 0:
             raise HTTPException(404, detail="Sessão não encontrada")
+        conn.execute(
+            "DELETE FROM build_ritual_cluster WHERE cadencia = ? AND record_id = ?",
+            (cadencia, session_id),
+        )
         conn.commit()
 
 

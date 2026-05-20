@@ -13,6 +13,8 @@ import HealthDashboardCard from '../components/health/HealthDashboardCard'
 import LibraryDashboardCard from '../components/library/LibraryDashboardCard'
 import MindDashboardCard from '../components/mind/MindDashboardCard'
 import BuildDashboardCard from '../components/build/BuildDashboardCard'
+import { DashboardRetroPanel } from '../components/DashboardRetroPanel'
+import { CompromissosAlert } from '../components/CompromissosAlert'
 
 // ─── Tipos e constantes ────────────────────────────────────────────────────
 
@@ -38,16 +40,6 @@ type ProjectPressure = {
   /** Total estimado em TODAS as quests linkadas. Usado pro % do card. */
   totalEstimatedMin: number
   status: Pressure
-}
-
-type UpcomingItem = {
-  date: string
-  type: 'projeto' | 'entregável'
-  title: string
-  context?: string
-  color: string
-  isOverdue: boolean
-  done: boolean
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -179,8 +171,6 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
   const [routinesLoaded, setRoutinesLoaded] = useState(false)
   const [tasksLoaded, setTasksLoaded] = useState(false)
   const [delivsLoaded, setDelivsLoaded] = useState(false)
-  // Filtro da seção "Próximas deadlines": null = tudo; 'projeto' ou 'entregável' filtra.
-  const [deadlineTypeFilter, setDeadlineTypeFilter] = useState<null | 'projeto' | 'entregável'>(null)
   // Estado de colapso por seção — vibe codex CP2077 onde categorias podem
   // ser fechadas pra reduzir density. Default: tudo aberto.
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
@@ -449,65 +439,7 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
     return best
   }, [quests, delivsByProject])
 
-  // ─── Upcoming deadlines ───────────────────────────────────────────────────
-
-  // Conta itens que têm deadline mas estão fora da janela atual — ajuda o
-  // usuário a entender por que "próximas deadlines" está vazio.
-  const deadlinesOutsideWindow = useMemo(() => {
-    let count = 0
-    for (const p of projects) {
-      if (!p.deadline) continue
-      const projectOverdue = p.status !== 'done' && p.status !== 'cancelled' && p.deadline < todayIso
-      if (!projectOverdue && (p.deadline < windowStartIso || p.deadline > windowEndIso)) count++
-    }
-    for (const p of projects) {
-      for (const d of delivsByProject[p.id] ?? []) {
-        if (!d.deadline) continue
-        const delivOverdue = !d.done && d.deadline < todayIso
-        if (!delivOverdue && (d.deadline < windowStartIso || d.deadline > windowEndIso)) count++
-      }
-    }
-    return count
-  }, [quests, delivsByProject, todayIso, windowStartIso, windowEndIso])
-
-  const upcomingItems: UpcomingItem[] = useMemo(() => {
-    const items: UpcomingItem[] = []
-    const areaColor = (slug: string) => areas.find(a => a.slug === slug)?.color ?? 'var(--color-text-tertiary)'
-    for (const p of projects) {
-      if (!p.deadline) continue
-      const projectOverdue = p.status !== 'done' && p.status !== 'cancelled' && p.deadline < todayIso
-      // Exibe se está na janela OU se está atrasado e ainda não foi concluído
-      if (!projectOverdue && (p.deadline < windowStartIso || p.deadline > windowEndIso)) continue
-      items.push({
-        date: p.deadline,
-        type: 'projeto',
-        title: p.title,
-        context: p.area_slug,
-        color: areaColor(p.area_slug),
-        isOverdue: projectOverdue,
-        done: p.status === 'done',
-      })
-    }
-    for (const p of projects) {
-      for (const d of delivsByProject[p.id] ?? []) {
-        if (!d.deadline) continue
-        const delivOverdue = !d.done && d.deadline < todayIso
-        // Exibe se está na janela OU se está atrasado e ainda não foi concluído
-        if (!delivOverdue && (d.deadline < windowStartIso || d.deadline > windowEndIso)) continue
-        items.push({
-          date: d.deadline,
-          type: 'entregável',
-          title: d.title,
-          context: p.title,
-          color: areaColor(p.area_slug),
-          isOverdue: delivOverdue,
-          done: !!d.done,
-        })
-      }
-    }
-    return items.sort((a, b) => a.date.localeCompare(b.date))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quests, delivsByProject, areas, todayIso, windowStartIso, windowEndIso])
+  // ─── (DEADLINE.QUEUE removido v0.8.x — substituído por RETROSPECTIVE) ─────
 
   // ─── PROJECT.MATRIX ─── grid dos projetos ATIVOS (não-arquivados, não
   // finalizados, não cancelados), agrupados por área (estilo skill tree
@@ -906,6 +838,10 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         </section>
       )}
 
+      {/* ─── COMPROMISSOS ─── alerta sticky pros próximos 3 dias. Esconde
+          se não há nada. Não dispensável — radar, não nag. */}
+      <CompromissosAlert />
+
       {/* ─── PROJECT.MATRIX ─── grid de TODOS os projetos não-arquivados,
           agrupados por área, estilo skill tree CP2077. Default colapsado.
           Vem ANTES de PRESSURE.MATRIX porque é a visão geral do portfólio. */}
@@ -1010,6 +946,15 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
         </div>
       </section>
 
+      {/* ─── RETROSPECTIVE ─── tempo investido + items fechados na janela.
+          Complementa PROJECT.MATRIX: matrix mostra ESTADO presente, retro
+          mostra MOVIMENTO no período. Default colapsado pra não poluir. */}
+      <DashboardRetroPanel
+        collapsed={collapsedSections['retro'] === undefined ? true : !!collapsedSections['retro']}
+        onToggle={() => toggleSection('retro')}
+        onSelectProject={onSelectProject}
+      />
+
       {/* ─── Projetos em risco ─── */}
       <section style={{ marginBottom: 32 }}>
         <SectionHeader
@@ -1084,150 +1029,6 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
             só em risco
           </button>
         )}
-        </div>
-        </div>
-      </section>
-
-      {/* ─── Próximas deadlines ─── */}
-      <section style={{ marginBottom: 32 }}>
-        <SectionHeader
-          label="DEADLINE.QUEUE"
-          count={upcomingItems.length}
-          collapsed={!!collapsedSections['deadlines']}
-          onToggle={() => toggleSection('deadlines')}
-          accent={upcomingItems.some(i => i.isOverdue) ? 'oxblood' : 'ice'}
-        />
-        <div style={{
-          display: 'grid',
-          gridTemplateRows: collapsedSections['deadlines'] ? '0fr' : '1fr',
-          opacity: collapsedSections['deadlines'] ? 0 : 1,
-          transition: 'opacity var(--motion-base) var(--ease-emphasis), grid-template-rows var(--motion-base) var(--ease-emphasis)',
-          marginTop: collapsedSections['deadlines'] ? 0 : 14,
-        }}>
-        <div style={{ overflow: 'hidden', minHeight: 0 }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          gap: 12, marginBottom: 18, flexWrap: 'wrap',
-        }}>
-          {(() => {
-            const projCount = upcomingItems.filter(i => i.type === 'projeto').length
-            const delivCount = upcomingItems.filter(i => i.type === 'entregável').length
-            const btn = (label: string, value: null | 'projeto' | 'entregável', count: number) => {
-              const active = deadlineTypeFilter === value
-              return (
-                <button
-                  key={label}
-                  onClick={() => setDeadlineTypeFilter(value)}
-                  style={{
-                    background: active ? 'var(--color-ice-soft)' : 'none',
-                    border: `1px solid ${active ? 'rgba(143, 191, 211, 0.32)' : 'var(--color-border)'}`,
-                    cursor: 'pointer',
-                    color: active ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
-                    padding: '4px 10px', fontSize: 10, fontWeight: 600,
-                    letterSpacing: '0.1em', textTransform: 'uppercase',
-                    borderRadius: 3, fontFamily: 'inherit',
-                    transition: 'all 0.15s',
-                    boxShadow: active ? '0 0 12px rgba(143, 191, 211, 0.18)' : 'none',
-                  }}
-                  onMouseEnter={e => {
-                    if (!active) {
-                      e.currentTarget.style.borderColor = 'var(--color-text-tertiary)'
-                      e.currentTarget.style.color = 'var(--color-text-primary)'
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (!active) {
-                      e.currentTarget.style.borderColor = 'var(--color-border)'
-                      e.currentTarget.style.color = 'var(--color-text-tertiary)'
-                    }
-                  }}
-                >
-                  {label} {count > 0 && <span style={{ opacity: 0.7 }}>({count})</span>}
-                </button>
-              )
-            }
-            return (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {btn('tudo', null, upcomingItems.length)}
-                {btn('projetos', 'projeto', projCount)}
-                {btn('entregáveis', 'entregável', delivCount)}
-              </div>
-            )
-          })()}
-        </div>
-
-        {(() => {
-          const filtered = deadlineTypeFilter
-            ? upcomingItems.filter(i => i.type === deadlineTypeFilter)
-            : upcomingItems
-          if (filtered.length === 0) {
-            return (
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                {deadlineTypeFilter
-                  ? `Nenhum ${deadlineTypeFilter === 'projeto' ? 'projeto' : 'entregável'} nessa janela.`
-                  : 'Nenhuma deadline nessa janela.'}
-                {deadlinesOutsideWindow > 0 && !deadlineTypeFilter && (
-                  <span style={{ display: 'block', marginTop: 6, color: 'var(--color-text-tertiary)', fontStyle: 'normal' }}>
-                    {deadlinesOutsideWindow} deadline{deadlinesOutsideWindow !== 1 ? 's' : ''} fora da janela. Ajuste o intervalo acima pra ver.
-                  </span>
-                )}
-              </div>
-            )
-          }
-          return (
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {filtered.map((item, idx) => {
-              const daysAway = calendarDaysUntil(item.date)
-              const dayLabel = daysAway === 0 ? 'HOJE'
-                : daysAway === 1 ? 'AMANHÃ'
-                : daysAway < 0 ? `+${Math.abs(daysAway)}D`
-                : `${daysAway}D`
-              const itemBorderColor = item.isOverdue
-                ? 'rgba(159, 18, 57, 0.55)'
-                : 'rgba(143, 191, 211, 0.30)'
-              const itemAccentColor = item.isOverdue
-                ? 'var(--color-accent-vivid)'
-                : 'var(--color-ice)'
-              const [, mm, dd] = item.date.split('-')
-              return (
-                <HudListItem
-                  key={idx}
-                  thumbnail={
-                    <HudDateThumbnail
-                      day={dd}
-                      month={mm}
-                      relative={dayLabel}
-                      accentColor={itemAccentColor}
-                      dateSize={14}
-                    />
-                  }
-                  thumbnailWidth={56}
-                  tintColor={item.color}
-                  borderColor={itemBorderColor}
-                  accentColor={itemAccentColor}
-                  severe={item.isOverdue}
-                  title={item.title}
-                  titleSize={14}
-                  done={item.done}
-                  dimmed={item.done ? 0.45 : undefined}
-                  mainPadding="10px 16px"
-                  caption={
-                    <>
-                      <span style={{ color: item.color }}>{item.type}</span>
-                      {item.context && (
-                        <>
-                          <span style={{ opacity: 0.4 }}>·</span>
-                          <span>{item.context}</span>
-                        </>
-                      )}
-                    </>
-                  }
-                />
-              )
-            })}
-          </div>
-          )
-        })()}
         </div>
         </div>
       </section>

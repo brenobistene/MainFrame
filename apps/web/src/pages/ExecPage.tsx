@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
-import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search, Play } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search, Play, Check, Pause, Square, RotateCcw, ChevronRight, ChevronDown } from 'lucide-react'
 import type { ActiveSession, Area, BuildRitual, Deliverable, Project, Quest, Routine, Task } from '../types'
-import { fetchDeliverables, updateTask, deleteTask, reportApiError } from '../api'
+import {
+  fetchDeliverables, updateTask, deleteTask, reportApiError,
+  fetchMindSession, fetchHealthItemSession, fetchRitualCluster, pauseRitualCluster,
+} from '../api'
 import { useTasks, useRoutines, useRoutinesForDate, useAppInvalidator } from '../lib/app-queries'
-import { useCreateHealthRecord } from '../lib/health-queries'
+import { useCreateHealthRecord, useUpdateHealthRecord } from '../lib/health-queries'
 import {
   useDiaPendencias,
   useInvalidateDiaPendencias,
@@ -17,6 +20,8 @@ import {
   usePauseHealthItemSession,
   usePauseMindSession,
   usePauseRitualCluster,
+  useReopenDiaPendencia,
+  useReopenRitualCluster,
   useResumeHealthItemSession,
   useResumeMindSession,
   useResumeRitualCluster,
@@ -30,10 +35,12 @@ import type { DiaSessionCluster } from '../api'
 type DiaSessionClusterLike = DiaSessionCluster
 import { useRituals, useCreateRitualSession } from '../lib/build-queries'
 import { tabSync } from '../lib/tabsync'
-import { confirmDialog } from '../lib/dialog'
+import { alertDialog, confirmDialog } from '../lib/dialog'
 import MindRegisterModal from '../components/mind/MindRegisterModal'
+import { MindContextModal } from '../components/mind/MindContextModal'
 import RegisterModal from '../components/health/RegisterModal'
 import { SessionHistoryModal } from '../components/SessionHistoryModal'
+import { RitualFinalizeModal } from '../components/RitualFinalizeModal'
 import { isoToLocalYmd } from '../utils/datetime'
 import { effectiveQuestDeadline } from '../utils/quests'
 import type { DateRange } from '../utils/dateRange'
@@ -48,6 +55,7 @@ import { PlannedItemRow } from '../components/PlannedItemRow'
 import { modalHeader } from './finance/components/styleHelpers'
 import { PageShell, TechId, DataReadoutFrame } from '../components/ui/CyberShell'
 import { DiaPendenciasBlock } from '../components/DiaPendenciasBlock'
+import { CompromissosTodayPanel } from '../components/CompromissosTodayPanel'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -110,6 +118,60 @@ function buildTightChainTooltip(
 }
 
 /**
+ * Handler unificado pra erros de start/resume de sessão cronometrada.
+ * Cobre quest/task/routine/mind/health/ritual com mesma semântica:
+ *   - 409 conflict → backend mete `err.conflictTitle` (jsonFetch).
+ *   - rede/server → mensagem de fallback específica, não genérica.
+ * Substitui o antigo "veja o console (F12)" que jogava o usuário no DevTools.
+ * Importado pelos componentes que disparam mutate de start/resume.
+ */
+function handleSessionStartError(
+  kind: 'ritual' | 'meditação' | 'sessão',
+  err: any,
+  alertFn: (opts: { title: string; message: string; variant?: 'warning' | 'danger' }) => void,
+): void {
+  if (err?.conflictTitle) {
+    alertFn({
+      title: 'Outra sessão em execução',
+      message: `"${err.conflictTitle}" está rodando agora. Pause antes pra iniciar essa.`,
+      variant: 'warning',
+    })
+    return
+  }
+  if (err?.status === 0 || err?.message?.includes('Failed to fetch')) {
+    alertFn({
+      title: 'Sem conexão com o servidor',
+      message: 'Não consegui falar com o backend. Verifica se o servidor está rodando (terminal MAINFRAME API).',
+      variant: 'danger',
+    })
+    return
+  }
+  if (err?.status >= 500) {
+    alertFn({
+      title: `Erro do servidor (${err.status})`,
+      message: err?.detail || `Backend falhou ao iniciar ${kind}. Tenta de novo — se persistir, reinicia o backend.`,
+      variant: 'danger',
+    })
+    return
+  }
+  if (err?.status >= 400) {
+    alertFn({
+      title: `Não foi possível iniciar ${kind}`,
+      message: err?.detail || `Requisição rejeitada (${err.status}). Verifica se a configuração está completa.`,
+      variant: 'danger',
+    })
+    return
+  }
+  // Caso totalmente desconhecido — log mas mensagem amigável.
+  console.error(`[handleSessionStartError:${kind}]`, err)
+  alertFn({
+    title: `Erro ao iniciar ${kind}`,
+    message: 'Algo deu errado e não consegui identificar o motivo. Tenta de novo.',
+    variant: 'danger',
+  })
+}
+
+/**
  * `/dia` — planejamento diário. Uma linha de veredito no topo ("planejado
  * X de Y disponíveis"), drawer de planejamento com drag-and-drop (filtros +
  * split disponíveis × períodos), e três blocos minimalistas pra manhã/tarde/
@@ -124,6 +186,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
   onSelectProject: (id: string | null) => void
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const appInv = useAppInvalidator()
   // Routines via React Query — substituiu useState + fetchAllRoutines.
   const routinesQ = useRoutines()
@@ -140,6 +203,124 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
   })()
   const { data: diaPendencias = [] } = useDiaPendencias(todayIso)
   const invalidateDia = useInvalidateDiaPendencias()
+  // Snapshot local de pendências finalizadas hoje. Persistido em localStorage
+  // por data. Garante que o card NUNCA some do dayPlan depois de finalizar,
+  // mesmo se backend não retornar done=true por race/timezone/whatever.
+  //   - pendencia_id ("mind" ou "health_item:N") → snapshot do item com metadata
+  //   - Renderização: merge com diaPendencias (backend) por id; entries só no
+  //     local viram cards "ghost" struck-through.
+  type LocalPendenciaSnapshot = {
+    // `done` controla a UI: true = riscado, false = card ativo/pendente.
+    // REABRIR não APAGA o snapshot — só flipa done pra false, mantendo a
+    // metadata pra garantir que o card NUNCA suma do dayPlan (mesmo que o
+    // backend não retorne o item depois do reopen).
+    done: boolean
+    title: string
+    cor: string | null
+    duracao_min: number | null
+    horario_sugerido: string | null
+    origem: 'mind' | 'health_item'
+    modal_type: 'mind' | 'health_register'
+    target: Record<string, unknown>
+  }
+  const doneTodayKey = `hq-pendencias-done-${todayIso}`
+  const [localDoneToday, setLocalDoneToday] = useState<Record<string, LocalPendenciaSnapshot>>(() => {
+    try {
+      const saved = localStorage.getItem(doneTodayKey)
+      if (!saved) return {}
+      const parsed = JSON.parse(saved)
+      // Compat: snapshots antigos não tinham `done`. Inferir como true
+      // (snapshot só era criado em FINALIZAR antes).
+      const out: Record<string, LocalPendenciaSnapshot> = {}
+      for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
+        out[k] = { ...v, done: v.done ?? true }
+      }
+      return out
+    } catch { return {} }
+  })
+  // Save snapshot. CRÍTICO: skipa quando doneTodayKey acabou de mudar
+  // (rollover de dia). Sem esse guard, esse effect roda antes do reset
+  // effect abaixo e escreve o state de ONTEM na key de HOJE — causando
+  // todos os itens aparecerem riscados como "já feitos" no dia seguinte.
+  const prevDoneTodayKey = useRef(doneTodayKey)
+  useEffect(() => {
+    if (prevDoneTodayKey.current !== doneTodayKey) return
+    try { localStorage.setItem(doneTodayKey, JSON.stringify(localDoneToday)) } catch {}
+  }, [localDoneToday, doneTodayKey])
+  // Reset quando muda de dia. Roda DEPOIS do save effect — o save acima
+  // detecta key mismatch e skipa, então essa key fica intocada e a load
+  // aqui pega o estado real do localStorage do novo dia (vazio em geral).
+  useEffect(() => {
+    if (prevDoneTodayKey.current !== doneTodayKey) {
+      prevDoneTodayKey.current = doneTodayKey
+      try {
+        const saved = localStorage.getItem(doneTodayKey)
+        setLocalDoneToday(saved ? JSON.parse(saved) : {})
+      } catch { setLocalDoneToday({}) }
+    }
+  }, [doneTodayKey])
+  // One-time cleanup: bug do day rollover (save-before-reset) corrompeu
+  // localStorage de usuários existentes — escreveu snapshots de dias
+  // anteriores nas keys "corretas" do dia subsequente. Limpa TODAS as
+  // chaves hq-pendencias-done-* uma vez por instalação dessa versão pra
+  // garantir clean slate. Flag idempotente.
+  useEffect(() => {
+    const FLAG = 'hq-pendencias-rollover-cleanup-v1'
+    if (localStorage.getItem(FLAG)) return
+    try {
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith('hq-pendencias-done-')) keysToRemove.push(k)
+      }
+      for (const k of keysToRemove) localStorage.removeItem(k)
+      localStorage.setItem(FLAG, '1')
+      setLocalDoneToday({})
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const markPendenciaDoneLocal = (item: any) => {
+    setLocalDoneToday(prev => ({
+      ...prev,
+      [item.id]: {
+        done: true,
+        title: item.title,
+        cor: item.cor ?? null,
+        duracao_min: item.estimated_minutes ?? null,
+        horario_sugerido: item.horario_sugerido ?? null,
+        origem: item.origem,
+        modal_type: item.modal_type,
+        target: item.target ?? {},
+      },
+    }))
+  }
+  // REABRIR: flipa done pra false mantendo a metadata. Card volta pra
+  // estado pendente sem risco de sumir do dayPlan.
+  const markPendenciaPendingLocal = (pendenciaId: string) => {
+    setLocalDoneToday(prev => {
+      const existing = prev[pendenciaId]
+      if (!existing) return prev
+      return { ...prev, [pendenciaId]: { ...existing, done: false } }
+    })
+  }
+  // Remove o snapshot completamente — usado quando o user clica ✕ pra
+  // tirar do plano do dia.
+  const removePendenciaSnapshotLocal = (pendenciaId: string) => {
+    setLocalDoneToday(prev => {
+      const next = { ...prev }
+      delete next[pendenciaId]
+      return next
+    })
+  }
+  // Ref pro item pendência clicado em FINALIZAR. Quando o modal salva
+  // (Mind ou Health não-atividade), o callback onSessionLink usa essa ref
+  // pra marcar como done local. Necessário porque o modal não conhece o
+  // item original — só sabe o record_id criado.
+  const pendingFinalizeItemRef = useRef<any>(null)
+  // Guard pro useEffect de ?finalize=ID (banner global). Sem isso, re-fire
+  // do effect dispara mutation duas vezes. Declarado AQUI no topo pra manter
+  // ordem estável de hooks (era no meio do componente, podia quebrar regra).
+  const lastFinalizeIdRef = useRef<string | null>(null)
   // Modal aberto a partir de pendência (Mind ou Health register). null =
   // fechado. Após fechar com save, invalida pendências → some da lista.
   type PendenciaPrefill = {
@@ -155,6 +336,12 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
   const linkMindToRecord = useLinkMindSessionToRecord()
   const linkHealthItemToRecord = useLinkHealthItemSessionToRecord()
   const createHealthRecord = useCreateHealthRecord()
+  const updateHealthRecord = useUpdateHealthRecord()
+  // Hooks de ritual no escopo do parent — usados pelo banner global pra
+  // disparar FINALIZE de ritual via ?finalize=ritual:cadencia (sem precisar
+  // que o user clique no card). Mesma lógica do RitualPlannedRow.doFinalize.
+  const parentCreateRitualSession = useCreateRitualSession()
+  const parentLinkRitualToRecord = useLinkRitualClusterToRecord()
   const invalidateDiaPendencias = useInvalidateDiaPendencias()
   const [showPlanner, setShowPlanner] = useState(false)
   const [plannerRange, setPlannerRange] = useState<DateRange>(() => computeRange('7d'))
@@ -445,58 +632,25 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
         }
       }
 
-      // DEBUG temporário — logar decisões do filtro pra diagnosticar por que
-      // quests de múltiplos entregáveis estão passando. Remove depois.
-      // eslint-disable-next-line no-console
-      console.log('[planner-filter] projectActiveInfo:', Array.from(projectActiveInfo.entries()).map(([pid, info]) => ({
-        pid,
-        activeId: info.activeId,
-        delivsLoaded: (delivsByProject[pid] || []).length,
-        openDelivs: (delivsByProject[pid] || []).filter(d => !d.done).length,
-      })))
-      // eslint-disable-next-line no-console
-      console.log('[planner-filter] quests pool por projeto:',
-        Object.entries(
-          quests
-            .filter(q => q.project_id && q.status !== 'done' && q.status !== 'cancelled')
-            .reduce((acc: Record<string, any[]>, q) => {
-              const pid = q.project_id as string
-              acc[pid] = acc[pid] || []
-              acc[pid].push({ qid: q.id, deliv: q.deliverable_id, status: q.status, title: q.title?.slice(0, 30) })
-              return acc
-            }, {})
-        )
-      )
-
-      // DEBUG: contadores pra ver onde o filtro "dispara vs esconde"
-      let counters = { total: 0, byProjectNull: 0, byStatusDone: 0, byRange: 0, byPriority: 0, byNoInfo: 0, byMismatchDeliv: 0, passed: 0 }
-      const passedSamples: any[] = []
       const filteredQuests = quests.filter(q => {
-        counters.total++
-        if (!q.project_id) { counters.byProjectNull++; return false }
-        if (q.status === 'done' || q.status === 'cancelled') { counters.byStatusDone++; return false }
+        if (!q.project_id) return false
+        if (q.status === 'done' || q.status === 'cancelled') return false
         // Quest não tem deadline própria por design — herda do entregável
         // (e, em fallback, do projeto). Se nenhum dos dois tiver deadline,
         // cai no checkbox "incluir sem data" via withinRange.
         const effectiveDl = effectiveQuestDeadline(q, delivsByProject, projects)
-        if (!withinRange(effectiveDl)) { counters.byRange++; return false }
-        if (!priorityOK(q.priority)) { counters.byPriority++; return false }
+        if (!withinRange(effectiveDl)) return false
+        if (!priorityOK(q.priority)) return false
         const info = projectActiveInfo.get(q.project_id)
-        if (!info) { counters.byNoInfo++; return false }
+        if (!info) return false
         // Bypass do filtro "só entregável ativo" quando o user liga
         // "mostrar todos os entregáveis" — útil pra puxar quests de
         // entregáveis futuros do mesmo projeto.
         if (!plannerShowAllDeliverables && q.deliverable_id !== info.activeId) {
-          counters.byMismatchDeliv++; return false
+          return false
         }
-        counters.passed++
-        if (passedSamples.length < 30) passedSamples.push({ project: q.project_id, deliv: q.deliverable_id, title: q.title?.slice(0, 40) })
         return true
       })
-      // eslint-disable-next-line no-console
-      console.log('[planner-filter] counters:', counters)
-      // eslint-disable-next-line no-console
-      console.log('[planner-filter] passed sample (até 30):', passedSamples)
 
       items.push(...filteredQuests
         .map(q => {
@@ -542,6 +696,10 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
     // origem pra respeitar os chips do planner (mind vs health).
     if (plannerTypes.has('mind') || plannerTypes.has('health')) {
       for (const p of diaPendencias) {
+        // Done pendencias ficam fora do pool do planner — não faz sentido
+        // oferecer pra planejar algo já registrado. Continuam visíveis no
+        // dayPlan (allItems/fullPool) com strikethrough.
+        if (p.done) continue
         if (p.origem === 'mind' && !plannerTypes.has('mind')) continue
         if (p.origem === 'health_item' && !plannerTypes.has('health')) continue
         items.push({
@@ -555,6 +713,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
           cor: p.cor,
           horario_sugerido: p.horario_sugerido,
           done: false,
+          existing_record_id: (p as any).existing_record_id ?? null,
         })
       }
     }
@@ -602,8 +761,235 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       .catch(err => reportApiError('ExecPage', err))
   }
 
+  // Lógica de finalizar pendência (Mind/Health): chamada do card (via
+  // onFinalize) E do banner global (via query param ?finalize=ID).
+  // notifyAfterFinalize garante que App.tsx faça refresh do activeSession
+  // (banner global fechado quando cluster é linkado a record).
+  function notifyAfterFinalize() {
+    onSessionUpdate()
+    tabSync.emit('session')
+  }
+  function executePendencia(item: any, cluster: DiaSessionClusterLike) {
+    const durMin = Math.max(1, Math.floor((cluster.elapsed_seconds || 0) / 60))
+    const prefill = cluster.started_at
+      ? {
+          started_at: cluster.started_at,
+          ended_at: cluster.ended_at,
+          duracao_min: durMin,
+        }
+      : undefined
+
+    // Health · atividade_tipo: auto-register. Upsert se existing_record_id.
+    if (
+      item.modal_type === 'health_register' &&
+      item.target?.domain_template === 'atividade_tipo' &&
+      prefill
+    ) {
+      const t = item.target ?? {}
+      const startDate = new Date(prefill.started_at)
+      const dataIso = isoToLocalYmd(startDate)
+      const horario = `${String(startDate.getHours()).padStart(2, '0')}:${String(startDate.getMinutes()).padStart(2, '0')}`
+      const existingId = item.existing_record_id ?? null
+      const afterRecord = (recordId: number) => {
+        if (recordId && t.item_id) {
+          linkHealthItemToRecord.mutate(
+            { itemId: t.item_id, recordId },
+            { onSuccess: notifyAfterFinalize },
+          )
+        } else {
+          notifyAfterFinalize()
+        }
+        markPendenciaDoneLocal(item)
+        invalidateDiaPendencias()
+      }
+      if (existingId) {
+        updateHealthRecord.mutate(
+          { id: existingId, patch: { payload: { duracao_min: prefill.duracao_min } } },
+          {
+            onSuccess: () => afterRecord(existingId),
+            onError: (err) => reportApiError('ExecPage.autoFinalize.update', err),
+          },
+        )
+      } else {
+        createHealthRecord.mutate(
+          {
+            domainSlug: t.domain_slug,
+            body: {
+              item_id: t.item_id,
+              data: dataIso,
+              horario,
+              payload: { duracao_min: prefill.duracao_min },
+            },
+          },
+          {
+            onSuccess: (created: any) => { if (created?.id) afterRecord(created.id) },
+            onError: (err) => reportApiError('ExecPage.autoFinalize.create', err),
+          },
+        )
+      }
+      return
+    }
+
+    // Mind com record existente: pula modal, só relinka.
+    if (item.modal_type === 'mind' && item.existing_record_id) {
+      linkMindToRecord.mutate(item.existing_record_id, {
+        onSuccess: () => {
+          markPendenciaDoneLocal(item)
+          invalidateDia()
+          notifyAfterFinalize()
+        },
+        onError: (err) => reportApiError('ExecPage.mindRelink', err),
+      })
+      return
+    }
+
+    // Modal aberto (Mind primeira vez ou Health não-atividade).
+    pendingFinalizeItemRef.current = item
+    if (item.modal_type === 'mind') {
+      setOpenPendenciaModal({ type: 'mind', prefill })
+    } else if (item.modal_type === 'health_register') {
+      const t = item.target ?? {}
+      setOpenPendenciaModal({
+        type: 'health_register',
+        domain: {
+          slug: t.domain_slug,
+          nome: t.domain_nome,
+          template: t.domain_template,
+          cor: t.domain_cor,
+        },
+        cor: t.domain_cor ?? '#7fb8a8',
+        item_id: t.item_id,
+        prefill,
+      })
+    }
+  }
+
   const filteredItems = getFilteredItems()
   const plannedItemIds = [...dayPlan.morning, ...dayPlan.afternoon, ...dayPlan.evening]
+  // Merge pendências do backend com snapshot local de "done hoje". IDs
+  // marcados como done localmente que NÃO vieram do backend (por race,
+  // timezone, ou bug) entram como ghosts struck-through. Garante que o
+  // card NUNCA some do dayPlan depois de finalizar.
+  // Pendências enriquecidas: snapshot local SEMPRE manda no `done` (true ou
+  // false) pra evitar race condition com backend stale. Itens só-locais
+  // (ghost) garantem que o card nunca suma do dayPlan, mesmo depois de
+  // REABRIR enquanto o refetch tá em andamento OU se backend não retornar
+  // o item por algum motivo.
+  const mergedPendencias: import('../types').DiaPendencia[] = useMemo(() => {
+    const backendIds = new Set(diaPendencias.map(p => p.pendencia_id))
+    return [
+      ...diaPendencias.map(p => {
+        const snap = localDoneToday[p.pendencia_id]
+        // Snapshot existe → snapshot manda. Caso contrário usa o backend.
+        const done = snap ? snap.done : p.done
+        return { ...p, done }
+      }),
+      ...Object.entries(localDoneToday)
+        .filter(([id]) => !backendIds.has(id))
+        .map(([id, snap]) => ({
+          origem: snap.origem,
+          pendencia_id: id,
+          titulo: snap.title,
+          duracao_min: snap.duracao_min,
+          horario_sugerido: snap.horario_sugerido,
+          cor: snap.cor,
+          modal_type: snap.modal_type,
+          target: snap.target,
+          done: snap.done,
+          existing_record_id: null,
+        })),
+    ]
+  }, [diaPendencias, localDoneToday])
+
+  // Banner global passa ?finalize=ID quando user clica FINALIZAR.
+  // Detecta, busca o cluster, e dispara o finalize correspondente:
+  //   - mind / health_item:N → executePendencia (auto-register/upsert)
+  //   - ritual:cadencia → cria build_ritual_session + linka cluster
+  // Tem que vir DEPOIS de `mergedPendencias` pra evitar TDZ.
+  // (ref `lastFinalizeIdRef` declarada no topo do componente pra manter
+  // ordem de hooks estável.)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const finalizeId = params.get('finalize')
+    if (!finalizeId) return
+    // Guard: previne re-fire do mesmo finalizeId quando re-renders
+    // disparam o useEffect entre `navigate(replace)` e a próxima leitura
+    // limpa de location.search. Sem isso, mutations podem disparar duas
+    // vezes e travar a UI (createRitualSession idempotente é raro).
+    if (lastFinalizeIdRef.current === finalizeId) return
+    lastFinalizeIdRef.current = finalizeId
+    navigate('/exec', { replace: true })
+
+    // Ritual: id no formato "ritual:{cadencia}". Não está em mergedPendencias
+    // (que só tem mind/health). Resolve via pool de rituals e dispara o
+    // mesmo fluxo do card (pause → create session → link cluster).
+    if (finalizeId.startsWith('ritual:')) {
+      const cadencia = finalizeId.slice('ritual:'.length)
+      if (!cadencia) return
+      const runFinalize = (cluster: any) => {
+        if (!cluster?.started_at) return
+        const elapsedMin = Math.max(1, Math.floor((cluster.elapsed_seconds || 0) / 60))
+        const startDate = new Date(cluster.started_at as string)
+        const dataExec = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`
+        parentCreateRitualSession.mutate(
+          { cadencia: cadencia as any, body: { data_executado: dataExec, duracao_min: elapsedMin } },
+          {
+            onSuccess: (created: any) => {
+              if (created?.id) {
+                parentLinkRitualToRecord.mutate(
+                  { cadencia, recordId: created.id },
+                  { onSuccess: () => { onSessionUpdate(); tabSync.emit('session') } },
+                )
+              } else {
+                onSessionUpdate()
+                tabSync.emit('session')
+              }
+              invalidateDia()
+            },
+            onError: (err) => reportApiError('ExecPage.bannerFinalizeRitual', err),
+          },
+        )
+      }
+      // Pausa se rodando, depois pega o cluster pausado.
+      fetchRitualCluster(cadencia)
+        .then(c => {
+          if (c.is_running) {
+            return pauseRitualCluster(cadencia).then(paused => runFinalize(paused))
+          }
+          runFinalize(c)
+        })
+        .catch(err => reportApiError('ExecPage.bannerFinalizeRitual.fetch', err))
+      return
+    }
+
+    // Mind / Health: rota pelo executePendencia.
+    const item = mergedPendencias.find(p => p.pendencia_id === finalizeId)
+    if (!item) return
+    const itemForExec = {
+      id: item.pendencia_id,
+      title: item.titulo,
+      estimated_minutes: item.duracao_min ?? 0,
+      isPendencia: true,
+      origem: item.origem,
+      modal_type: item.modal_type,
+      target: item.target,
+      cor: item.cor,
+      horario_sugerido: item.horario_sugerido,
+      done: item.done,
+      existing_record_id: item.existing_record_id,
+    }
+    const clusterPromise = item.origem === 'mind'
+      ? fetchMindSession()
+      : item.origem === 'health_item'
+        ? fetchHealthItemSession((item.target as any).item_id)
+        : null
+    if (!clusterPromise) return
+    clusterPromise
+      .then(cluster => executePendencia(itemForExec, cluster as any))
+      .catch(err => reportApiError('ExecPage.bannerFinalize', err))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, mergedPendencias.length])
+
   // Pool completo (ignora filtros do planner) pra contar tudo que está no dia.
   // Pendências (Mind + health_items diários) entram como cards com flag
   // `isPendencia` — arrastáveis igual quests/tasks/routines.
@@ -611,7 +997,17 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
     ...quests.filter(q => q.status !== 'done'),
     ...allTasks.filter(t => !t.done).map(t => ({ ...t, isTask: true })),
     ...routines.map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })),
-    ...diaPendencias.map(p => ({
+    // Rituais (Build): id composto "ritual:{cadencia}" pra não colidir com
+    // quests. Sem isso aqui, contadores do banner ignoram rituais planejados
+    // e o plannedItems não resolve o id quando linkado no dayPlan.
+    ...rituals.filter(r => r.ativo).map(r => ({
+      ...r,
+      id: `ritual:${r.cadencia}`,
+      title: r.nome || `Ritual ${r.cadencia}`,
+      isRitual: true,
+      done: r.ultima_execucao ? r.ultima_execucao.slice(0, 10) === todayIso : false,
+    })),
+    ...mergedPendencias.map(p => ({
       id: p.pendencia_id,
       title: p.titulo,
       // Mapeia campos pra interface comum do pool — itemDurationMin lê
@@ -623,8 +1019,8 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       target: p.target,
       cor: p.cor,
       horario_sugerido: p.horario_sugerido,
-      // done sempre false aqui — se foi feita, backend já tira da lista
-      done: false,
+      done: p.done,
+      existing_record_id: p.existing_record_id,
     })),
   ]
   const plannedItems = fullPool.filter(item => plannedItemIds.includes(item.id))
@@ -686,7 +1082,10 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
         if (rit) return { kind: 'ritual' as const, rit }
       }
       if (id === 'mind' || id.startsWith('health_item:')) {
-        const p = diaPendencias.find(x => x.pendencia_id === id)
+        // Usa mergedPendencias pra cobrir ghosts (items só no snapshot
+        // local) — sem isso a auto-migração não considera done items
+        // ghost como done e tenta migrar pro próximo turno.
+        const p = mergedPendencias.find(x => x.pendencia_id === id)
         if (p) return { kind: 'pendencia' as const, p }
       }
       return null
@@ -699,9 +1098,9 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       if (it.kind === 'routine') return doneRoutineIds.has(id)
       // Ritual: backend marca ultima_execucao quando concluído no dia.
       if (it.kind === 'ritual') return it.rit.ultima_execucao?.slice(0, 10) === todayIso
-      // Pendência só aparece em diaPendencias enquanto está pendente — backend
-      // filtra após registro. Logo, presença em findItem implica não-feita.
-      return false
+      // Pendência: mergedPendencias.done já considera snapshot local +
+      // backend, então isso cobre todos os casos de done (incluindo ghost).
+      return it.p.done
     }
 
     setDayPlan(prev => {
@@ -759,7 +1158,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
     // Confiamos em: (a) tick de nowMin a cada minuto, (b) mudanças nas arrays
     // de dados — qualquer um cobre o caso. itemIsActive usa o closure atual de
     // activeSession, que é refrescado em todo render mesmo sem estar nos deps.
-  }, [nowMin, dayPeriods, quests, allTasks, routines, rituals, diaPendencias, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded])
+  }, [nowMin, dayPeriods, quests, allTasks, routines, rituals, mergedPendencias, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded])
 
   const productiveMinRemaining = (() => {
     let blockRanges: BlockRange[] = []
@@ -822,8 +1221,10 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       headerRightControls={
         <>
           <button
+            type="button"
             onClick={() => setEditingPeriods(true)}
             title={`Ajustar períodos do dia · Manhã ${minutesToHHMM(dayPeriods.morningStart)} · Tarde ${minutesToHHMM(dayPeriods.afternoonStart)} · Noite ${minutesToHHMM(dayPeriods.eveningStart)}`}
+            aria-label="Ajustar horários dos períodos do dia"
             style={{
               background: 'rgba(8, 12, 18, 0.55)',
               border: '1px solid var(--color-border)',
@@ -892,6 +1293,10 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
           Substitui o antigo `RitualNextCard urgentOnly` que era só link.
           Some quando não há nada pendente. */}
       <DiaPendenciasBlock />
+
+      {/* COMPROMISSOS HOJE — horas improdutivas planejadas (corte cabelo,
+          terapia, etc). Read-only, sem play/pause. Click abre edit modal. */}
+      <CompromissosTodayPanel dateIso={todayIso} />
 
       {overdueTasks.length > 0 && (
         <OverdueTasksBanner
@@ -1048,7 +1453,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       </section>
 
       {/* ─── Períodos ─── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-10)' }}>
         {(['morning', 'afternoon', 'evening'] as const).map(period => (
           <PeriodSection
             key={period}
@@ -1081,22 +1486,17 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
                 ...prev,
                 [period]: prev[period].filter(id => id !== itemId),
               }))
-            }}
-            onMoveToPeriod={(itemId, target) => {
-              // Same logic do onDrop entre períodos — remove de qualquer
-              // turno e adiciona ao target. Permite mover sem drag em touch.
-              setDayPlan(prev => {
-                if (prev[target].includes(itemId)) return prev
-                return {
-                  morning:   prev.morning.filter(id => id !== itemId),
-                  afternoon: prev.afternoon.filter(id => id !== itemId),
-                  evening:   prev.evening.filter(id => id !== itemId),
-                  [target]: [...prev[target].filter(id => id !== itemId), itemId],
-                } as any
-              })
+              // Se for uma pendência (mind/health_item), também remove o
+              // snapshot local — senão o card ghost continuaria aparecendo
+              // mesmo depois de tirar do plano.
+              if (itemId === 'mind' || itemId.startsWith('health_item:')) {
+                removePendenciaSnapshotLocal(itemId)
+              }
             }}
             onOpenPlanner={() => setShowPlanner(true)}
-            diaPendencias={diaPendencias}
+            diaPendencias={mergedPendencias}
+            onMarkPendenciaPendingLocal={markPendenciaPendingLocal}
+            onInvalidateDia={invalidateDia}
             onOpenQuest={(q) => {
               // Clique numa quest (subtask) → abre o PROJETO PAI em
               // /areas/{slug}. A AreaDetailView só mostra detalhe pra quests
@@ -1105,75 +1505,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
               onSelectProject(q.project_id)
               navigate(`/areas/${q.area_slug}`)
             }}
-            onExecutePendencia={(item, cluster) => {
-              // Carrega prefill da sessão cronometrada — duração média + horários.
-              const durMin = Math.max(1, Math.floor((cluster.elapsed_seconds || 0) / 60))
-              const prefill = cluster.started_at
-                ? {
-                    started_at: cluster.started_at,
-                    ended_at: cluster.ended_at,
-                    duracao_min: durMin,
-                  }
-                : undefined
-
-              // Health · atividade_tipo (Exercício): user só clica FINALIZAR
-              // e pronto — sistema já sabe quando começou/terminou. Auto-cria
-              // record sem modal e linka o cluster. Notas podem ser adicionadas
-              // depois editando o record direto na página do domínio.
-              if (
-                item.modal_type === 'health_register' &&
-                item.target?.domain_template === 'atividade_tipo' &&
-                prefill
-              ) {
-                const t = item.target ?? {}
-                const startDate = new Date(prefill.started_at)
-                const dataIso = isoToLocalYmd(prefill.started_at) ||
-                  `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`
-                const horario = `${String(startDate.getHours()).padStart(2, '0')}:${String(startDate.getMinutes()).padStart(2, '0')}`
-                createHealthRecord.mutate(
-                  {
-                    domainSlug: t.domain_slug,
-                    body: {
-                      item_id: t.item_id,
-                      data: dataIso,
-                      horario,
-                      payload: { duracao_min: prefill.duracao_min },
-                    },
-                  },
-                  {
-                    onSuccess: (created: any) => {
-                      if (created?.id && t.item_id) {
-                        linkHealthItemToRecord.mutate({
-                          itemId: t.item_id,
-                          recordId: created.id,
-                        })
-                      }
-                      invalidateDiaPendencias()
-                    },
-                    onError: (err) => reportApiError('ExecPage.autoFinalize', err),
-                  },
-                )
-                return
-              }
-
-              if (item.modal_type === 'mind') {
-                setOpenPendenciaModal({ type: 'mind', prefill })
-              } else if (item.modal_type === 'health_register') {
-                const t = item.target ?? {}
-                setOpenPendenciaModal({
-                  type: 'health_register',
-                  domain: {
-                    slug: t.domain_slug,
-                    nome: t.domain_nome,
-                    template: t.domain_template,
-                    cor: t.domain_cor,
-                  },
-                  cor: t.domain_cor ?? '#7fb8a8',
-                  item_id: t.item_id,
-                  prefill,
-                })
-              }
-            }}
+            onExecutePendencia={executePendencia}
           />
         ))}
       </div>
@@ -1215,12 +1547,14 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
           projects={projects}
           quests={quests}
           routines={routines}
+          rituals={rituals}
           allTasks={allTasks}
           delivsByProject={delivsByProject}
           dayPeriods={dayPeriods}
           doneRoutineIds={doneRoutineIds}
           nowMin={nowMin}
-          diaPendencias={diaPendencias}
+          todayIso={todayIso}
+          diaPendencias={mergedPendencias}
           onClose={() => setShowPlanner(false)}
         />,
         document.body,
@@ -1233,7 +1567,13 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
         <MindRegisterModal
           prefillFromSession={openPendenciaModal.prefill}
           onSessionLink={(recordId) => {
-            linkMindToRecord.mutate(recordId)
+            linkMindToRecord.mutate(recordId, { onSuccess: notifyAfterFinalize })
+            // Marca como done LOCAL (snapshot persiste no localStorage) —
+            // card nunca some do dayPlan mesmo se backend não devolver done.
+            if (pendingFinalizeItemRef.current) {
+              markPendenciaDoneLocal(pendingFinalizeItemRef.current)
+              pendingFinalizeItemRef.current = null
+            }
           }}
           onClose={() => {
             setOpenPendenciaModal(null)
@@ -1248,12 +1588,19 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
           preselectedItemId={openPendenciaModal.item_id}
           prefillFromSession={openPendenciaModal.prefill}
           onSessionLink={(recordId) => {
-            linkHealthItemToRecord.mutate({
-              itemId: openPendenciaModal.type === 'health_register'
-                ? openPendenciaModal.item_id
-                : 0,
-              recordId,
-            })
+            linkHealthItemToRecord.mutate(
+              {
+                itemId: openPendenciaModal.type === 'health_register'
+                  ? openPendenciaModal.item_id
+                  : 0,
+                recordId,
+              },
+              { onSuccess: notifyAfterFinalize },
+            )
+            if (pendingFinalizeItemRef.current) {
+              markPendenciaDoneLocal(pendingFinalizeItemRef.current)
+              pendingFinalizeItemRef.current = null
+            }
           }}
           onClose={() => {
             setOpenPendenciaModal(null)
@@ -1270,8 +1617,8 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
 function PeriodSection({
   period, dayPeriods, dayPlan, projects, quests, allTasks, routines, rituals, doneRoutineIds,
   areas, activeSession, delivsByProject, todayIsoForTasks, nowMin, migratedFrom,
-  onSessionUpdate, onRemoveFromPlan, onMoveToPeriod, onOpenPlanner, onOpenQuest,
-  onExecutePendencia, diaPendencias,
+  onSessionUpdate, onRemoveFromPlan, onOpenPlanner, onOpenQuest,
+  onExecutePendencia, diaPendencias, onMarkPendenciaPendingLocal, onInvalidateDia,
 }: {
   period: 'morning' | 'afternoon' | 'evening'
   rituals: BuildRitual[]
@@ -1293,8 +1640,6 @@ function PeriodSection({
   migratedFrom: Record<string, 'morning' | 'afternoon' | 'evening'>
   onSessionUpdate: () => void
   onRemoveFromPlan: (itemId: string) => void
-  /** Fallback touch pra drag-and-drop. */
-  onMoveToPeriod: (itemId: string, target: 'morning' | 'afternoon' | 'evening') => void
   onOpenPlanner: () => void
   onOpenQuest: (q: Quest) => void
   /** Click "FINALIZAR" em planned item de pendência (Mind / health_item)
@@ -1304,6 +1649,13 @@ function PeriodSection({
   /** Pendências do dia — necessárias pra resolver IDs do dayPlan ("mind",
    *  "health_item:X") no allItems local. */
   diaPendencias: import('../types').DiaPendencia[]
+  /** Flipa snapshot local pra `done=false` pra uma pendência. Mantém a
+   *  entry no localStorage (preserva metadata pro ghost) mas marca como
+   *  pendente. Chamado no doReopen pra que o card volte ao estado ativo. */
+  onMarkPendenciaPendingLocal?: (pendenciaId: string) => void
+  /** Invalida o cache de pendências do /Dia (queryKey diaKeys.all). Usado
+   *  no doReopen pra forçar refetch imediato e remover stale done=true. */
+  onInvalidateDia?: () => void
 }) {
   const periodLabelPt: Record<'morning' | 'afternoon' | 'evening', string> = {
     morning: 'manhã', afternoon: 'tarde', evening: 'noite',
@@ -1345,12 +1697,15 @@ function PeriodSection({
     ...allTasks.map(t => ({ ...t, isTask: true })),
     // Rituais alocados pelos períodos. ID composto pra não colidir com quests
     // (cadencia é single-instance, não tem UUID por instância).
+    // `todayIsoForTasks` é o YYYY-MM-DD local de hoje (vem do parent ExecView
+    // como prop) — usar `todayIso` aqui dá ReferenceError porque PeriodSection
+    // está fora do escopo do parent.
     ...rituals.filter(r => r.ativo).map(r => ({
       ...r,
       id: `ritual:${r.cadencia}`,
       title: r.nome || `Ritual ${r.cadencia}`,
       isRitual: true,
-      done: r.ultima_execucao ? r.ultima_execucao.slice(0, 10) === todayIso : false,
+      done: r.ultima_execucao ? r.ultima_execucao.slice(0, 10) === todayIsoForTasks : false,
     })),
     // Pendências (Mind / health_items diários) — id = pendencia_id no
     // dayPlan. Sem isso aqui, item arrastado pro bloco some da view.
@@ -1364,7 +1719,8 @@ function PeriodSection({
       target: p.target,
       cor: p.cor,
       horario_sugerido: p.horario_sugerido,
-      done: false,
+      done: p.done,
+      existing_record_id: p.existing_record_id,
     })),
   ]
   // Renderiza NA ORDEM do dayPlan (e não na ordem do pool) pra respeitar a
@@ -1442,9 +1798,13 @@ function PeriodSection({
                 color: 'var(--color-warning)',
                 letterSpacing: '0.18em',
                 textTransform: 'uppercase',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
               }}
             >
-              ⚠ {undefinedCount} SEM TEMPO
+              <AlertTriangle size={10} strokeWidth={2} />
+              {undefinedCount} SEM TEMPO
             </span>
           )}
           <div style={{
@@ -1476,8 +1836,8 @@ function PeriodSection({
                   onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
                   onFinalize={onExecutePendencia}
                   onSessionUpdate={onSessionUpdate}
-                  currentPeriod={period}
-                  onMoveToPeriod={(target) => onMoveToPeriod(item.id, target)}
+                  onMarkPendingLocal={onMarkPendenciaPendingLocal}
+                  onInvalidateDia={onInvalidateDia}
                 />
               )
             }
@@ -1491,8 +1851,6 @@ function PeriodSection({
                   item={item}
                   onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
                   onSessionUpdate={onSessionUpdate}
-                  currentPeriod={period}
-                  onMoveToPeriod={(target) => onMoveToPeriod(item.id, target)}
                 />
               )
             }
@@ -1515,8 +1873,6 @@ function PeriodSection({
                 activeSession={activeSession}
                 onSessionUpdate={onSessionUpdate}
                 onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
-                currentPeriod={period}
-                onMoveToPeriod={(target) => onMoveToPeriod(item.id, target)}
                 target={todayIsoForTasks}
                 parentTitle={parentTitle}
                 deliverableTitle={deliverableTitle}
@@ -1558,7 +1914,7 @@ function PeriodSection({
           }}
         >
           <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 6, letterSpacing: 0 }}>//</span>
-          SLOT VAZIO · TAP TO PLAN
+          SLOT VAZIO · CLIQUE PARA PLANEJAR
         </button>
       )}
     </section>
@@ -1575,10 +1931,11 @@ function PlannerDrawer({
   plannerShowAllDeliverables, setPlannerShowAllDeliverables,
   plannerPriorities, setPlannerPriorities,
   draggedItem, setDraggedItem,
-  areas, projects, quests, routines, allTasks, doneRoutineIds,
+  areas, projects, quests, routines, rituals, allTasks, doneRoutineIds,
   delivsByProject,
   dayPeriods,
   nowMin,
+  todayIso,
   diaPendencias,
   onClose,
 }: {
@@ -1601,6 +1958,7 @@ function PlannerDrawer({
   projects: Project[]
   quests: Quest[]
   routines: Routine[]
+  rituals: BuildRitual[]
   allTasks: Task[]
   doneRoutineIds: Set<string>
   delivsByProject: Record<string, Deliverable[]>
@@ -1608,12 +1966,19 @@ function PlannerDrawer({
   /** Minutos desde meia-noite local. Usado pra calcular janela viva
    *  do período (mesma matemática da PeriodSection no Dia). */
   nowMin: number
+  /** Data de hoje em formato YYYY-MM-DD local. Usado pra computar `done`
+   *  de rituais (ultima_execucao === todayIso). */
+  todayIso: string
   /** Pendências do dia (Mind + health_items diários) — passadas pelo parent
    *  pra garantir lookup correto quando pendência tá em dayPlan. */
   diaPendencias: import('../types').DiaPendencia[]
   onClose: () => void
 }) {
   const [searchQuery, setSearchQuery] = useState('')
+  // Estado React do foco do search input — usado pra estilizar a borda
+  // do wrapper (ring ice). Inline onFocusCapture/onBlurCapture sozinhos
+  // perdiam o estado em re-renders. Com state, fica robusto a teclado.
+  const [searchFocused, setSearchFocused] = useState(false)
 
   // Filtro textual: bate em título da quest/task/routine, no projeto pai
   // (quando é quest) e no entregável pai. Case + accent insensitive.
@@ -1646,6 +2011,15 @@ function PlannerDrawer({
     dayPlan.afternoon.includes(draggedItem.id) ||
     dayPlan.evening.includes(draggedItem.id)
   )
+  // Flash visual transitório quando user solta item num período. State é
+  // o nome do período que recebeu o último drop; reset em 400ms via timer.
+  // Sem isso, drop "sumia" sem feedback, parecendo que não pegou.
+  const [flashPeriod, setFlashPeriod] = useState<'morning' | 'afternoon' | 'evening' | null>(null)
+  useEffect(() => {
+    if (!flashPeriod) return
+    const t = setTimeout(() => setFlashPeriod(null), 400)
+    return () => clearTimeout(t)
+  }, [flashPeriod])
 
   const typeChips: { key: 'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'; label: string }[] = [
     { key: 'quest', label: 'Quests' },
@@ -1682,7 +2056,7 @@ function PlannerDrawer({
         borderTop: '1px solid var(--color-border-strong)',
         zIndex: 999, height: '92vh', maxHeight: '92vh',
         display: 'flex', flexDirection: 'column',
-        animation: 'dia-slide-up 0.32s var(--ease-emphasis)',
+        animation: 'dia-slide-up 0.18s var(--ease-emphasis)',
         boxShadow: 'var(--shadow-lg)',
         overflow: 'hidden',
       }}>
@@ -1745,25 +2119,23 @@ function PlannerDrawer({
             </div>
           </div>
 
-          {/* Busca: glass cyber. Ring ice ao focus. */}
+          {/* Busca: glass cyber. Ring ice ao focus (state-driven, robusto a
+              re-render e a navegação por teclado). */}
           <div
             style={{
               flex: '0 1 340px', minWidth: 200,
               display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
               background: 'rgba(8, 12, 18, 0.55)',
-              border: '1px solid var(--color-border)',
+              border: searchFocused
+                ? '1px solid rgba(143, 191, 211, 0.55)'
+                : '1px solid var(--color-border)',
+              boxShadow: searchFocused
+                ? '0 0 12px rgba(143, 191, 211, 0.20)'
+                : 'none',
               borderRadius: 0,
               clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
               padding: '7px 12px',
               transition: 'border-color var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
-            }}
-            onFocusCapture={e => {
-              e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.55)'
-              e.currentTarget.style.boxShadow = '0 0 12px rgba(143, 191, 211, 0.20)'
-            }}
-            onBlurCapture={e => {
-              e.currentTarget.style.borderColor = 'var(--color-border)'
-              e.currentTarget.style.boxShadow = 'none'
             }}
           >
             <Search size={13} strokeWidth={1.8} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
@@ -1774,6 +2146,8 @@ function PlannerDrawer({
               autoComplete="off"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               onKeyDown={e => { if (e.key === 'Escape') setSearchQuery('') }}
               placeholder="buscar quest, projeto ou entregável…"
               style={{
@@ -1784,8 +2158,10 @@ function PlannerDrawer({
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
                 title="Limpar busca"
+                aria-label="Limpar busca"
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
                   color: 'var(--color-text-muted)', padding: 2,
@@ -1869,6 +2245,7 @@ function PlannerDrawer({
               return (
                 <button
                   key={t.key}
+                  type="button"
                   onClick={e => setPlannerTypes(prev => {
                     // Shift+click: seleciona SÓ este (solo). Click normal: toggle.
                     if (e.shiftKey) return new Set([t.key])
@@ -1877,13 +2254,17 @@ function PlannerDrawer({
                     return next
                   })}
                   title={`${t.label} · shift+clique pra isolar`}
+                  aria-label={`Filtrar ${t.label}${active ? ' (ativo)' : ' (inativo)'} — shift+clique pra isolar`}
+                  aria-pressed={active}
                   style={{
                     background: active ? 'rgba(143, 191, 211, 0.10)' : 'rgba(8, 12, 18, 0.55)',
                     color: active ? 'var(--color-ice-light)' : 'var(--color-text-tertiary)',
                     border: `1px solid ${active ? 'rgba(143, 191, 211, 0.45)' : 'var(--color-border)'}`,
                     cursor: 'pointer',
                     fontFamily: 'var(--font-mono)',
-                    fontSize: 9, padding: '5px 10px',
+                    fontSize: 9,
+                    // WCAG: alvo de clique ~32px (mín 24).
+                    padding: '8px 12px', minHeight: 32,
                     letterSpacing: '0.18em', textTransform: 'uppercase',
                     fontWeight: 700,
                     borderRadius: 0,
@@ -1918,6 +2299,7 @@ function PlannerDrawer({
               return (
                 <button
                   key={p.key}
+                  type="button"
                   onClick={e => setPlannerPriorities(prev => {
                     if (e.shiftKey) return new Set([p.key])
                     const next = new Set(prev)
@@ -1925,19 +2307,29 @@ function PlannerDrawer({
                     return next
                   })}
                   title={`${p.label} · shift+clique pra isolar`}
+                  aria-label={`Filtrar prioridade ${p.label}${active ? ' (ativa)' : ' (inativa)'}`}
+                  aria-pressed={active}
+                  className="hq-chamfer-bl"
                   style={{
-                    background: 'transparent',
-                    color: active ? p.color : 'var(--color-text-muted)',
-                    border: 'none', cursor: 'pointer',
-                    fontSize: 10, padding: '3px 6px',
+                    // Match aos chips de TIPO (clipPath + border) pra consistência visual.
+                    background: active ? `${p.color}1a` : 'transparent',
+                    color: active ? p.color : 'var(--color-text-secondary)',
+                    border: active
+                      ? `1px solid ${p.color}`
+                      : '1px solid var(--color-divider)',
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    // WCAG: alvo de clique ~32px (era ~20). Padding mais generoso.
+                    padding: '6px 10px', minHeight: 32,
                     letterSpacing: '0.05em', textTransform: 'lowercase',
-                    fontWeight: active ? 700 : 400,
-                    transition: 'color 0.12s, opacity 0.12s',
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    opacity: active ? 1 : 0.5,
+                    fontWeight: active ? 700 : 500,
+                    transition: 'color 0.12s, opacity 0.12s, background 0.12s, border-color 0.12s',
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    // Inativo: 0.65 ao invés de 0.5 — melhora contraste no dark theme.
+                    opacity: active ? 1 : 0.65,
                   }}
-                  onMouseEnter={e => { if (!active) e.currentTarget.style.opacity = '0.85' }}
-                  onMouseLeave={e => { if (!active) e.currentTarget.style.opacity = '0.5' }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.opacity = '0.9' }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.opacity = '0.65' }}
                 >
                   <span style={{
                     width: 6, height: 6, borderRadius: '50%',
@@ -2098,6 +2490,16 @@ function PlannerDrawer({
                 ...quests,
                 ...routines.map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })),
                 ...allTasks.map(t => ({ ...t, isTask: true })),
+                // Rituais ativos — id composto "ritual:{cadencia}" pra match
+                // do dayPlan. Sem isso, ritual arrastado pro período do
+                // drawer some (não resolve o id, periodItems filtra ele fora).
+                ...rituals.filter(r => r.ativo).map(r => ({
+                  ...r,
+                  id: `ritual:${r.cadencia}`,
+                  title: r.nome || `Ritual ${r.cadencia}`,
+                  isRitual: true,
+                  done: r.ultima_execucao ? r.ultima_execucao.slice(0, 10) === todayIso : false,
+                })),
                 // Pendências (Mind/health_items) — precisam estar aqui pra
                 // serem resolvidas quando aparecem em dayPlan. Sem isso,
                 // arrastar pendência pra um período faz ela desaparecer
@@ -2112,7 +2514,8 @@ function PlannerDrawer({
                   target: p.target,
                   cor: p.cor,
                   horario_sugerido: p.horario_sugerido,
-                  done: false,
+                  done: p.done,
+                  existing_record_id: p.existing_record_id,
                 })),
               ]
               // Renderiza NA ORDEM do dayPlan pra refletir reordenação por drag.
@@ -2162,6 +2565,7 @@ function PlannerDrawer({
                     // Move o item pra esse período: remove de qualquer outro e
                     // adiciona aqui. Se já estava aqui, é no-op.
                     if (!draggedItem) return
+                    const wasAlreadyHere = dayPlan[period].includes(draggedItem.id)
                     setDayPlan(prev => {
                       if (prev[period].includes(draggedItem.id)) return prev
                       return {
@@ -2171,24 +2575,32 @@ function PlannerDrawer({
                         [period]: [...prev[period].filter((id: string) => id !== draggedItem.id), draggedItem.id],
                       } as any
                     })
+                    // Flash de confirmação só quando realmente movemos.
+                    if (!wasAlreadyHere) setFlashPeriod(period)
                   }}
                   style={{
-                    background: 'rgba(8, 12, 18, 0.55)',
-                    border: draggedItem && !dayPlan[period].includes(draggedItem.id)
-                      ? '1px dashed var(--color-ice)'
-                      : isExceeded
-                        ? '1px solid rgba(159, 18, 57, 0.55)'
-                        : '1px solid var(--color-ice-deep)',
+                    background: flashPeriod === period
+                      ? 'rgba(94, 122, 82, 0.18)'
+                      : 'rgba(8, 12, 18, 0.55)',
+                    border: flashPeriod === period
+                      ? '1px solid var(--color-success)'
+                      : draggedItem && !dayPlan[period].includes(draggedItem.id)
+                        ? '1px dashed var(--color-ice)'
+                        : isExceeded
+                          ? '1px solid rgba(159, 18, 57, 0.55)'
+                          : '1px solid var(--color-ice-deep)',
                     borderRadius: 0,
                     clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)',
                     padding: 'var(--space-4) var(--space-5)',
                     transition: 'border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
                     display: 'flex', flexDirection: 'column', flexShrink: 0,
-                    boxShadow: isExceeded
-                      ? '0 0 12px rgba(159, 18, 57, 0.20)'
-                      : draggedItem && !dayPlan[period].includes(draggedItem.id)
-                        ? '0 0 12px rgba(143, 191, 211, 0.25)'
-                        : 'none',
+                    boxShadow: flashPeriod === period
+                      ? '0 0 22px rgba(94, 122, 82, 0.50)'
+                      : isExceeded
+                        ? '0 0 12px rgba(159, 18, 57, 0.20)'
+                        : draggedItem && !dayPlan[period].includes(draggedItem.id)
+                          ? '0 0 12px rgba(143, 191, 211, 0.25)'
+                          : 'none',
                   }}
                 >
                   <div style={{
@@ -2330,16 +2742,17 @@ function PlannerDrawer({
                               ...prev,
                               [period]: prev[period].filter((id: string) => id !== item.id),
                             }))}
+                            aria-label="remover do plano"
                             style={{
                               background: 'none', border: 'none', cursor: 'pointer',
-                              color: 'var(--color-text-muted)', fontSize: 11,
+                              color: 'var(--color-text-muted)',
                               padding: '0 4px', transition: 'color 0.15s',
-                              fontFamily: 'var(--font-mono)',
+                              display: 'inline-flex', alignItems: 'center',
                             }}
                             onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-accent-light)')}
                             onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
                           >
-                            ✕
+                            <X size={12} strokeWidth={2} />
                           </button>
                         </div>
                       )})}
@@ -2416,6 +2829,7 @@ function PlannerDrawer({
               clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
               boxShadow: '0 0 14px rgba(143, 191, 211, 0.30)',
               transition: 'all var(--motion-fast) var(--ease-smooth)',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
             onMouseEnter={e => {
               e.currentTarget.style.background = 'rgba(143, 191, 211, 0.22)'
@@ -2428,7 +2842,7 @@ function PlannerDrawer({
               e.currentTarget.style.transform = 'translateY(0)'
             }}
           >
-            ✓ CONCLUIR
+            <Check size={11} strokeWidth={2.4} /> CONCLUIR
           </button>
         </div>
       </div>
@@ -2498,7 +2912,6 @@ function OverdueTasksBanner({ tasks, onToToday, onReschedule, onDiscard }: {
 
       <div style={{
         border: '1px solid rgba(159, 18, 57, 0.45)',
-        borderLeft: '2px solid var(--color-accent-primary)',
         background: 'rgba(159, 18, 57, 0.06)',
         clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)',
       }}>
@@ -2657,9 +3070,15 @@ function OverdueTasksBanner({ tasks, onToToday, onReschedule, onDiscard }: {
 function itemIsDone(item: any): boolean {
   if (item?.isTask) return !!item.done
   if (item?.isRoutine) return !!item.done
-  // Pendência só existe na lista enquanto não foi feita — backend filtra.
-  // Se ficou na lista, status = pendente.
-  if (item?.isPendencia) return false
+  // Ritual: `item.done` setado no allItems quando ultima_execucao===hoje.
+  // Sem essa checagem o card de ritual no PlannerDrawer não risca após
+  // FINALIZAR, ao contrário de quest/task/routine.
+  if (item?.isRitual) return !!item.done
+  // Pendência (mind/health): backend agora preserva o item no /Dia com
+  // `done=true` após FINALIZAR (não filtra mais), pra paridade com
+  // quest/task/rotina. Comentário antigo "só existe enquanto não foi feita"
+  // ficou desatualizado — checagem corrigida pra PlannerDrawer riscar.
+  if (item?.isPendencia) return !!item.done
   return item?.status === 'done'
 }
 
@@ -2669,60 +3088,6 @@ function itemIsDone(item: any): boolean {
  * o modal correto (MindRegisterModal ou RegisterModal de Health). Após
  * salvar, backend tira da lista de pendências e o item some.
  */
-// ─── MovePeriodChips ──────────────────────────────────────────────────────
-
-/**
- * Chips M/T/N pra mover item entre turnos no /dia. Touch fallback do
- * drag-and-drop (visível em devices com pointer coarse via CSS classe
- * `hq-move-period-chips`). Esconde o chip do período atual pra não poluir.
- *
- * Compartilhado entre PlannedItemRow (quest/task/routine) inline e
- * PendenciaPlannedRow + RitualPlannedRow. Sem chips → user pendência fica
- * preso ao turno onde foi alocado pela primeira vez (bug reportado).
- */
-function MovePeriodChips({
-  currentPeriod,
-  onMoveToPeriod,
-}: {
-  currentPeriod: 'morning' | 'afternoon' | 'evening'
-  onMoveToPeriod: (target: 'morning' | 'afternoon' | 'evening') => void
-}) {
-  return (
-    <div
-      className="hq-move-period-chips"
-      style={{
-        display: 'none',
-        gap: 4,
-        alignSelf: 'flex-start',
-      }}
-      data-current-period={currentPeriod}
-    >
-      {(['morning', 'afternoon', 'evening'] as const).map(p => {
-        if (p === currentPeriod) return null
-        const label = p === 'morning' ? 'M' : p === 'afternoon' ? 'T' : 'N'
-        return (
-          <button
-            key={p}
-            onClick={() => onMoveToPeriod(p)}
-            title={`mover pra ${p === 'morning' ? 'manhã' : p === 'afternoon' ? 'tarde' : 'noite'}`}
-            style={{
-              minWidth: 32, minHeight: 32,
-              background: 'rgba(8, 12, 18, 0.55)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-ice-light)',
-              cursor: 'pointer',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11, fontWeight: 700,
-              borderRadius: 0,
-              clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%)',
-            }}
-          >{label}</button>
-        )
-      })}
-    </div>
-  )
-}
-
 // ─── RitualPlannedRow ─────────────────────────────────────────────────────
 
 /**
@@ -2737,14 +3102,10 @@ function RitualPlannedRow({
   item,
   onRemoveFromPlan,
   onSessionUpdate,
-  currentPeriod,
-  onMoveToPeriod,
 }: {
   item: any
   onRemoveFromPlan: () => void
   onSessionUpdate: () => void
-  currentPeriod?: 'morning' | 'afternoon' | 'evening'
-  onMoveToPeriod?: (target: 'morning' | 'afternoon' | 'evening') => void
 }) {
   const cadencia: string = item.cadencia ?? ''
   const accent = '#dc2531' // Neomilitarism red
@@ -2758,8 +3119,6 @@ function RitualPlannedRow({
       ? `${Math.floor(durMin / 60)}H${durMin % 60 ? ` ${durMin % 60}M` : ''}`
       : `${durMin}M`)
     : '—'
-  const borderColor = 'rgba(143, 191, 211, 0.22)'
-
   const clusterQ = useRitualCluster(cadencia || null)
   const cluster: DiaSessionClusterLike = clusterQ.data ?? {
     has_active: false,
@@ -2769,17 +3128,37 @@ function RitualPlannedRow({
     elapsed_seconds: 0,
     rows: [],
   }
+  // isDone = build_ritual_session do dia existe E não há cluster ativo.
+  // Mesma semântica do backend dia.py pra Mind/Health: após REABRIR o cluster
+  // volta ativo (record permanece) → done vira false e PLAY/PAUSE/FINALIZE
+  // reaparecem. `item.done` vem do allItems do parent (ultima_execucao===hoje).
+  const isDone = !!item.done && !cluster.has_active
+  const borderColor = isDone
+    ? 'rgba(255, 255, 255, 0.06)'
+    : 'rgba(143, 191, 211, 0.22)'
 
   const startRitual = useStartRitualCluster()
   const pauseRitual = usePauseRitualCluster()
   const resumeRitual = useResumeRitualCluster()
-  const linkRitualToRecord = useLinkRitualClusterToRecord()
-  const createRitualSession = useCreateRitualSession()
   const invalidateDia = useInvalidateDiaPendencias()
+  // Reabrir ritual finalizado — apaga build_ritual_session do dia +
+  // descola cluster. Paridade com quest/task done.
+  const todayIsoLocal = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  const reopenRitual = useReopenRitualCluster(todayIsoLocal)
 
+  // Modal de finalização — substitui o auto-create-session que rodava no
+  // FINALIZE antes. Filosofia: ritual sem reflexão escrita é só checkmark.
+  // Modal força preencher notas + foco antes de criar a session (campos
+  // obrigatórios), e mostra os direcionamentos pra contextualizar.
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false)
+
+  const onStartError = (err: any) => handleSessionStartError('ritual', err, alertDialog)
   function doStart() {
     if (!cadencia) return
-    startRitual.mutate(cadencia, { onSuccess: () => onSessionUpdate() })
+    startRitual.mutate(cadencia, { onSuccess: () => onSessionUpdate(), onError: onStartError })
   }
   function doPause() {
     if (!cadencia) return
@@ -2787,36 +3166,36 @@ function RitualPlannedRow({
   }
   function doResume() {
     if (!cadencia) return
-    resumeRitual.mutate(cadencia, { onSuccess: () => onSessionUpdate() })
+    resumeRitual.mutate(cadencia, { onSuccess: () => onSessionUpdate(), onError: onStartError })
   }
-  function doFinalize() {
-    if (!cadencia || !cluster.started_at) return
-    const handleAfterPause = () => {
-      const elapsedMin = Math.max(1, Math.floor((cluster.elapsed_seconds || 0) / 60))
-      const startDate = new Date(cluster.started_at as string)
-      const dataExec = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`
-      createRitualSession.mutate(
-        {
-          cadencia: cadencia as any,
-          body: { data_executado: dataExec, duracao_min: elapsedMin },
-        },
-        {
-          onSuccess: (created: any) => {
-            if (created?.id) {
-              linkRitualToRecord.mutate({ cadencia, recordId: created.id })
-            }
-            invalidateDia()
-            onSessionUpdate()
-          },
-          onError: (err) => reportApiError('RitualPlannedRow.finalize', err),
-        },
-      )
-    }
+  function openFinalizeModal() {
+    if (!cadencia) return
+    // Pausa antes de abrir pra congelar o cronômetro durante o preenchimento
+    // do form. Se user cancelar, o cluster fica pausado e pode dar RESUME.
     if (cluster.is_running) {
-      pauseRitual.mutate(cadencia, { onSuccess: handleAfterPause })
+      pauseRitual.mutate(cadencia, { onSuccess: () => setShowFinalizeModal(true) })
     } else {
-      handleAfterPause()
+      setShowFinalizeModal(true)
     }
+  }
+  function doReopen() {
+    if (!cadencia) return
+    reopenRitual.mutate(cadencia, {
+      onSuccess: () => onSessionUpdate(),
+      onError: (err) => {
+        reportApiError('RitualPlannedRow.reopen', err)
+        // Erro visível: silent log antes deixava o usuário sem feedback
+        // quando REABRIR falhava (ex.: backend desatualizado, network).
+        alertDialog({
+          title: 'Não consegui reabrir',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'Erro ao reabrir o ritual. Verifique a conexão e tente de novo.',
+          variant: 'error',
+        })
+      },
+    })
   }
 
   const [tick, setTick] = useState(0)
@@ -2866,7 +3245,8 @@ function RitualPlannedRow({
       <div
         style={{
           display: 'flex', alignItems: 'stretch', gap: 6, position: 'relative',
-          transition: 'transform var(--motion-fast) var(--ease-smooth)',
+          transition: 'transform var(--motion-fast) var(--ease-smooth), opacity var(--motion-fast) var(--ease-smooth)',
+          opacity: isDone ? 0.5 : 1,
         }}
         onMouseEnter={e => { e.currentTarget.style.transform = 'translateX(2px)' }}
         onMouseLeave={e => { e.currentTarget.style.transform = 'translateX(0)' }}
@@ -2901,6 +3281,7 @@ function RitualPlannedRow({
             padding: '10px 14px',
             display: 'flex', flexDirection: 'column', gap: 6,
             transition: 'border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
+            cursor: isDone ? 'default' : 'pointer',
           }}
           onMouseEnter={e => {
             e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
@@ -2911,12 +3292,19 @@ function RitualPlannedRow({
             e.currentTarget.style.boxShadow = 'none'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', width: '100%', minWidth: 0 }}>
+          <div
+            style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', width: '100%', minWidth: 0 }}
+            // Clicar no corpo do card abre o modal de revisão (com direcionamentos +
+            // campos obrigatórios). Botões internos têm stopPropagation pra não
+            // dispararem isso. Quando isDone, click é no-op — user usa REABRIR.
+            onClick={() => { if (!isDone) openFinalizeModal() }}
+          >
             <div style={{ flex: '1 1 180px', minWidth: 0 }}>
               <div style={{
                 fontFamily: 'var(--font-display)', color: 'var(--color-text-primary)',
                 fontWeight: 600, fontSize: 13, letterSpacing: '0.03em', textTransform: 'uppercase',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                textDecoration: isDone ? 'line-through' : 'none',
               }}>
                 {item.title}
               </div>
@@ -2926,7 +3314,7 @@ function RitualPlannedRow({
                 marginTop: 4, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
               }}>
                 <span style={{ color: accent }}>Ritual · {cadenciaLabel}</span>
-                {item.done && (
+                {isDone && (
                   <>
                     <span style={{ opacity: 0.4 }}>·</span>
                     <span style={{ color: 'var(--color-success)' }}>cumprido hoje</span>
@@ -2967,12 +3355,13 @@ function RitualPlannedRow({
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-ice-light)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
               >
-                <span>{showInfo ? '▼' : '▶'}</span> INFO
+                {showInfo ? <ChevronDown size={10} strokeWidth={2} /> : <ChevronRight size={10} strokeWidth={2} />}
+                INFO
               </button>
-              {!cluster.has_active && (
+              {!cluster.has_active && !isDone && (
                 <button
                   type="button"
-                  onClick={doStart}
+                  onClick={(e) => { e.stopPropagation(); doStart() }}
                   title="iniciar ritual"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
@@ -2990,10 +3379,10 @@ function RitualPlannedRow({
                   PLAY
                 </button>
               )}
-              {cluster.has_active && cluster.is_running && (
+              {!isDone && cluster.has_active && cluster.is_running && (
                 <button
                   type="button"
-                  onClick={doPause}
+                  onClick={(e) => { e.stopPropagation(); doPause() }}
                   title="pausar"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
@@ -3003,15 +3392,17 @@ function RitualPlannedRow({
                     background: 'rgba(192, 138, 58, 0.10)',
                     border: '1px solid rgba(192, 138, 58, 0.55)',
                     color: 'var(--color-warning)',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
                   }}
                 >
-                  ❚❚ PAUSE
+                  <Pause size={9} strokeWidth={2.4} fill="currentColor" />
+                  PAUSE
                 </button>
               )}
-              {cluster.has_active && !cluster.is_running && (
+              {!isDone && cluster.has_active && !cluster.is_running && (
                 <button
                   type="button"
-                  onClick={doResume}
+                  onClick={(e) => { e.stopPropagation(); doResume() }}
                   title="retomar"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
@@ -3021,17 +3412,18 @@ function RitualPlannedRow({
                     background: 'rgba(143, 191, 211, 0.10)',
                     border: '1px solid rgba(143, 191, 211, 0.45)',
                     color: 'var(--color-ice-light)',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
                   }}
                 >
                   <Play size={9} strokeWidth={2} fill="currentColor" />
                   RESUME
                 </button>
               )}
-              {cluster.has_active && (
+              {!isDone && cluster.has_active && (
                 <button
                   type="button"
-                  onClick={doFinalize}
-                  title="finalizar e registrar"
+                  onClick={(e) => { e.stopPropagation(); openFinalizeModal() }}
+                  title="abrir formulário de revisão pra finalizar"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
                     fontSize: 9, fontWeight: 700, padding: '5px 10px',
@@ -3041,25 +3433,63 @@ function RitualPlannedRow({
                     border: `1px solid ${accent}`,
                     color: accent,
                     boxShadow: `0 0 10px ${accent}33`,
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
                   }}
                 >
-                  ▣ FINALIZAR
+                  <Square size={9} strokeWidth={2} fill="currentColor" />
+                  FINALIZAR
                 </button>
               )}
-              {onMoveToPeriod && currentPeriod && (
-                <MovePeriodChips
-                  currentPeriod={currentPeriod}
-                  onMoveToPeriod={onMoveToPeriod}
-                />
+              {/* REABRIR — só quando ritual está done (record do dia E sem
+                  cluster ativo). Descola cluster (mantém o record); ao
+                  finalizar de novo o upsert reusa a mesma entrada. */}
+              {isDone && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); doReopen() }}
+                  disabled={reopenRitual.isPending}
+                  aria-busy={reopenRitual.isPending}
+                  title={reopenRitual.isPending ? 'Reabrindo...' : 'reabrir: volta a sessão pra estado pausado'}
+                  style={{
+                    cursor: reopenRitual.isPending ? 'wait' : 'pointer',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 10px',
+                    letterSpacing: '0.18em', textTransform: 'uppercase',
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                    background: 'rgba(8, 12, 18, 0.55)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-text-tertiary)',
+                    opacity: reopenRitual.isPending ? 0.45 : 1,
+                    transition: 'opacity var(--motion-fast) var(--ease-smooth)',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                  }}
+                  onMouseEnter={e => {
+                    if (reopenRitual.isPending) return
+                    e.currentTarget.style.color = 'var(--color-ice-light)'
+                    e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
+                    e.currentTarget.style.background = 'rgba(143, 191, 211, 0.10)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.color = 'var(--color-text-tertiary)'
+                    e.currentTarget.style.borderColor = 'var(--color-border)'
+                    e.currentTarget.style.background = 'rgba(8, 12, 18, 0.55)'
+                  }}
+                >
+                  <RotateCcw size={9} strokeWidth={2.4} />
+                  {reopenRitual.isPending ? '...' : 'REABRIR'}
+                </button>
               )}
               <button
-                onClick={onRemoveFromPlan}
+                onClick={(e) => { e.stopPropagation(); onRemoveFromPlan() }}
+                aria-label="remover do plano do dia"
                 title="remover do plano do dia"
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)',
-                  fontSize: 12, padding: '0 6px', opacity: 0.55,
+                  color: 'var(--color-text-muted)',
+                  padding: '0 6px', opacity: 0.55,
                   transition: 'opacity 0.15s, color 0.15s',
+                  display: 'inline-flex', alignItems: 'center',
                 }}
                 onMouseEnter={e => {
                   e.currentTarget.style.opacity = '1'
@@ -3070,7 +3500,7 @@ function RitualPlannedRow({
                   e.currentTarget.style.color = 'var(--color-text-muted)'
                 }}
               >
-                ✕
+                <X size={12} strokeWidth={2} />
               </button>
             </div>
           </div>
@@ -3082,31 +3512,103 @@ function RitualPlannedRow({
                 borderTop: '1px dashed rgba(143, 191, 211, 0.22)',
                 fontFamily: 'var(--font-mono)', fontSize: 10,
                 color: 'var(--color-text-secondary)', letterSpacing: 0,
-                display: 'flex', flexDirection: 'column', gap: 4,
+                display: 'flex', flexDirection: 'column', gap: 6,
               }}
             >
-              {cluster.has_active && cluster.started_at && (
-                <div>
-                  <span style={{ color: 'var(--color-text-tertiary)' }}>INÍCIO:</span>{' '}
-                  {new Date(cluster.started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              {/* Direcionamento PENSAR — guia de reflexão pro ritual.
+                  É o "norte" da sessão: o que o user deveria estar
+                  pensando enquanto executa. */}
+              {item.direcionamento_pensar && (
+                <div style={{
+                  padding: '6px 8px',
+                  background: `${accent}0c`,
+                  borderLeft: `2px solid ${accent}`,
+                  fontFamily: 'var(--font-body)', fontSize: 11,
+                  color: 'var(--color-text-primary)', lineHeight: 1.5,
+                }}>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 9,
+                    color: accent, letterSpacing: '0.18em',
+                    textTransform: 'uppercase', fontWeight: 700,
+                    marginBottom: 3,
+                  }}>// PENSAR</div>
+                  {item.direcionamento_pensar}
                 </div>
               )}
+              {/* Direcionamento EVITAR — armadilha conhecida. */}
+              {item.direcionamento_evitar && (
+                <div style={{
+                  padding: '6px 8px',
+                  background: 'rgba(192, 138, 58, 0.06)',
+                  borderLeft: '2px solid var(--color-warning)',
+                  fontFamily: 'var(--font-body)', fontSize: 11,
+                  color: 'var(--color-text-primary)', lineHeight: 1.5,
+                }}>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 9,
+                    color: 'var(--color-warning)', letterSpacing: '0.18em',
+                    textTransform: 'uppercase', fontWeight: 700,
+                    marginBottom: 3,
+                  }}>// EVITAR</div>
+                  {item.direcionamento_evitar}
+                </div>
+              )}
+              {/* Grid compacto de metadata: duração alvo, última execução,
+                  próxima prevista, atraso. */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                gap: '4px 12px',
+                marginTop: 2,
+              }}>
+                {durMin > 0 && (
+                  <div>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>DURAÇÃO ALVO:</span>{' '}
+                    {durMin} min
+                  </div>
+                )}
+                {item.ultima_execucao && (
+                  <div>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>ÚLTIMA:</span>{' '}
+                    {new Date(item.ultima_execucao).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                  </div>
+                )}
+                {item.proxima_data && !item.done && (
+                  <div>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>PRÓXIMA:</span>{' '}
+                    {new Date(item.proxima_data).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                  </div>
+                )}
+                {typeof item.dias_atraso === 'number' && item.dias_atraso > 0 && (
+                  <div style={{ color: 'var(--color-accent-primary)' }}>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>ATRASO:</span>{' '}
+                    {item.dias_atraso}d
+                  </div>
+                )}
+              </div>
+              {/* Status do cluster ativo (quando rodando). */}
               {cluster.has_active && (
-                <div>
-                  <span style={{ color: 'var(--color-text-tertiary)' }}>STATUS:</span>{' '}
-                  {cluster.is_running ? 'em execução' : 'pausado'}
-                </div>
-              )}
-              {cluster.has_active && cluster.rows.length > 1 && (
-                <div>
-                  <span style={{ color: 'var(--color-text-tertiary)' }}>SUB-SESSÕES:</span>{' '}
-                  {cluster.rows.length}
-                </div>
-              )}
-              {durMin > 0 && (
-                <div>
-                  <span style={{ color: 'var(--color-text-tertiary)' }}>DURAÇÃO ALVO:</span>{' '}
-                  {durMin} min
+                <div style={{
+                  marginTop: 4, paddingTop: 4,
+                  borderTop: '1px dashed rgba(143, 191, 211, 0.15)',
+                  display: 'flex', flexWrap: 'wrap', gap: '4px 12px',
+                }}>
+                  {cluster.started_at && (
+                    <div>
+                      <span style={{ color: 'var(--color-text-tertiary)' }}>INÍCIO:</span>{' '}
+                      {new Date(cluster.started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
+                  <div>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}>STATUS:</span>{' '}
+                    {cluster.is_running ? 'em execução' : 'pausado'}
+                  </div>
+                  {cluster.rows.length > 1 && (
+                    <div>
+                      <span style={{ color: 'var(--color-text-tertiary)' }}>SUB-SESSÕES:</span>{' '}
+                      {cluster.rows.length}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3119,6 +3621,17 @@ function RitualPlannedRow({
           kind="ritual"
           onChanged={refetchCluster}
           onClose={() => setShowHistory(false)}
+        />
+      )}
+      {showFinalizeModal && (
+        <RitualFinalizeModal
+          ritual={item}
+          prefillDuracaoMin={Math.max(1, Math.floor((cluster.elapsed_seconds || 0) / 60))}
+          onClose={() => setShowFinalizeModal(false)}
+          onSuccess={() => {
+            invalidateDia()
+            onSessionUpdate()
+          }}
         />
       )}
     </div>
@@ -3141,8 +3654,8 @@ function PendenciaPlannedRow({
   onRemoveFromPlan,
   onFinalize,
   onSessionUpdate,
-  currentPeriod,
-  onMoveToPeriod,
+  onMarkPendingLocal,
+  onInvalidateDia,
 }: {
   item: any
   onRemoveFromPlan: () => void
@@ -3152,23 +3665,30 @@ function PendenciaPlannedRow({
   /** Avisa o App pra refetch o activeSession (mantém banner global em sync
    *  imediatamente — RQ invalidate sozinho não atinge o useState do App). */
   onSessionUpdate: () => void
-  /** Período onde a pendência está alocada atualmente (esconde chip de
-   *  movimento pra esse período). */
-  currentPeriod?: 'morning' | 'afternoon' | 'evening'
-  /** Move a pendência pra outro turno (paridade com PlannedItemRow). */
-  onMoveToPeriod?: (target: 'morning' | 'afternoon' | 'evening') => void
+  /** Flipa snapshot local pra done=false (mantém metadata pro ghost render).
+   *  Chamado no doReopen pra que o card volte ao estado pendente SEM SUMIR
+   *  do dayPlan, mesmo enquanto o refetch tá pendente. */
+  onMarkPendingLocal?: (pendenciaId: string) => void
+  /** Invalida cache de pendências do /Dia. Garante refetch imediato após
+   *  REABRIR — sem isso, o card pode ficar em estado stale por uns ms. */
+  onInvalidateDia?: () => void
 }) {
   const isMind = item.origem === 'mind'
   const itemId = isMind ? null : parseInt(String(item.id).split(':')[1] ?? '0', 10)
   const cor = item.cor || (isMind ? '#9b88c4' : '#7fb8a8')
   const typeCode = isMind ? 'MND' : 'HLT'
+  // Pendência done = já tem registro hoje. Card permanece no dayPlan
+  // riscado (paridade com quest/task done) — só ✕ pra remover do plano.
+  const isDone = !!item.done
   const durMin = item.estimated_minutes ?? 0
   const durLabel = durMin > 0
     ? (durMin >= 60
       ? `${Math.floor(durMin / 60)}H${durMin % 60 ? ` ${durMin % 60}M` : ''}`
       : `${durMin}M`)
     : '—'
-  const borderColor = 'rgba(143, 191, 211, 0.22)'
+  const borderColor = isDone
+    ? 'rgba(255, 255, 255, 0.06)'
+    : 'rgba(143, 191, 211, 0.22)'
 
   // ─── Sessões cronometradas — ambos hooks sempre chamados (regra de
   // hooks); o `enabled` no useHealthItemSession evita fetch quando isMind.
@@ -3190,9 +3710,19 @@ function PendenciaPlannedRow({
   const startHealth = useStartHealthItemSession()
   const pauseHealth = usePauseHealthItemSession()
   const resumeHealth = useResumeHealthItemSession()
+  // Reabrir pendência finalizada — apaga health_record do dia + descola
+  // cluster (record_id → NULL). Data = hoje em ISO local (não UTC).
+  const todayIsoLocal = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  const reopenPendencia = useReopenDiaPendencia(todayIsoLocal)
 
+  // 409 conflito ou erros de rede/server — helper unificado.
+  const onStartError = (err: any) =>
+    handleSessionStartError(isMind ? 'meditação' : 'sessão', err, alertDialog)
   function doStart() {
-    const opts = { onSuccess: () => onSessionUpdate() }
+    const opts = { onSuccess: () => onSessionUpdate(), onError: onStartError }
     if (isMind) startMind.mutate(undefined, opts)
     else if (itemId) startHealth.mutate(itemId, opts)
   }
@@ -3202,19 +3732,56 @@ function PendenciaPlannedRow({
     else if (itemId) pauseHealth.mutate(itemId, opts)
   }
   function doResume() {
-    const opts = { onSuccess: () => onSessionUpdate() }
+    const opts = { onSuccess: () => onSessionUpdate(), onError: onStartError }
     if (isMind) resumeMind.mutate(undefined, opts)
     else if (itemId) resumeHealth.mutate(itemId, opts)
   }
   function doFinalize() {
-    // Pausa se rodando, depois abre modal com cluster atual.
-    const handleAfterPause = () => { onSessionUpdate(); onFinalize(item, cluster) }
-    if (cluster.is_running) {
-      if (isMind) pauseMind.mutate(undefined, { onSuccess: handleAfterPause })
-      else if (itemId) pauseHealth.mutate(itemId, { onSuccess: handleAfterPause })
-    } else {
-      handleAfterPause()
+    // Pausa se rodando, depois RE-FETCHA o cluster pra ter dado fresh
+    // (após pause, ended_at + elapsed_seconds atualizado) antes de chamar
+    // onFinalize. Sem o refetch, o cluster local fica stale e o
+    // executePendencia recebe duracao_min menor que a real.
+    const proceed = () => {
+      onSessionUpdate()
+      const refetch = isMind ? mindSessionQ.refetch() : healthSessionQ.refetch()
+      refetch
+        .then(res => {
+          const fresh = (res?.data as DiaSessionClusterLike | undefined) ?? cluster
+          onFinalize(item, fresh)
+        })
+        .catch(() => onFinalize(item, cluster))
     }
+    if (cluster.is_running) {
+      if (isMind) pauseMind.mutate(undefined, { onSuccess: proceed })
+      else if (itemId) pauseHealth.mutate(itemId, { onSuccess: proceed })
+    } else {
+      proceed()
+    }
+  }
+  function doReopen() {
+    // Helper: flipa snapshot pra pending + força refetch DO CLUSTER da
+    // pendência (sem isso, a query do cluster fica stale e o card mostra
+    // PLAY em vez de RESUME, perdendo o tempo do segmento anterior).
+    // 404 é idempotente: se backend não tem record, o estado "reaberto" já
+    // é o atual; mesma ação no frontend.
+    const finishReopen = () => {
+      if (onMarkPendingLocal) onMarkPendingLocal(item.id)
+      if (onInvalidateDia) onInvalidateDia()
+      // Refetch explícito do cluster — backend desfez o link, rows agora
+      // têm record_id=NULL. Sem refetch, a query fica com has_active=false
+      // stale e o card aparece como "fresh PLAY" em vez de mostrar
+      // RESUME com o tempo cumulativo da sessão anterior.
+      if (isMind) mindSessionQ.refetch()
+      else healthSessionQ.refetch()
+      onSessionUpdate()
+    }
+    reopenPendencia.mutate(item.id, {
+      onSuccess: finishReopen,
+      onError: (err: any) => {
+        if (err?.status === 404) { finishReopen(); return }
+        reportApiError('PendenciaPlannedRow.reopen', err)
+      },
+    })
   }
 
   // Live timer — atualiza cada segundo quando rodando.
@@ -3260,6 +3827,10 @@ function PendenciaPlannedRow({
 
   // ─── Painel inline expansível (INFO) ─────────────────────────────────
   const [showInfo, setShowInfo] = useState(false)
+  // Mind context modal — abre ao clicar no card pra ver hipóteses a
+  // confrontar (challenges) + pendentes. Sem isso, user dá PLAY no timer
+  // "no escuro" sem saber o que meditar.
+  const [showMindContext, setShowMindContext] = useState(false)
   // ─── Histórico de sessões — modal de edição/exclusão das rows ────────
   const [showHistory, setShowHistory] = useState(false)
   // Sessões pra exibir no histórico modal. cluster.rows traz só rows
@@ -3283,6 +3854,7 @@ function PendenciaPlannedRow({
         flexDirection: 'column',
         gap: 0,
         width: '100%',
+        opacity: isDone ? 0.5 : 1,
         boxSizing: 'border-box',
         minWidth: 0,
         maxWidth: '100%',
@@ -3294,7 +3866,8 @@ function PendenciaPlannedRow({
           alignItems: 'stretch',
           gap: 6,
           position: 'relative',
-          transition: 'transform var(--motion-fast) var(--ease-smooth)',
+          transition: 'transform var(--motion-fast) var(--ease-smooth), opacity var(--motion-fast) var(--ease-smooth)',
+          opacity: isDone ? 0.5 : 1,
         }}
         onMouseEnter={e => {
           e.currentTarget.style.transform = 'translateX(2px)'
@@ -3364,6 +3937,7 @@ function PendenciaPlannedRow({
             flexDirection: 'column',
             gap: 6,
             transition: 'border-color var(--motion-fast) var(--ease-smooth), background var(--motion-fast) var(--ease-smooth), box-shadow var(--motion-fast) var(--ease-smooth)',
+            cursor: isMind && !isDone ? 'pointer' : 'default',
           }}
           onMouseEnter={e => {
             e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
@@ -3383,6 +3957,10 @@ function PendenciaPlannedRow({
               width: '100%',
               minWidth: 0,
             }}
+            // Clicar no corpo do card Mind abre o modal de contexto (hipóteses
+            // a confrontar + pendentes). Botões internos têm stopPropagation
+            // pra não dispararem isso. Health não tem contexto pra mostrar.
+            onClick={() => { if (isMind && !isDone) setShowMindContext(true) }}
           >
             <div style={{ flex: '1 1 180px', minWidth: 0 }}>
               <div
@@ -3396,6 +3974,7 @@ function PendenciaPlannedRow({
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
+                  textDecoration: isDone ? 'line-through' : 'none',
                 }}
               >
                 {item.title}
@@ -3424,6 +4003,12 @@ function PendenciaPlannedRow({
                     <span>~{item.horario_sugerido}</span>
                   </>
                 )}
+                {isDone && (
+                  <>
+                    <span style={{ opacity: 0.4 }}>·</span>
+                    <span style={{ color: 'var(--color-success)' }}>feito hoje</span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -3439,7 +4024,7 @@ function PendenciaPlannedRow({
             >
               {/* Live timer quando rodando ou pausado — clicável: abre
                   histórico pra editar/excluir rows do cluster atual */}
-              {cluster.has_active && (
+              {!isDone && cluster.has_active && (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setShowHistory(true) }}
@@ -3463,6 +4048,7 @@ function PendenciaPlannedRow({
                 </button>
               )}
               {/* INFO toggle */}
+              {!isDone && (
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -3488,13 +4074,15 @@ function PendenciaPlannedRow({
                 onMouseEnter={e => (e.currentTarget.style.color = 'var(--color-ice-light)')}
                 onMouseLeave={e => (e.currentTarget.style.color = 'var(--color-text-muted)')}
               >
-                <span>{showInfo ? '▼' : '▶'}</span> INFO
+                {showInfo ? <ChevronDown size={10} strokeWidth={2} /> : <ChevronRight size={10} strokeWidth={2} />}
+                INFO
               </button>
-              {!cluster.has_active && (
+              )}
+              {!cluster.has_active && !isDone && (
                 /* PLAY — idle */
                 <button
                   type="button"
-                  onClick={doStart}
+                  onClick={(e) => { e.stopPropagation(); doStart() }}
                   title="iniciar sessão"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
@@ -3522,11 +4110,11 @@ function PendenciaPlannedRow({
                   PLAY
                 </button>
               )}
-              {cluster.has_active && cluster.is_running && (
+              {!isDone && cluster.has_active && cluster.is_running && (
                 /* PAUSE */
                 <button
                   type="button"
-                  onClick={doPause}
+                  onClick={(e) => { e.stopPropagation(); doPause() }}
                   title="pausar"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
@@ -3537,16 +4125,18 @@ function PendenciaPlannedRow({
                     background: 'rgba(192, 138, 58, 0.10)',
                     border: '1px solid rgba(192, 138, 58, 0.55)',
                     color: 'var(--color-warning)',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
                   }}
                 >
-                  ❚❚ PAUSE
+                  <Pause size={9} strokeWidth={2.4} fill="currentColor" />
+                  PAUSE
                 </button>
               )}
-              {cluster.has_active && !cluster.is_running && (
+              {!isDone && cluster.has_active && !cluster.is_running && (
                 /* RESUME */
                 <button
                   type="button"
-                  onClick={doResume}
+                  onClick={(e) => { e.stopPropagation(); doResume() }}
                   title="retomar"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
@@ -3557,18 +4147,19 @@ function PendenciaPlannedRow({
                     background: 'rgba(143, 191, 211, 0.10)',
                     border: '1px solid rgba(143, 191, 211, 0.45)',
                     color: 'var(--color-ice-light)',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
                   }}
                 >
                   <Play size={9} strokeWidth={2} fill="currentColor" />
                   RESUME
                 </button>
               )}
-              {cluster.has_active && (
+              {!isDone && cluster.has_active && (
                 /* FINALIZAR */
                 <button
                   type="button"
-                  onClick={doFinalize}
-                  title="finalizar — abre modal pra registrar"
+                  onClick={(e) => { e.stopPropagation(); doFinalize() }}
+                  title="finalizar: abre modal pra registrar"
                   style={{
                     cursor: 'pointer', fontFamily: 'var(--font-mono)',
                     fontSize: 9, fontWeight: 700, padding: '5px 10px',
@@ -3579,32 +4170,67 @@ function PendenciaPlannedRow({
                     border: `1px solid ${cor}`,
                     color: cor,
                     boxShadow: `0 0 10px ${cor}33`,
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
                   }}
                 >
-                  ▣ FINALIZAR
+                  <Square size={9} strokeWidth={2} fill="currentColor" />
+                  FINALIZAR
                 </button>
               )}
-              {onMoveToPeriod && currentPeriod && (
-                <MovePeriodChips
-                  currentPeriod={currentPeriod}
-                  onMoveToPeriod={onMoveToPeriod}
-                />
+              {isDone && (
+                /* REABRIR — apaga o health_record de hoje e descola o cluster
+                   (record_id → NULL) pra continuar de onde parou. Paridade
+                   com quest/task/rotina. */
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); doReopen() }}
+                  disabled={reopenPendencia.isPending}
+                  aria-busy={reopenPendencia.isPending}
+                  title={reopenPendencia.isPending ? 'Reabrindo...' : 'reabrir: volta a sessão pra estado pausado'}
+                  style={{
+                    cursor: reopenPendencia.isPending ? 'wait' : 'pointer',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 9, fontWeight: 700, padding: '5px 10px',
+                    letterSpacing: '0.18em', textTransform: 'uppercase',
+                    borderRadius: 0,
+                    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+                    background: 'rgba(8, 12, 18, 0.55)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-text-tertiary)',
+                    transition: 'all 0.15s',
+                    opacity: reopenPendencia.isPending ? 0.45 : 1,
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                  }}
+                  onMouseEnter={e => {
+                    if (reopenPendencia.isPending) return
+                    e.currentTarget.style.color = 'var(--color-ice-light)'
+                    e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
+                    e.currentTarget.style.background = 'rgba(143, 191, 211, 0.10)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.color = 'var(--color-text-tertiary)'
+                    e.currentTarget.style.borderColor = 'var(--color-border)'
+                    e.currentTarget.style.background = 'rgba(8, 12, 18, 0.55)'
+                  }}
+                >
+                  <RotateCcw size={9} strokeWidth={2.4} />
+                  {reopenPendencia.isPending ? '...' : 'REABRIR'}
+                </button>
               )}
               {/* X de remover — espelho do PlannedItemRow */}
               <button
-                onClick={onRemoveFromPlan}
+                onClick={(e) => { e.stopPropagation(); onRemoveFromPlan() }}
+                aria-label="remover do plano do dia"
                 title="remover do plano do dia"
                 style={{
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  fontFamily: 'var(--font-mono)',
                   color: 'var(--color-text-muted)',
-                  fontSize: 12,
                   padding: '0 6px',
                   opacity: 0.55,
                   transition: 'opacity 0.15s, color 0.15s',
-                  lineHeight: 1,
+                  display: 'inline-flex', alignItems: 'center',
                   flexShrink: 0,
                 }}
                 onMouseEnter={e => {
@@ -3616,7 +4242,7 @@ function PendenciaPlannedRow({
                   e.currentTarget.style.color = 'var(--color-text-muted)'
                 }}
               >
-                ✕
+                <X size={12} strokeWidth={2} />
               </button>
             </div>
           </div>
@@ -3691,6 +4317,9 @@ function PendenciaPlannedRow({
           onChanged={refetchCluster}
           onClose={() => setShowHistory(false)}
         />
+      )}
+      {showMindContext && (
+        <MindContextModal onClose={() => setShowMindContext(false)} />
       )}
     </div>
   )
@@ -3778,13 +4407,18 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
     marginBottom: 6,
     display: 'flex', alignItems: 'center', gap: 4,
   }
-  const projectHeaderStyle = (color: string): React.CSSProperties => ({
+  const projectHeaderStyle: React.CSSProperties = {
     fontFamily: 'var(--font-mono)',
     fontSize: 10, color: 'var(--color-ice-light)',
     letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700,
     marginBottom: 6,
-    display: 'flex', alignItems: 'center', gap: 6,
-    borderLeft: `2px solid ${color}`, paddingLeft: 8,
+    display: 'flex', alignItems: 'center', gap: 8,
+  }
+  const projectHeaderDot = (color: string): React.CSSProperties => ({
+    display: 'inline-block', width: 8, height: 8,
+    background: color,
+    boxShadow: `0 0 6px ${color}88, inset 0 0 0 1px rgba(255,255,255,0.12)`,
+    flexShrink: 0,
   })
   const delivHeaderStyle: React.CSSProperties = {
     fontFamily: 'var(--font-mono)',
@@ -3798,7 +4432,10 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {projectGroups.map(pg => (
         <div key={pg.projectId}>
-          <div style={projectHeaderStyle(pg.areaColor)}>{pg.projectTitle}</div>
+          <div style={projectHeaderStyle}>
+            <span style={projectHeaderDot(pg.areaColor)} aria-hidden />
+            {pg.projectTitle}
+          </div>
           {pg.delivs.map(dg => (
             <div key={dg.delivId ?? '__no_deliv__'} style={{ marginTop: 4 }}>
               {dg.delivTitle && <div style={delivHeaderStyle}>{dg.delivTitle}</div>}
@@ -3942,7 +4579,6 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
       style={{
         background: 'rgba(8, 12, 18, 0.55)',
         border: '1px solid rgba(143, 191, 211, 0.22)',
-        borderLeft: `2px solid ${color}`,
         borderRadius: 0,
         clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
         padding: '8px 12px',
@@ -3964,8 +4600,17 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
       }}
     >
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6, minWidth: 0,
+        display: 'flex', alignItems: 'center', gap: 8, minWidth: 0,
       }}>
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-block', width: 8, height: 8,
+            background: color,
+            boxShadow: `0 0 6px ${color}88, inset 0 0 0 1px rgba(255,255,255,0.12)`,
+            flexShrink: 0,
+          }}
+        />
         <div style={{
           flex: 1, minWidth: 0,
           fontFamily: 'var(--font-display)',

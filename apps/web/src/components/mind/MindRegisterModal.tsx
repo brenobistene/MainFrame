@@ -26,6 +26,7 @@ import {
 import { useCreateLibraryLink, useLibraryItem } from '../../lib/library-queries'
 import type { MindSession, MindTipo } from '../../types'
 import { BODY, MONO } from '../health/tokens'
+import { isoToLocalYmd } from '../../utils/datetime'
 
 const MIND_COR = '#9b88c4'
 const DURACAO_PRESETS = [5, 10, 15, 20, 30, 45]
@@ -65,13 +66,19 @@ export default function MindRegisterModal({
   const createLibraryLink = useCreateLibraryLink()
   const { data: originItem } = useLibraryItem(originLibraryItemId ?? null)
 
-  const today = new Date().toISOString().slice(0, 10)
+  // LOCAL hoje (não UTC) — sem isso, user em BRT depois de 21h salva como
+  // "amanhã" e o card no /Dia some porque a pendência consulta hoje local.
+  const today = isoToLocalYmd(new Date())
   const nowHHMM = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`
 
   // Se vem de sessão cronometrada, pré-preenche data/horário a partir
   // de started_at e duração da sessão. Override só pra entries não-edit.
+  // IMPORTANTE: usa isoToLocalYmd em vez de slice(0,10) porque started_at
+  // é UTC com Z suffix — se o user iniciar 22:00 BRT (01:00 UTC do dia
+  // seguinte), slicing direto pega a data UTC e o record fica salvo no
+  // dia errado, sumindo da pendência de hoje.
   const sessionStartDate = prefillFromSession?.started_at
-    ? prefillFromSession.started_at.slice(0, 10)
+    ? isoToLocalYmd(new Date(prefillFromSession.started_at))
     : null
   const sessionStartHHMM = prefillFromSession?.started_at
     ? new Date(prefillFromSession.started_at).toLocaleTimeString('pt-BR', {
@@ -374,7 +381,11 @@ export default function MindRegisterModal({
           </div>
         </FormGroup>
 
-        {/* Duração + data */}
+        {/* Duração + data + hora — escondidos quando o registro vem de
+            uma sessão cronometrada (started_at + duração já conhecidos).
+            Os states continuam inicializados com os valores da sessão pro
+            payload sair certo. */}
+        {!prefillFromSession && (
         <FormRow>
           <FormGroup label="DURAÇÃO (MIN)" style={{ flex: 1 }}>
             <div
@@ -439,6 +450,7 @@ export default function MindRegisterModal({
             />
           </FormGroup>
         </FormRow>
+        )}
 
         {/* Contexto recente (cruzamento com outros domínios) — colapsável.
             Mostra leituras dos últimos 7d de Sono/Exercício/Alimentação/Vícios

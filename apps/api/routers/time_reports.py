@@ -98,6 +98,202 @@ def time_by_area(
     return {"from": from_, "to": to_, "total_minutes": total, "items": items}
 
 
+@router.get("/api/time-reports/closed-items")
+def closed_items(
+    from_: str = Query(..., alias="from", description="YYYY-MM-DD inclusive"),
+    to_: str = Query(..., alias="to", description="YYYY-MM-DD inclusive"),
+):
+    """Items fechados no período, agrupados pra retrospectiva no /dashboard.
+
+    Resposta tem 4 buckets:
+      - `projects`: { id, title, area, completed_at?, quests[], worked_min_total }.
+        Inclui projetos com quests fechadas no range (mesmo se o projeto em si
+        não fechou) OU projects.completed_at no range. `completed_at` do
+        projeto pode ser null quando só as quests dele fecharam.
+      - `ungrouped_quests`: quests sem `project_id` (avulsas).
+      - `routines`: rotinas com pelo menos 1 routine_log.completed_date no range.
+        Cada rotina traz `completions[]` (dia + tempo da sessão correspondente).
+      - `tasks`: tasks done no range (sem área, sem agrupamento).
+
+    Filosofia: o user pensa em Projeto → Quest, e Rotina como entidade com
+    múltiplas execuções diárias. Expansão fica natural no UI.
+    """
+    with get_conn() as conn:
+        quest_rows = conn.execute(
+            """SELECT q.id, q.title, q.area_slug, q.completed_at, q.status,
+                      q.project_id,
+                      a.name AS area_name, a.color AS area_color,
+                      p.title AS project_title,
+                      (SELECT COALESCE(SUM(
+                          CASE WHEN qs.ended_at IS NOT NULL
+                               THEN (julianday(qs.ended_at) - julianday(qs.started_at)) * 24 * 60
+                               ELSE 0 END
+                       ), 0)
+                       FROM quest_sessions qs
+                       WHERE qs.quest_id = q.id) AS worked_min
+               FROM quests q
+               LEFT JOIN areas a ON a.slug = q.area_slug
+               LEFT JOIN projects p ON p.id = q.project_id
+               WHERE q.completed_at IS NOT NULL
+                 AND DATE(q.completed_at) >= ?
+                 AND DATE(q.completed_at) <= ?
+               ORDER BY q.completed_at DESC""",
+            (from_, to_),
+        ).fetchall()
+        project_rows = conn.execute(
+            """SELECT p.id, p.title, p.area_slug, p.completed_at,
+                      a.name AS area_name, a.color AS area_color
+               FROM projects p
+               LEFT JOIN areas a ON a.slug = p.area_slug
+               WHERE p.completed_at IS NOT NULL
+                 AND DATE(p.completed_at) >= ?
+                 AND DATE(p.completed_at) <= ?
+               ORDER BY p.completed_at DESC""",
+            (from_, to_),
+        ).fetchall()
+        task_rows = conn.execute(
+            """SELECT t.id, t.title, t.completed_at,
+                      (SELECT COALESCE(SUM(
+                          CASE WHEN ts.ended_at IS NOT NULL
+                               THEN (julianday(ts.ended_at) - julianday(ts.started_at)) * 24 * 60
+                               ELSE 0 END
+                       ), 0)
+                       FROM task_sessions ts
+                       WHERE ts.task_id = t.id) AS worked_min
+               FROM tasks t
+               WHERE t.done = 1
+                 AND t.completed_at IS NOT NULL
+                 AND DATE(t.completed_at) >= ?
+                 AND DATE(t.completed_at) <= ?
+               ORDER BY t.completed_at DESC""",
+            (from_, to_),
+        ).fetchall()
+        # Rotinas: pega routine_logs no range, joinando com routines pro título.
+        # Pra cada (routine, date) tenta achar a duração total da rotina nessa
+        # data via routine_sessions.date (vem como YYYY-MM-DD).
+        routine_log_rows = conn.execute(
+            """SELECT r.id AS routine_id, r.title AS routine_title,
+                      rl.completed_date,
+                      (SELECT COALESCE(SUM(
+                          CASE WHEN rs.ended_at IS NOT NULL
+                               THEN (julianday(rs.ended_at) - julianday(rs.started_at)) * 24 * 60
+                               ELSE 0 END
+                       ), 0)
+                       FROM routine_sessions rs
+                       WHERE rs.routine_id = r.id AND rs.date = rl.completed_date) AS worked_min
+               FROM routine_logs rl
+               JOIN routines r ON r.id = rl.routine_id
+               WHERE rl.completed_date >= ?
+                 AND rl.completed_date <= ?
+               ORDER BY rl.completed_date DESC""",
+            (from_, to_),
+        ).fetchall()
+
+    # ─ Monta dicionário de projects: chave = project_id ─
+    projects_by_id: dict[str, dict] = {}
+    for r in project_rows:
+        projects_by_id[r["id"]] = {
+            "id": r["id"],
+            "title": r["title"],
+            "area_slug": r["area_slug"],
+            "area_name": r["area_name"],
+            "area_color": r["area_color"],
+            "completed_at": r["completed_at"],
+            "quests": [],
+            "worked_min_total": 0,
+        }
+
+    ungrouped_quests: list[dict] = []
+    for r in quest_rows:
+        q = {
+            "id": r["id"],
+            "title": r["title"],
+            "area_slug": r["area_slug"],
+            "area_name": r["area_name"],
+            "area_color": r["area_color"],
+            "completed_at": r["completed_at"],
+            "status": r["status"],
+            "worked_min": int(round(r["worked_min"] or 0)),
+        }
+        pid = r["project_id"]
+        if pid:
+            # Cria entrada de projeto mesmo se ele não fechou no range — só
+            # as quests dele que fecharam. completed_at do project fica null
+            # nesse caso.
+            if pid not in projects_by_id:
+                projects_by_id[pid] = {
+                    "id": pid,
+                    "title": r["project_title"] or "(sem título)",
+                    "area_slug": r["area_slug"],
+                    "area_name": r["area_name"],
+                    "area_color": r["area_color"],
+                    "completed_at": None,
+                    "quests": [],
+                    "worked_min_total": 0,
+                }
+            projects_by_id[pid]["quests"].append(q)
+            projects_by_id[pid]["worked_min_total"] += q["worked_min"]
+        else:
+            ungrouped_quests.append(q)
+
+    # Ordena projects: primeiro os com completed_at no range (mais recentes),
+    # depois os que só têm quests fechadas (por max completed_at das quests).
+    def project_sort_key(p: dict) -> str:
+        if p["completed_at"]:
+            return p["completed_at"]
+        if p["quests"]:
+            return max(q["completed_at"] or "" for q in p["quests"])
+        return ""
+    projects_sorted = sorted(projects_by_id.values(), key=project_sort_key, reverse=True)
+
+    # Rotinas: agrupa logs por routine_id, listando completions
+    routines_by_id: dict[str, dict] = {}
+    for r in routine_log_rows:
+        rid = r["routine_id"]
+        if rid not in routines_by_id:
+            routines_by_id[rid] = {
+                "id": rid,
+                "title": r["routine_title"],
+                "completions": [],
+                "total_min": 0,
+            }
+        wm = int(round(r["worked_min"] or 0))
+        routines_by_id[rid]["completions"].append({
+            "date": r["completed_date"],
+            "worked_min": wm,
+        })
+        routines_by_id[rid]["total_min"] += wm
+    routines_sorted = sorted(
+        routines_by_id.values(),
+        key=lambda x: -len(x["completions"]),
+    )
+
+    tasks_list: list[dict] = []
+    for r in task_rows:
+        tasks_list.append({
+            "id": r["id"],
+            "title": r["title"],
+            "completed_at": r["completed_at"],
+            "worked_min": int(round(r["worked_min"] or 0)),
+        })
+
+    totals = {
+        "quests_done": len(quest_rows),
+        "projects_done": len(project_rows),
+        "routines_completions": sum(len(r["completions"]) for r in routines_sorted),
+        "tasks_done": len(tasks_list),
+    }
+    return {
+        "from": from_,
+        "to": to_,
+        "projects": projects_sorted,
+        "ungrouped_quests": ungrouped_quests,
+        "routines": routines_sorted,
+        "tasks": tasks_list,
+        "totals": totals,
+    }
+
+
 @router.get("/api/time-reports/weekly")
 def time_weekly(weeks: int = Query(8, ge=1, le=52)):
     """Distribuição semanal — minutos totais por semana, últimas N semanas.

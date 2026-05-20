@@ -49,7 +49,16 @@ def _routine_passes_on(r, day: date) -> bool:
 
 @router.get("/api/routines", response_model=list[RoutineOut])
 def list_routines(target: Optional[str] = None):
-    """Lista rotinas que se aplicam ao dia alvo (default: hoje em SP)."""
+    """Lista rotinas relevantes pro dia alvo (default: hoje em SP).
+
+    Inclui:
+    - rotinas que aplicam naquele dia da semana/mês (via _routine_passes_on)
+    - OU rotinas que TEM log pra essa data (ex: usuário arrastou pro plano
+      do dia uma rotina que normalmente não cai hoje e finalizou). Sem essa
+      cláusula, o frontend construía doneRoutineIds só com as do schedule
+      e a rotina logada off-schedule nunca aparecia como done → card sem
+      strike + active_session ficava fantasma.
+    """
     day = date.fromisoformat(target) if target else datetime.now(SP_TZ).date()
     date_str = day.isoformat()
 
@@ -67,10 +76,11 @@ def list_routines(target: Optional[str] = None):
 
     result = []
     for r in rows:
-        if not _routine_passes_on(r, day):
+        has_log = r["id"] in logs
+        if not has_log and not _routine_passes_on(r, day):
             continue
         d = dict(r)
-        d["done"] = r["id"] in logs
+        d["done"] = has_log
         result.append(d)
     return result
 
@@ -532,36 +542,28 @@ def routine_resume_session(routine_id: str, target: Optional[str] = None):
 
 @router.post("/api/routines/{routine_id}/sessions/stop")
 def routine_stop_session(routine_id: str, target: Optional[str] = None):
-    """Finaliza a rotina: fecha sessão aberta (qualquer data) + insere log.
+    """Finaliza a rotina: fecha QUALQUER sessão pendente + insere log.
 
-    Estratégia robusta cross-midnight:
-    - Se há sessão aberta da rotina (qualquer data), fecha-a e usa a DATA
-      DA SESSÃO pra criar o log (em vez de "hoje"). Resolve o caso de
-      iniciar 23:55, pausar, finalizar no dia seguinte — o log fica no
-      dia em que a rotina foi efetivamente trabalhada.
-    - Se passou `target` explicitamente, prevalece (DiaPage planejando
-      uma data específica).
-    - Se não há sessão aberta nem target, log vai pro dia atual.
+    Regras:
+    - `target` define a data do log (default: hoje em SP). Reflete a INTENÇÃO
+      do user — "estou marcando essa rotina como feita hoje", independente
+      de quando a sessão começou.
+    - Fecha TODAS as sessões ainda abertas (`ended_at IS NULL`) da rotina,
+      qualquer data. Sem isso, sessões zumbi (open de dias atrás) impediam
+      o banner-fantasma fix do active_session de funcionar.
+    - Sessões pausadas (`ended_at` setado) ficam intactas — não muta passado.
     """
     now = utcnow_iso_z()
+    date_str = target if target else _today_sp_iso()
     with get_conn() as conn:
         if not conn.execute("SELECT 1 FROM routines WHERE id = ?", (routine_id,)).fetchone():
             raise HTTPException(404, detail="Routine not found")
 
-        session = conn.execute(
-            "SELECT id, date FROM routine_sessions WHERE routine_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
-            (routine_id,),
-        ).fetchone()
-
-        if target:
-            date_str = target
-        elif session:
-            date_str = session["date"]
-        else:
-            date_str = _today_sp_iso()
-
-        if session:
-            conn.execute("UPDATE routine_sessions SET ended_at = ? WHERE id = ?", (now, session["id"]))
+        conn.execute(
+            "UPDATE routine_sessions SET ended_at = ? "
+            "WHERE routine_id = ? AND ended_at IS NULL",
+            (now, routine_id),
+        )
         conn.execute(
             "INSERT OR IGNORE INTO routine_logs(routine_id, completed_date) VALUES (?, ?)",
             (routine_id, date_str),

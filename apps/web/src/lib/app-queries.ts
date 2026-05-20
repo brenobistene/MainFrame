@@ -9,14 +9,17 @@
  * Com React Query: cada hook tem cache automático, invalidação via
  * `useAppInvalidator()`, e refetch em background.
  */
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import {
   fetchProjects, fetchQuests, fetchAreas, fetchTasks,
   fetchAllRoutines, fetchRoutinesForDate, fetchDeliverables, fetchFinDebts, fetchProfile,
   fetchMicroTasks,
+  fetchCompromissos, fetchCompromissoOccurrences,
+  createCompromisso, updateCompromisso, deleteCompromisso,
 } from '../api'
 import type {
   Project, Quest, Area, Task, Routine, Deliverable, FinDebt, Profile, MicroTask,
+  Compromisso, CompromissoOccurrence, CompromissoCreate, CompromissoUpdate,
 } from '../types'
 
 export const appKeys = {
@@ -33,6 +36,9 @@ export const appKeys = {
   microTasks: () => [...appKeys.all, 'micro-tasks'] as const,
   debts: () => [...appKeys.all, 'debts'] as const,
   profile: () => [...appKeys.all, 'profile'] as const,
+  compromissos: () => [...appKeys.all, 'compromissos'] as const,
+  compromissoOccurrences: (from: string, to: string) =>
+    [...appKeys.all, 'compromissos', 'occurrences', from, to] as const,
 }
 
 export function useProjects() {
@@ -103,5 +109,51 @@ export function useAppInvalidator() {
     microTasks: () => qc.invalidateQueries({ queryKey: appKeys.microTasks() }),
     debts: () => qc.invalidateQueries({ queryKey: appKeys.debts() }),
     profile: () => qc.invalidateQueries({ queryKey: appKeys.profile() }),
+    /** Invalida lista + todas as queries de occurrences (prefixo). */
+    compromissos: () => qc.invalidateQueries({ queryKey: appKeys.compromissos() }),
   }
+}
+
+// ─── Compromissos (horas improdutivas planejadas) ────────────────────────
+
+export function useCompromissos() {
+  return useQuery<Compromisso[]>({
+    queryKey: appKeys.compromissos(),
+    queryFn: fetchCompromissos,
+  })
+}
+
+/** Ocorrências expandidas no intervalo [from, to]. Usado pelo dashboard
+ *  (próximos 3 dias), /exec (dia atual) e /calendario (mês/semana). */
+export function useCompromissoOccurrences(from: string, to: string) {
+  return useQuery<CompromissoOccurrence[]>({
+    queryKey: appKeys.compromissoOccurrences(from, to),
+    queryFn: () => fetchCompromissoOccurrences(from, to),
+    enabled: !!from && !!to,
+  })
+}
+
+export function useCreateCompromisso() {
+  const inv = useAppInvalidator()
+  return useMutation({
+    mutationFn: (body: CompromissoCreate) => createCompromisso(body),
+    onSuccess: () => inv.compromissos(),
+  })
+}
+
+export function useUpdateCompromisso() {
+  const inv = useAppInvalidator()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: CompromissoUpdate }) =>
+      updateCompromisso(id, patch),
+    onSuccess: () => inv.compromissos(),
+  })
+}
+
+export function useDeleteCompromisso() {
+  const inv = useAppInvalidator()
+  return useMutation({
+    mutationFn: (id: string) => deleteCompromisso(id),
+    onSuccess: () => inv.compromissos(),
+  })
 }

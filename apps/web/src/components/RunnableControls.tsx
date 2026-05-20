@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Play } from 'lucide-react'
-import type { ActiveSession } from '../types'
+import type { ActiveSession, Routine } from '../types'
 import {
   startSession, pauseSession, resumeSession, patchQuest,
   startTaskSession, pauseTaskSession, resumeTaskSession, stopTaskSession,
   startRoutineSession, pauseRoutineSession, resumeRoutineSession, stopRoutineSession,
 } from '../api'
+import { appKeys } from '../lib/app-queries'
 import { parseIsoAsUtc, sumClosedSessionsSeconds, formatHMS } from '../utils/datetime'
 import { SessionHistoryModal } from './SessionHistoryModal'
 import { alertDialog } from '../lib/dialog'
@@ -36,6 +38,7 @@ export function RunnableControls({ runnableType, id, sessions, activeSession, on
   done?: boolean
   onReopen?: () => void
 }) {
+  const qc = useQueryClient()
   const isThis = !!activeSession && activeSession.type === runnableType && activeSession.id === id
   const running = isThis && activeSession!.is_active
 
@@ -113,6 +116,18 @@ export function RunnableControls({ runnableType, id, sessions, activeSession, on
         await stopTaskSession(id)
       } else {
         await stopRoutineSession(id, target)
+        if (target) {
+          // Optimistic cache update: marca a rotina como done na cache de
+          // useRoutinesForDate(target). Funciona se a rotina já estava na
+          // lista do dia. Pra rotinas off-schedule arrastadas pro plano, o
+          // invalidate abaixo é que pega — backend agora retorna rotina com
+          // log mesmo se ela não passa em _routine_passes_on.
+          qc.setQueryData<Routine[]>(appKeys.routinesForDate(target), (old) => {
+            if (!old) return old
+            return old.map(r => r.id === id ? { ...r, done: true } : r)
+          })
+          qc.invalidateQueries({ queryKey: appKeys.routines() })
+        }
       }
       onSessionUpdate()
     } catch (err) {

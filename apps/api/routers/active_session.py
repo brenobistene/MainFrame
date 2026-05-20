@@ -80,10 +80,25 @@ def get_active_session(
                     (focused_id,),
                 ).fetchone()
             elif focused_type == "routine":
+                # NOT EXISTS contra routine_logs: depois que o user FINALIZA,
+                # o stop endpoint insere log (data = target/hoje) + fecha
+                # qualquer sessão aberta da rotina. Sem essa cláusula o
+                # fallback devolvia a session fechada e o banner ficava
+                # fantasma com "paused" pra sempre.
+                #
+                # `>= rs.date`: cobre cross-midnight onde session.date pode
+                # ser ontem mas log foi pra hoje (intenção do user). Se há
+                # qualquer log da rotina em ou após a data da sessão, ela
+                # está "completada" — não devolve no fallback.
                 row = conn.execute(
                     """SELECT 'routine' AS type, rs.routine_id AS id, r.title, NULL AS area_slug, rs.started_at, rs.ended_at, rs.id AS sid, rs.date AS routine_date, r.estimated_minutes AS estimated_minutes
                        FROM routine_sessions rs JOIN routines r ON rs.routine_id = r.id
                        WHERE rs.routine_id = ?
+                         AND NOT EXISTS (
+                           SELECT 1 FROM routine_logs rl
+                           WHERE rl.routine_id = rs.routine_id
+                             AND rl.completed_date >= rs.date
+                         )
                        ORDER BY rs.id DESC LIMIT 1""",
                     (focused_id,),
                 ).fetchone()

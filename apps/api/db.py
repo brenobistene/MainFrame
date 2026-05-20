@@ -226,6 +226,30 @@ def init_db() -> None:
             UNIQUE(routine_id, date, session_num)
         );
 
+        -- ─── Compromissos ─────────────────────────────────────────────────
+        -- Horas improdutivas planejadas (corte de cabelo, terapia, médico).
+        -- Filosofia: visualização only — não tem play/pause, não consome
+        -- estimated_minutes de quest. Aparece como alerta no /dashboard
+        -- (próximos 3 dias) e card read-only no /exec do dia que cair.
+        -- Suporta evento único (recurrence='none') OU recorrente (semanal,
+        -- mensal). Fim opcional via end_date (NULL = pra sempre).
+        CREATE TABLE IF NOT EXISTS compromissos (
+            id              TEXT PRIMARY KEY,
+            title           TEXT NOT NULL,
+            notes           TEXT,
+            start_date      TEXT NOT NULL,                 -- YYYY-MM-DD (primeira ocorrência)
+            start_time      TEXT NOT NULL,                 -- HH:MM
+            end_time        TEXT NOT NULL,                 -- HH:MM
+            recurrence      TEXT NOT NULL DEFAULT 'none',  -- 'none'|'weekly'|'monthly'
+            days_of_week    TEXT,                          -- CSV de 0-6 (0=Dom) p/ weekly
+            day_of_month    INTEGER,                       -- 1-31 p/ monthly
+            end_date        TEXT,                          -- YYYY-MM-DD; NULL = sem fim
+            created_at      TEXT DEFAULT (datetime('now')),
+            updated_at      TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_compromissos_start_date
+            ON compromissos(start_date);
+
         -- ─── Hub Finance (v0) ──────────────────────────────────────────────
         -- Módulo financeiro pessoal. Schema mínimo da primeira fatia vertical:
         -- contas, categorias e transações manuais. Cartão de crédito (faturas),
@@ -993,6 +1017,19 @@ def init_db() -> None:
         # quebra streak.
         _try_add_column(conn, "ALTER TABLE build_ritual_session ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0")
         _try_add_column(conn, "ALTER TABLE build_ritual_session ADD COLUMN skip_reason TEXT")
+
+        # Cleanup defensivo: rows de build_ritual_cluster com record_id apontando
+        # pra session que não existe mais (legado de delete_ritual_session que
+        # antes não cascateava). Sem isso essas rows ficam zumbi e bagunçam o
+        # estado do REABRIR. Idempotente — só age se tiver órfãs.
+        try:
+            conn.execute(
+                """DELETE FROM build_ritual_cluster
+                   WHERE record_id IS NOT NULL
+                   AND record_id NOT IN (SELECT id FROM build_ritual_session)"""
+            )
+        except sqlite3.Error:
+            pass  # tabela ainda não existe em DBs muito antigos — segue
 
         # Hub Health Mind — settings do adversarial challenge.
         _try_add_column(conn, "ALTER TABLE health_settings ADD COLUMN mind_challenge_ativo INTEGER NOT NULL DEFAULT 1")
