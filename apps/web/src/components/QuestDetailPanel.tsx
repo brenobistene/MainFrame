@@ -871,6 +871,23 @@ export function QuestDetailPanel({
             />
           </label>
 
+          {project.created_at && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9, fontWeight: 700,
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.22em', textTransform: 'uppercase',
+              }}>CRIADO</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11, fontWeight: 700,
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.05em',
+              }}>{parseIsoAsUtc(project.created_at).toLocaleDateString('pt-BR')}</span>
+            </span>
+          )}
+
           <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {project.status !== 'done' && project.status !== 'cancelled' ? (
               <>

@@ -35,6 +35,7 @@ function mkProject(over: Partial<Project> = {}): Project {
     calendar_event_id: null,
     completed_at: null,
     archived_at: null,
+    created_at: null,
     sort_order: 0,
     valor_acordado: null,
     forma_pagamento_template: null,

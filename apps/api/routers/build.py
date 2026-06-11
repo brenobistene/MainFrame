@@ -1179,7 +1179,6 @@ def _hydrate_ritual(conn, row) -> dict:
     """
     cfg = json.loads(row["schedule_config"]) if row["schedule_config"] else {}
     today = date.today()
-    proxima = _calc_proxima_data(row["cadencia"], cfg, today) if row["ativo"] else None
 
     # Última execução conta tanto sessões completadas quanto skipped — ambas
     # "fecharam" o slot da semana/mês. Streak/stats no front filtra skipped.
@@ -1198,10 +1197,12 @@ def _hydrate_ritual(conn, row) -> dict:
         ).fetchone()
     )
 
-    # dias_atraso: se proxima_data já passou, conta quantos dias
-    dias_atraso = 0
-    if proxima and proxima < today:
-        dias_atraso = (today - proxima).days
+    # proxima_data + dias_atraso ancorados em EXECUÇÃO (não só no calendário):
+    # um ritual perdido NÃO some — fica pendente na data da ocorrência vencida
+    # até ser executado/pulado. Ver _resolve_ritual_schedule.
+    proxima, dias_atraso = _resolve_ritual_schedule(
+        row["cadencia"], cfg, bool(row["ativo"]), ultima, today, row["criado_em"]
+    )
 
     # `nome` foi adicionado via migration — sqlite3.Row tem `keys()`, mas o
     # acesso por nome levanta IndexError se a coluna não foi selecionada,
@@ -1247,6 +1248,80 @@ def _generate_schedule_dates(
         out.append(nxt)
         cursor = nxt + timedelta(days=1)
     return out
+
+
+# Lookback de _prev_occurrence: precisa cobrir o maior período de cadência
+# (anual) com folga, pra garantir que pelo menos uma ocorrência passada caia
+# na janela mesmo que a próxima esteja a quase um ano de distância.
+_PREV_OCCURRENCE_LOOKBACK_DAYS = 400
+
+
+def _prev_occurrence(cadencia: str, cfg: dict, ref: date) -> Optional[date]:
+    """Ocorrência agendada mais recente com data <= ref (ou None se nenhuma
+    cair na janela de lookback). Reusa _generate_schedule_dates olhando pra
+    trás a partir de ref."""
+    d_from = ref - timedelta(days=_PREV_OCCURRENCE_LOOKBACK_DAYS)
+    occs = _generate_schedule_dates(cadencia, cfg, d_from, ref)
+    return occs[-1] if occs else None
+
+
+def _resolve_ritual_schedule(
+    cadencia: str,
+    cfg: dict,
+    ativo: bool,
+    ultima: Optional[str],
+    today: date,
+    criada_em: Optional[str] = None,
+) -> tuple[Optional[date], int]:
+    """Resolve (proxima_data, dias_atraso) ancorando em EXECUÇÃO, não só no
+    calendário.
+
+    Comportamento esperado de qualquer ritual perdido (decidido com o usuário
+    em 2026-06-07): ele NÃO some nem rola pro próximo período silenciosamente —
+    fica pendente na data da ocorrência que venceu até ser executado/pulado.
+
+    Regras:
+      - inativo                          → (None, 0)
+      - nenhuma ocorrência venceu ainda  → (primeira ocorrência futura, 0)
+      - última ocorrência já executada   → (ocorrência seguinte, 0)
+      - última ocorrência NÃO executada  → (essa ocorrência, dias desde ela)
+
+    "Executada" = existe sessão (completada OU skipped) com data_executado na
+    data da ocorrência vencida ou depois. Execução anterior à ocorrência conta
+    pro slot anterior — o slot atual continua em aberto.
+
+    `criada_em` (timestamp ISO) limita o atraso: um ritual não pode estar
+    atrasado por uma ocorrência anterior à sua criação — antes de existir não
+    havia o que executar.
+    """
+    if not ativo:
+        return None, 0
+
+    ultima_ocorrencia = _prev_occurrence(cadencia, cfg, today)
+    # Descarta ocorrência anterior à criação do ritual (não havia o que perder).
+    if (
+        ultima_ocorrencia is not None
+        and criada_em
+        and ultima_ocorrencia.isoformat() < criada_em[:10]
+    ):
+        ultima_ocorrencia = None
+    if ultima_ocorrencia is None:
+        # Nada venceu ainda — aponta pra primeira ocorrência futura.
+        return _calc_proxima_data(cadencia, cfg, today), 0
+
+    # ultima vem como "YYYY-MM-DD" (ou timestamp) — comparação lexical de ISO
+    # date é válida; fatiamos defensivamente caso venha com hora junto.
+    executada = ultima is not None and ultima[:10] >= ultima_ocorrencia.isoformat()
+    if executada:
+        # Slot atual fechado — próxima é a ocorrência seguinte.
+        proxima = _calc_proxima_data(
+            cadencia, cfg, ultima_ocorrencia + timedelta(days=1)
+        )
+        return proxima, 0
+
+    # Slot em aberto: fica pendente na data que venceu. dias_atraso = 0 quando
+    # vence exatamente hoje ("pra hoje"), > 0 quando já passou ("atrasado").
+    return ultima_ocorrencia, (today - ultima_ocorrencia).days
 
 
 @router.get("/rituals/schedule", response_model=list[RitualScheduleItem])

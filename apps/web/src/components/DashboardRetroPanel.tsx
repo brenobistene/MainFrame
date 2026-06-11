@@ -93,9 +93,10 @@ type ClosedItemsResponse = {
   }
 }
 
-type Period = 'semana' | 'mes' | 'trimestre'
+type Period = 'dia' | 'semana' | 'mes' | 'trimestre'
 
 const PERIODS: { value: Period; label: string }[] = [
+  { value: 'dia', label: 'DIA' },
   { value: 'semana', label: 'SEMANA' },
   { value: 'mes', label: 'MÊS' },
   { value: 'trimestre', label: 'TRIMESTRE' },
@@ -113,6 +114,7 @@ function localYmd(d: Date): string {
 }
 
 /** Range FIXO baseado em calendário civil (não rolling N days):
+ *   - dia       → hoje (from=to)
  *   - semana    → segunda atual → domingo da mesma semana
  *   - mes       → dia 1 do mês corrente → último dia
  *   - trimestre → primeiro dia do trimestre civil (Q1/Q2/Q3/Q4) → último dia
@@ -120,6 +122,10 @@ function localYmd(d: Date): string {
 function rangeFor(period: Period): { from: string; to: string } {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  if (period === 'dia') {
+    const iso = localYmd(today)
+    return { from: iso, to: iso }
+  }
   if (period === 'semana') {
     const dow = today.getDay()
     const daysSinceMonday = dow === 0 ? 6 : dow - 1
@@ -162,6 +168,7 @@ const MES_LABEL = [
 ]
 function periodLabel(period: Period): string {
   const today = new Date()
+  if (period === 'dia') return 'HOJE'
   if (period === 'semana') return 'ESTA SEMANA'
   if (period === 'mes') return `${MES_LABEL[today.getMonth()]} · ${today.getFullYear()}`
   const q = Math.floor(today.getMonth() / 3) + 1
@@ -170,6 +177,9 @@ function periodLabel(period: Period): string {
 
 function periodIdTag(period: Period): string {
   const today = new Date()
+  if (period === 'dia') {
+    return `D-${String(today.getDate()).padStart(2, '0')}`
+  }
   if (period === 'semana') {
     // ISO week number (segunda como início) — formato `WK-NN`
     const d = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()))

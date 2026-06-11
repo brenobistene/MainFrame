@@ -4355,16 +4355,20 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
   onDragStart: (item: any) => void
   onDragEnd: () => void
 }) {
-  // Particiona em pendência / quests / tasks / routines preservando a
-  // ordem original. Pendências (Mind/Health diários) ganham seção própria.
+  // Particiona em pendência / quests / tasks / routines / rituais preservando
+  // a ordem original. Pendências (Mind/Health diários) e Rituais (Build)
+  // ganham seção própria — sem o branch de ritual eles caíam no catch-all
+  // `questItems` e apareciam mal-agrupados sob "— sem projeto —".
   const questItems: any[] = []
   const taskItems: any[] = []
   const routineItems: any[] = []
+  const ritualItems: any[] = []
   const pendenciaItems: any[] = []
   for (const it of items) {
     if (it.isPendencia) pendenciaItems.push(it)
     else if (it.isTask) taskItems.push(it)
     else if (it.isRoutine) routineItems.push(it)
+    else if (it.isRitual) ritualItems.push(it)
     else questItems.push(it)
   }
 
@@ -4504,6 +4508,28 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
         </div>
       )}
 
+      {ritualItems.length > 0 && (
+        <div>
+          <div style={sectionHeaderStyle}>
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+            RITUAIS
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {ritualItems.map(item => (
+              <AvailableCard
+                key={item.id}
+                item={item}
+                areas={areas}
+                projects={projects}
+                delivsByProject={delivsByProject}
+                onDragStart={() => onDragStart(item)}
+                onDragEnd={onDragEnd}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {pendenciaItems.length > 0 && (
         <div>
           <div style={sectionHeaderStyle}>
@@ -4540,20 +4566,26 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
   const isRoutine = !!item.isRoutine
   const isTask = !!item.isTask
   const isPendencia = !!item.isPendencia
+  const isRitual = !!item.isRitual
   const done = itemIsDone(item)
   // Quest é o catch-all: só calcula area/parent/deliverable quando NÃO é
-  // task/routine/pendência, pra não confundir tipos.
-  const isQuest = !isTask && !isRoutine && !isPendencia
+  // task/routine/pendência/ritual, pra não confundir tipos.
+  const isQuest = !isTask && !isRoutine && !isPendencia && !isRitual
   const area = isQuest
     ? areas.find(a => a.slug === (item as Quest).area_slug)
     : null
+  // Ritual atrasado = vermelho (urgência viva); previsto = ice (calmo). Mesma
+  // identidade vermelha dos cards de ritual no período (RitualPlannedRow).
+  const ritualAtrasado = isRitual && (item.dias_atraso ?? 0) > 0
   const color = isPendencia
     ? (item.cor || '#7fb8a8')
     : isTask
       ? 'var(--color-gold)'
       : isRoutine
         ? 'var(--color-routine-block)'
-        : (area?.color ?? 'var(--color-text-tertiary)')
+        : isRitual
+          ? (ritualAtrasado ? '#dc2531' : 'var(--color-ice-light)')
+          : (area?.color ?? 'var(--color-text-tertiary)')
 
   const duration = itemDurationMin(item)
   const parent = isQuest && (item as Quest).project_id
@@ -4563,13 +4595,18 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
     ? delivsByProject[parent.id]?.find(d => d.id === (item as Quest).deliverable_id)
     : null
   // Tipo primário no topo
+  const cadenciaLabel = item.cadencia
+    ? String(item.cadencia).charAt(0).toUpperCase() + String(item.cadencia).slice(1)
+    : 'Ritual'
   const typeLabel = isPendencia
     ? (item.origem === 'mind' ? 'Mind · pendência' : 'Health · pendência')
     : isTask
       ? 'Tarefa'
       : isRoutine
         ? 'Rotina'
-        : (area?.name ?? (item as Quest).area_slug)
+        : isRitual
+          ? `Ritual · ${cadenciaLabel}${ritualAtrasado ? ` · ${item.dias_atraso}d atrasado` : ''}`
+          : (area?.name ?? (item as Quest).area_slug)
 
   return (
     <div

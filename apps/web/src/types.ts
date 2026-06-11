@@ -18,6 +18,8 @@ export interface Project {
   completed_at: string | null
   /** ISO quando projeto foi arquivado (gaveta). Null = ativo. */
   archived_at: string | null
+  /** ISO da criação do projeto (UTC). Exibido sutil na meta row do painel. */
+  created_at: string | null
   sort_order: number
   /** Valor cobrado/acordado do projeto (BRL). Null = projeto não-monetizado
    *  (estudo, área Trabalho fixa, hobby). Hub Finance usa pra calcular

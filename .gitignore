@@ -63,6 +63,9 @@ apps/web/public/foto.jpg
 apps/web/public/breno-perfil.jpg
 apps/web/public/*.personal.*
 
+# Refs visuais (CyberPunk 2077 UI) — ~1.8GB de imagens locais, só consulta de design, nunca vão pro repo público
+CyberPunk Refs For MainFrame/
+
 # Documentação local — só os .md públicos vão pro repo. ARCHITECTURE,
 # COMANDOS, scans/auditorias, anotações etc. ficam fora.
 *.md

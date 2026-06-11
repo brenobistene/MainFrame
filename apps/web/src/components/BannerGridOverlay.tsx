@@ -24,9 +24,11 @@ const STAGGER_MS = 750
  *
  * Posicionado via `position: fixed` no mesmo retângulo que o banner.
  */
-export function BannerGridOverlay({ stage, sidebarCollapsed }: {
+export function BannerGridOverlay({ stage, left }: {
   stage: 'entering' | 'exiting'
-  sidebarCollapsed: boolean
+  /** Offset horizontal (px) do banner — acompanha o sidebar/drawer.
+   *  Passado pronto pelo App pra ficar consistente em mobile (0) e desktop. */
+  left: number
 }) {
   const cells = useMemo(() => {
     const arr: { x: number; y: number; delay: number }[] = []
@@ -53,7 +55,7 @@ export function BannerGridOverlay({ stage, sidebarCollapsed }: {
       style={{
         position: 'fixed',
         top: 0,
-        left: sidebarCollapsed ? 72 : 220,
+        left,
         right: 0,
         height: 64,
         zIndex: 100,

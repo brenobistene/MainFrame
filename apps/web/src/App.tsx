@@ -638,6 +638,11 @@ export default function App() {
   // Resolve a largura efetiva do sidebar — em mobile vira drawer de 280px,
   // em desktop fica 72 (collapsed) ou 220 (expanded).
   const sidebarWidth = isCompact ? 280 : (sidebarCollapsed ? 72 : 220)
+  // Deslocamento horizontal do conteúdo fixo/pinned (banner, overlay da
+  // cutscene, margem da área principal). Em mobile o sidebar é drawer overlay
+  // e NÃO ocupa espaço → offset 0 (senão o banner fica empurrado pra direita e
+  // parece cortado na esquerda). Em desktop acompanha a largura do sidebar.
+  const contentOffset = isCompact ? 0 : (sidebarCollapsed ? 72 : 220)
   // Em mobile, o sidebar é escondido por padrão (translateX negativo);
   // só fica visível quando `sidebarOpen=true` via hambúrguer.
   const sidebarTransform = isCompact && !sidebarOpen
@@ -1066,14 +1071,14 @@ export default function App() {
         {bannerLifecycle.stage !== 'idle' && (
           <BannerGridOverlay
             stage={bannerLifecycle.stage}
-            sidebarCollapsed={sidebarCollapsed}
+            left={contentOffset}
           />
         )}
         <div
           className={`hq-grain hq-chrome-hairline hq-scanlines${activeSession.is_active ? '' : ' hq-scanlines--paused'}${lifecycleClass}`}
           style={{
             position: 'fixed', top: 0,
-            left: sidebarCollapsed ? 72 : 220,
+            left: contentOffset,
             right: 0,
             height: 64,
             // Atmosphere "Hell Is Us" — fog azulado por trás do glass.
@@ -1418,7 +1423,7 @@ export default function App() {
         maxWidth: '100%',
         // Mobile: sidebar é drawer overlay, conteúdo ocupa 100%. Desktop:
         // empurra pro lado do sidebar pinned.
-        marginLeft: isCompact ? 0 : (sidebarCollapsed ? 72 : 220),
+        marginLeft: contentOffset,
         marginTop: (isHydrated && activeSession) ? 64 : 0,
         // Duração + curva idênticas ao width do aside pra ambos saírem
         // sincronizados (sem isso, sidebar termina antes e o conteúdo

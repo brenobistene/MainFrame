@@ -17,6 +17,9 @@ class ProjectOut(BaseModel):
     calendar_event_id: Optional[str] = None
     completed_at: Optional[str] = None
     archived_at: Optional[str] = None
+    # Data de criação (datetime('now') UTC, setado no INSERT). Exibido sutil
+    # na meta row do painel do projeto.
+    created_at: Optional[str] = None
     sort_order: int = 0
     # Hub Finance — valor cobrado/acordado do projeto (freelance). Nullable
     # quando o projeto não é monetizado (estudo, hobby, área Trabalho fixa).
@@ -60,5 +63,6 @@ class ProjectUpdate(BaseModel):
 
 # Lista de colunas para SELECTs consistentes
 PROJECT_COLUMNS = """id, title, area_slug, status, priority, deadline, notes,
-                     calendar_event_id, completed_at, archived_at, sort_order,
-                     valor_acordado, forma_pagamento_template, cliente_id"""
+                     calendar_event_id, completed_at, archived_at, created_at,
+                     sort_order, valor_acordado, forma_pagamento_template,
+                     cliente_id"""
