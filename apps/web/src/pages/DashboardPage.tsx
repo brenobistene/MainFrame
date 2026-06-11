@@ -246,8 +246,6 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
   const todayIso = localYmd(today)
   const windowStartDate = useMemo(() => parseYmd(windowRange.start), [windowRange.start])
   const windowEndDate = useMemo(() => parseYmd(windowRange.end), [windowRange.end])
-  const windowStartIso = windowRange.start
-  const windowEndIso = windowRange.end
   const windowDays = useMemo(() => {
     const diff = Math.round((windowEndDate.getTime() - windowStartDate.getTime()) / 86400000)
     return Math.max(1, diff + 1)

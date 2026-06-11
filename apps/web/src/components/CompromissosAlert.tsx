@@ -11,7 +11,7 @@
  * Estética cyber CP2077 — accent âmbar (warning, não alarme) + tech-label.
  */
 import { useMemo, useState } from 'react'
-import { CalendarClock, Bell } from 'lucide-react'
+import { Bell } from 'lucide-react'
 
 import { useCompromissoOccurrences, useCompromissos } from '../lib/app-queries'
 import type { Compromisso } from '../types'

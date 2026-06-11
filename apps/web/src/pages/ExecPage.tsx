@@ -3192,7 +3192,7 @@ function RitualPlannedRow({
             err instanceof Error
               ? err.message
               : 'Erro ao reabrir o ritual. Verifique a conexão e tente de novo.',
-          variant: 'error',
+          variant: 'danger',
         })
       },
     })
