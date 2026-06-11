@@ -106,7 +106,7 @@ echo  Setup concluido com sucesso.
 echo.
 echo  Pra iniciar o MAINFRAME:
 echo    - Duplo clique em "MAINFRAME" no Desktop, OU
-echo    - Duplo clique em start-hub.bat aqui na raiz
+echo    - Duplo clique em start-MainFrame.bat aqui na raiz
 echo.
 echo  O app vai abrir em http://localhost:5174/
 echo ============================================================

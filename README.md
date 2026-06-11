@@ -145,7 +145,7 @@ Se preferir comando por comando, estiver em Windows 10, macOS ou Linux, ou quise
 
 ### Rodando o app
 
-**Windows (recomendado):** duplo clique no atalho **MAINFRAME** do Desktop, ou no `start-hub.bat` da raiz. Sobe backend + frontend em duas abas do Windows Terminal e abre o Chrome em `http://localhost:5174/`.
+**Windows (recomendado):** duplo clique no atalho **MAINFRAME** do Desktop, ou no `start-MainFrame.bat` da raiz. Sobe backend + frontend em duas abas do Windows Terminal e abre o Chrome em `http://localhost:5174/`.
 
 **Manual (qualquer SO):** dois terminais:
 

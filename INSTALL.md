@@ -59,7 +59,7 @@ cd mainframe
 Confirma que entrou na pasta certa:
 ```bash
 ls
-# Deve listar: apps, README.md, setup.bat, start-hub.bat, tools, ...
+# Deve listar: apps, README.md, setup.bat, start-MainFrame.bat, tools, ...
 ```
 
 ---
@@ -117,7 +117,7 @@ npm run dev
 
 Deve imprimir um link tipo `Local: http://localhost:5174/`. Abrir esse link no navegador.
 
-> No Windows, há uma alternativa: duplo clique em `start-hub.bat` na raiz do repo. Ele abre 2 abas do Windows Terminal automaticamente e abre o Chrome no link. Vale o esforço de configurar uma vez.
+> No Windows, há uma alternativa: duplo clique em `start-MainFrame.bat` na raiz do repo. Ele abre 2 abas do Windows Terminal automaticamente e abre o Chrome no link. Vale o esforço de configurar uma vez.
 
 ---
 

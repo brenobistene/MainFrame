@@ -8,13 +8,13 @@ $ErrorActionPreference = 'Stop'
 
 # Resolve caminhos absolutos
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$batPath     = Join-Path $projectRoot 'start-hub.bat'
+$batPath     = Join-Path $projectRoot 'start-MainFrame.bat'
 $iconPath    = Join-Path $PSScriptRoot 'mainframe.ico'
 $desktopPath = [Environment]::GetFolderPath('Desktop')
 $shortcutPath = Join-Path $desktopPath 'MAINFRAME.lnk'
 
 # Sanity checks
-if (-not (Test-Path $batPath))  { throw "start-hub.bat nao encontrado em $batPath" }
+if (-not (Test-Path $batPath))  { throw "start-MainFrame.bat nao encontrado em $batPath" }
 if (-not (Test-Path $iconPath)) { throw "mainframe.ico nao encontrado em $iconPath" }
 
 $shell = New-Object -ComObject WScript.Shell
