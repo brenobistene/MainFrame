@@ -752,32 +752,37 @@ function CompromissoRow({ item, onClick, index = 0 }: {
   const isReceita = item.tipo === 'receita'
   const isCompleted = item.status === 'paga' || item.status === 'recebida'
   const isAtrasada = item.status === 'atrasada'
-  const dotColor = isCompleted
-    ? 'var(--color-success-light)'
-    : isAtrasada
-      ? 'var(--color-accent-vivid)'
-      : 'rgba(143, 191, 211, 0.55)'
-  const dotGlow = isCompleted
-    ? 'rgba(94, 122, 82, 0.55)'
-    : isAtrasada
-      ? 'rgba(159, 18, 57, 0.55)'
-      : 'rgba(143, 191, 211, 0.30)'
-  const valorColor = isCompleted
-    ? 'var(--color-text-primary)'
-    : isReceita
-      ? 'var(--color-success-light)'
-      : 'var(--color-text-secondary)'
-  // Border-left semântica (estado da row no scope da month).
-  // Wishlist tem cor própria (âmbar) — reserva é compromisso aspiracional
-  // virtual, semanticamente diferente de bill/dívida/fatura.
   const isWishlist = item.kind === 'wishlist'
-  const borderLeftColor = isAtrasada
-    ? 'var(--color-accent-primary)'
-    : isCompleted
-      ? 'var(--color-success)'
+
+  // Distinção pago x pendente em 3 canais (cor nunca é o único sinal):
+  // (1) marcador-quadrado, (2) label de status explícito, (3) brilho da row.
+  // Quitado RECUA (opacity baixa), em aberto fica em destaque, atrasado comanda.
+
+  // (1) Marcador — linguagem PulseSquare: vazado = em aberto (slot por preencher),
+  // oxblood sólido = atrasado (ação agora), verde dessaturado sólido = quitado,
+  // vazado gold = reserva de wishlist (compromisso aspiracional).
+  const markerBg = isCompleted
+    ? 'var(--color-success)'
+    : isAtrasada
+      ? 'var(--color-accent-primary)'
+      : 'transparent'
+  const markerShadow = isCompleted
+    ? 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)'
+    : isAtrasada
+      ? '0 0 7px rgba(159, 18, 57, 0.6)'
       : isWishlist
-        ? 'var(--color-warning)'
-        : 'rgba(143, 191, 211, 0.30)'
+        ? 'inset 0 0 0 1.5px var(--color-warning)'
+        : 'inset 0 0 0 1.5px rgba(143, 191, 211, 0.85)'
+
+  // (3) Valor: quitado muted (recua), atrasado oxblood, em aberto presente.
+  const valorColor = isCompleted
+    ? 'var(--color-text-muted)'
+    : isAtrasada
+      ? 'var(--color-accent-light)'
+      : isReceita
+        ? 'var(--color-success-light)'
+        : 'var(--color-text-primary)'
+
   const hoverGlowColor = isAtrasada
     ? 'rgba(159, 18, 57, 0.20)'
     : isCompleted
@@ -786,19 +791,39 @@ function CompromissoRow({ item, onClick, index = 0 }: {
         ? 'rgba(192, 138, 58, 0.20)'
         : 'rgba(143, 191, 211, 0.15)'
 
-  // Sub-line cyber-mono uppercase: "PAGA · 06/05" / "VENCE 15/05" / "DIA 12"
+  // (2) Label de status explícito + data, colorido por estado.
   let subText: string
+  let subColor: string
   if (isCompleted && item.data_pagamento) {
     const [, m, d] = item.data_pagamento.split('-')
-    subText = `${isReceita ? 'RCB' : 'PG'} · ${d}/${m}`
+    subText = `${isReceita ? 'RECEBIDO' : 'PAGO'} · ${d}/${m}`
+    subColor = 'var(--color-success-light)'
+  } else if (isAtrasada) {
+    const quando = item.dia
+      ? ` · DIA ${item.dia}`
+      : item.data_prevista
+        ? ` · ${item.data_prevista.split('-')[2]}/${item.data_prevista.split('-')[1]}`
+        : ''
+    subText = `ATRASADO${quando}`
+    subColor = 'var(--color-accent-light)'
   } else if (item.dia) {
-    subText = `${isReceita ? 'CAI' : 'VC'} DIA ${item.dia}`
+    subText = `${isReceita ? 'A CAIR' : 'A VENCER'} · DIA ${item.dia}`
+    subColor = isWishlist ? 'var(--color-warning)' : 'var(--color-ice)'
   } else if (item.data_prevista) {
     const [, m, d] = item.data_prevista.split('-')
-    subText = `${isReceita ? 'CAI' : 'VC'} ${d}/${m}`
+    subText = `${isReceita ? 'A CAIR' : 'A VENCER'} · ${d}/${m}`
+    subColor = isWishlist ? 'var(--color-warning)' : 'var(--color-ice)'
   } else {
     subText = 'SEM DATA FIXA'
+    subColor = 'var(--color-text-muted)'
   }
+
+  // Quitado recua; atrasado ganha tint oxblood de fundo (substitui a
+  // border-left colorida — padrão banido no DESIGN.md).
+  const rowOpacity = isCompleted ? 0.5 : 1
+  const rowBg = isAtrasada
+    ? 'linear-gradient(0deg, rgba(159, 18, 57, 0.10), rgba(159, 18, 57, 0.10)), rgba(8, 12, 18, 0.55)'
+    : 'rgba(8, 12, 18, 0.55)'
 
   void index
   return (
@@ -807,25 +832,27 @@ function CompromissoRow({ item, onClick, index = 0 }: {
       onClick={onClick}
       style={{
         cursor: 'pointer',
-        background: 'rgba(8, 12, 18, 0.55)',
+        background: rowBg,
         border: '1px solid rgba(143, 191, 211, 0.18)',
-        borderLeft: `2px solid ${borderLeftColor}`,
+        opacity: rowOpacity,
         padding: '8px 12px',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         gap: 12,
         borderRadius: 0,
         clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
-        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
+        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s',
       }}
       onMouseEnter={e => {
         e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.45)'
         e.currentTarget.style.boxShadow = `0 0 10px ${hoverGlowColor}`
         e.currentTarget.style.transform = 'translateX(2px)'
+        if (isCompleted) e.currentTarget.style.opacity = '0.85'
       }}
       onMouseLeave={e => {
         e.currentTarget.style.borderColor = 'rgba(143, 191, 211, 0.18)'
         e.currentTarget.style.boxShadow = 'none'
         e.currentTarget.style.transform = 'translateX(0)'
+        if (isCompleted) e.currentTarget.style.opacity = String(rowOpacity)
       }}
       title={
         item.kind === 'bill' ? 'abrir contas/receitas fixas' :
@@ -836,11 +863,13 @@ function CompromissoRow({ item, onClick, index = 0 }: {
       }
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        {/* Square dot com glow — substitui o circle */}
+        {/* Marcador-quadrado por estado: vazado = em aberto, oxblood sólido =
+            atrasado, verde sólido = quitado, vazado gold = wishlist. */}
         <span style={{
-          width: 8, height: 8,
-          background: dotColor, flexShrink: 0,
-          boxShadow: `0 0 6px ${dotGlow}`,
+          width: 8, height: 8, flexShrink: 0,
+          background: markerBg,
+          boxShadow: markerShadow,
+          opacity: isCompleted ? 0.7 : 1,
         }} />
         <div style={{ minWidth: 0 }}>
           <div style={{
@@ -864,7 +893,7 @@ function CompromissoRow({ item, onClick, index = 0 }: {
               </span>
             )}
           </div>
-          <div style={listRowSub}>{subText}</div>
+          <div style={{ ...listRowSub, color: subColor }}>{subText}</div>
         </div>
       </div>
       <span className="hq-money" style={{

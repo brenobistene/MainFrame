@@ -179,6 +179,6 @@ Sem essas variáveis, o app funciona normalmente sem integração externa.
 
 ## Status
 
-Projeto pessoal em iteração ativa. Versão atual: **v0.8.2**. Breaking changes podem acontecer a qualquer momento — não use em ambiente onde você não seja o próprio usuário.
+Projeto pessoal em iteração ativa. Versão atual: **v0.8.3**. Breaking changes podem acontecer a qualquer momento — não use em ambiente onde você não seja o próprio usuário.
 
 Issues e PRs estão abertos, mas não há compromisso de responder rápido.
