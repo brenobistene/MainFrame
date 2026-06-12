@@ -16,6 +16,7 @@ const TABS: { path: string; label: string }[] = [
   { path: '/lang/exec',    label: 'EXEC' },
   { path: '/lang/escrita', label: 'ESCRITA' },
   { path: '/lang/fala',    label: 'FALA' },
+  { path: '/lang/fontes',  label: 'FONTES' },
   { path: '/lang/acervo',  label: 'ACERVO' },
   { path: '/lang/config',  label: 'CONFIG' },
 ]

@@ -354,6 +354,33 @@ export interface LangPiece {
   criado_em: string
 }
 
+/** Análise do dia pela IA tutora — comparativa, sob demanda. */
+export interface LangAnalysis {
+  id: number
+  date: string
+  analise: {
+    resumo: string
+    padroes: string[]
+    comparacao: string
+    foco_sugerido: string
+  } | null
+  criado_em: string
+}
+
+/** Fonte = corpus de mineração (lição/transcrição/letra). NÃO é a Library. */
+export interface LangSource {
+  id: number
+  language_id: number
+  tipo: 'lesson' | 'video' | 'music' | 'article' | 'conversation' | 'other'
+  titulo: string
+  origem: string | null
+  texto: string | null
+  audio_url: string | null
+  library_item_id: number | null
+  cards_count: number
+  criado_em: string
+}
+
 /** Resumo de métricas do dashboard MAIN (observação, estilo Health). */
 export interface LangMetricsSummary {
   tempo_30d_min: number

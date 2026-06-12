@@ -5,16 +5,22 @@
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Play, Plus } from 'lucide-react'
+import { Play, Plus, Sparkles } from 'lucide-react'
 
-import { fetchLangMetricsSummary } from '../../api'
+import {
+  analyzeLangToday,
+  fetchLangAiStatus,
+  fetchLangAnalyses,
+  fetchLangMetricsSummary,
+  reportApiError,
+} from '../../api'
 import { TechLabel } from '../../components/ui/CyberShell'
 import {
   useCreateLangCard,
   useLangSettings,
   useLangToday,
 } from '../../lib/lang-queries'
-import type { LangMetricsSummary } from '../../types'
+import type { LangAnalysis, LangMetricsSummary } from '../../types'
 
 function StatBlock({ label, value, suffix }: { label: string; value: number | string; suffix?: string }) {
   return (
@@ -77,10 +83,34 @@ export function LangMainPage() {
   const [frente, setFrente] = useState('')
   const [verso, setVerso] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [aiOn, setAiOn] = useState(false)
+  const [analise, setAnalise] = useState<LangAnalysis | null>(null)
+  const [analisando, setAnalisando] = useState(false)
+  const [analiseErro, setAnaliseErro] = useState<string | null>(null)
 
   useEffect(() => {
     fetchLangMetricsSummary().then(setMetrics).catch(() => setMetrics(null))
   }, [today?.reviews_hoje])
+
+  useEffect(() => {
+    fetchLangAiStatus().then(s => setAiOn(s.configured)).catch(() => setAiOn(false))
+    fetchLangAnalyses(1).then(list => setAnalise(list[0] ?? null)).catch(() => undefined)
+  }, [])
+
+  async function rodarAnalise() {
+    if (analisando) return
+    setAnalisando(true)
+    setAnaliseErro(null)
+    try {
+      setAnalise(await analyzeLangToday())
+    } catch (err) {
+      reportApiError('LangMain.analise', err)
+      const msg = err instanceof Error ? err.message : ''
+      setAnaliseErro(msg.includes('502') ? 'IA falhou (rate limit?) · tente de novo' : 'análise indisponível')
+    } finally {
+      setAnalisando(false)
+    }
+  }
 
   async function handleQuickAdd() {
     const f = frente.trim()
@@ -153,6 +183,71 @@ export function LangMainPage() {
       {metrics && (
         <div style={{ marginBottom: 32 }}>
           <Heatmap30d data={metrics.heatmap} />
+        </div>
+      )}
+
+      {/* Análise do dia — a tutora julga o progresso COMPARANDO com as
+          semanas anteriores (pedido literal). Sob demanda, nunca automática. */}
+      {aiOn && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
+            <TechLabel>ANÁLISE DO DIA</TechLabel>
+            <button
+              type="button"
+              className="hq-btn hq-btn--ghost"
+              onClick={rodarAnalise}
+              disabled={analisando}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px' }}
+            >
+              <Sparkles size={12} strokeWidth={2} />
+              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em' }}>
+                {analisando ? 'ANALISANDO…' : analise ? 'ANALISAR DE NOVO' : 'ANALISAR'}
+              </span>
+            </button>
+            {analise && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--color-text-muted)', letterSpacing: '0.12em' }}>
+                {analise.date.split('-').reverse().join('/')}
+              </span>
+            )}
+          </div>
+          {analiseErro && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-warning)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+              // {analiseErro}
+            </div>
+          )}
+          {analise?.analise && (
+            <div style={{
+              border: '1px solid var(--color-border)',
+              background: 'rgba(8, 12, 18, 0.45)',
+              padding: '14px 18px',
+              maxWidth: 760,
+            }}>
+              <p style={{ fontSize: 13, color: 'var(--color-text-primary)', lineHeight: 1.6, margin: '0 0 10px' }}>
+                {analise.analise.resumo}
+              </p>
+              {analise.analise.padroes.length > 0 && (
+                <ul style={{ margin: '0 0 10px', paddingLeft: 18 }}>
+                  {analise.analise.padroes.map((p, i) => (
+                    <li key={i} style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', lineHeight: 1.55 }}>{p}</li>
+                  ))}
+                </ul>
+              )}
+              {analise.analise.comparacao && (
+                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '0 0 10px', lineHeight: 1.55 }}>
+                  {analise.analise.comparacao}
+                </p>
+              )}
+              {analise.analise.foco_sugerido && (
+                <div style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700,
+                  letterSpacing: '0.14em', textTransform: 'uppercase',
+                  color: 'var(--color-ice-light)',
+                }}>
+                  FOCO · {analise.analise.foco_sugerido}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

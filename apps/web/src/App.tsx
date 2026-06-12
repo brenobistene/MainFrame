@@ -71,9 +71,11 @@ const LangExecPage       = lazy(() => import('./pages/lang/LangExecPage').then(m
 const LangEscritaPage    = lazy(() => import('./pages/lang/LangEscritaPage').then(m => ({ default: m.LangEscritaPage })))
 const LangFalaPage       = lazy(() => import('./pages/lang/LangFalaPage').then(m => ({ default: m.LangFalaPage })))
 const LangAcervoPage     = lazy(() => import('./pages/lang/LangAcervoPage').then(m => ({ default: m.LangAcervoPage })))
+const LangFontesPage     = lazy(() => import('./pages/lang/LangFontesPage').then(m => ({ default: m.LangFontesPage })))
 const LangConfigPage     = lazy(() => import('./pages/lang/LangConfigPage').then(m => ({ default: m.LangConfigPage })))
 import { useRituals } from './lib/build-queries'
 import { useHealthPending } from './lib/health-queries'
+import { useLangSettings, useLangToday } from './lib/lang-queries'
 
 /** Item de navegação cyber HUD. `label` aparece quando expandido; `abbr`
  *  (3 letras mono uppercase) aparece quando colapsado — vibe CP2077. */
@@ -629,6 +631,15 @@ export default function App() {
   const { data: healthPending = [] } = useHealthPending()
   const healthPendingCount = healthPending.length
 
+  // Lang Lab → badge NEUTRO com reviews due (due existe todo dia por design
+  // do SRS — âmbar aqui viraria nag permanente; âmbar é só pra ausência).
+  // Respeita lang_settings.sidebar_badge_visivel.
+  const { data: langToday } = useLangToday()
+  const { data: langSettings } = useLangSettings()
+  const langBadgeCount = (langSettings?.sidebar_badge_visivel ?? true)
+    ? (langToday?.due ?? 0)
+    : 0
+
   // Contadores ao vivo pros badges do sidebar — sinal de "produto vivo"
   // (Linear/Cron mostram # de unread/overdue ao lado dos itens). Apenas
   // overdue de Tarefas (urgência real) e ativas de Quests (volume geral).
@@ -644,6 +655,7 @@ export default function App() {
       '/arquivados': { count: archived, urgent: false },
       '/build': { count: ritualsAtrasados, urgent: true },
       '/health': { count: healthPendingCount, urgent: false, tone: 'amber' as const },
+      '/lang': { count: langBadgeCount, urgent: false },
     } as Record<string, { count: number; urgent: boolean; tone?: 'amber' }>
   })()
 
@@ -1530,6 +1542,7 @@ export default function App() {
             <Route path="exec" element={<LangExecPage />} />
             <Route path="escrita" element={<LangEscritaPage />} />
             <Route path="fala" element={<LangFalaPage />} />
+            <Route path="fontes" element={<LangFontesPage />} />
             <Route path="acervo" element={<LangAcervoPage />} />
             <Route path="config" element={<LangConfigPage />} />
           </Route>

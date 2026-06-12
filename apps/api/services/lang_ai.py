@@ -151,6 +151,34 @@ async def piece_feedback(settings: dict, texto: str, prompt: Optional[str]) -> d
                 "frases_pra_card": []}
 
 
+async def daily_analysis(settings: dict, contexto: dict) -> dict:
+    """Análise do dia com comparação temporal (PLAN §3.8) — "julgar meu
+    progresso" exige comparar com as semanas anteriores, não fotografar o
+    dia. Recebe contexto pré-agregado pelo router (privacidade e tokens:
+    só estatísticas e textos do dia, nunca o histórico bruto inteiro)."""
+    cfg = get_config(settings)
+    system = _PERSONA + (
+        " Você vai analisar o dia de estudo do aluno comparando com as "
+        "janelas de 7 e 30 dias. Responda APENAS com JSON válido, sem "
+        "markdown: {\"resumo\": str (2-3 frases, observação factual), "
+        "\"padroes\": [str] (padrões de erro/acerto recorrentes, com o "
+        "porquê em uma linha), \"comparacao\": str (evolução vs 7d/30d, "
+        "números quando houver), \"foco_sugerido\": str (UM foco concreto "
+        "pra próxima sessão)}. Tom: observação, nunca cobrança — aponte "
+        "fatos e mecanismos, não esforço."
+    )
+    user = json.dumps(contexto, ensure_ascii=False)
+    raw = await _call(cfg, system, user)
+    try:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned[cleaned.find("{"):cleaned.rfind("}") + 1]
+        return json.loads(cleaned)
+    except (ValueError, AttributeError):
+        return {"resumo": raw, "padroes": [], "comparacao": "", "foco_sugerido": ""}
+
+
 async def compose_assist(settings: dict, rascunho: str, intencao: Optional[str]) -> str:
     """Ajuda DURANTE a escrita (a dor literal: 'concatenar ideias').
     Sugere conectores/estrutura SEM escrever o texto pelo aluno."""

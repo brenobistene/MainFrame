@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search, Play, Check, Pause, Square, RotateCcw, ChevronRight, ChevronDown } from 'lucide-react'
+import { Sunrise, Sun, Moon, X, ArrowRight, Calendar as CalendarIcon, Trash2, AlertTriangle, Search, Play, Check, Pause, Square, RotateCcw, ChevronRight, ChevronDown, Languages } from 'lucide-react'
 import type { ActiveSession, Area, BuildRitual, Deliverable, Project, Quest, Routine, Task } from '../types'
 import {
   fetchDeliverables, updateTask, deleteTask, reportApiError,
@@ -9,6 +9,7 @@ import {
 } from '../api'
 import { useTasks, useRoutines, useRoutinesForDate, useAppInvalidator } from '../lib/app-queries'
 import { useCreateHealthRecord, useUpdateHealthRecord } from '../lib/health-queries'
+import { useLangSettings, useLangToday } from '../lib/lang-queries'
 import {
   useDiaPendencias,
   useInvalidateDiaPendencias,
@@ -345,9 +346,15 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
   const invalidateDiaPendencias = useInvalidateDiaPendencias()
   const [showPlanner, setShowPlanner] = useState(false)
   const [plannerRange, setPlannerRange] = useState<DateRange>(() => computeRange('7d'))
-  const [plannerTypes, setPlannerTypes] = useState<Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>>(
-    new Set(['quest', 'task', 'routine', 'ritual', 'mind', 'health'])
+  const [plannerTypes, setPlannerTypes] = useState<Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health' | 'lang'>>(
+    new Set(['quest', 'task', 'routine', 'ritual', 'mind', 'health', 'lang'])
   )
+  // Lang Lab — fila do dia vira item planejável (id fixo 'lang', padrão
+  // ritual: alocação por período aqui, player completo em /lang/exec).
+  const { data: langToday } = useLangToday()
+  const { data: langSettings } = useLangSettings()
+  const langPlannable = (langSettings?.exec_card_visivel ?? true) && !!langToday
+  const langFilaCount = (langToday?.due ?? 0) + (langToday?.novos_disponiveis ?? 0)
   const [plannerIncludeUndated, setPlannerIncludeUndated] = useState(true)
   // Mostrar quests de TODOS os entregáveis (não só o ativo de cada projeto).
   // Default false — mantém o filtro padrão "só o entregável corrente".
@@ -718,6 +725,20 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       }
     }
 
+    // Lang Lab — item único 'lang' quando há fila (due+novos). Done (fila
+    // zerada) fica fora dos disponíveis, igual pendência registrada.
+    if (plannerTypes.has('lang') && langPlannable && langFilaCount > 0) {
+      items.push({
+        id: 'lang',
+        title: 'Lang Lab',
+        estimated_minutes: langToday?.daily_goal_min ?? 0,
+        isLang: true,
+        due: langToday?.due ?? 0,
+        novos: langToday?.novos_disponiveis ?? 0,
+        done: false,
+      })
+    }
+
     return items.sort((a, b) => {
       // Pendências vão pro fim — depois de quests/tasks/routines, antes
       // de tudo desordenar.
@@ -1022,6 +1043,18 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       done: p.done,
       existing_record_id: p.existing_record_id,
     })),
+    // Lang Lab — SEMPRE no pool quando o módulo responde (mesmo com fila
+    // zerada): se 'lang' está no dayPlan, a row do período precisa resolver
+    // o id, senão o item planejado sumiria no reload.
+    ...(langPlannable ? [{
+      id: 'lang',
+      title: 'Lang Lab',
+      estimated_minutes: langToday?.daily_goal_min ?? 0,
+      isLang: true,
+      due: langToday?.due ?? 0,
+      novos: langToday?.novos_disponiveis ?? 0,
+      done: langFilaCount === 0,
+    }] : []),
   ]
   const plannedItems = fullPool.filter(item => plannedItemIds.includes(item.id))
   const questCount = plannedItems.filter(i => !i.isTask && !i.isRoutine).length
@@ -1841,6 +1874,17 @@ function PeriodSection({
                 />
               )
             }
+            // Lang Lab — alocação por período; o player completo vive em
+            // /lang/exec (mesma filosofia do ritual).
+            if ((item as any).isLang) {
+              return (
+                <LangPlannedRow
+                  key={item.id}
+                  item={item}
+                  onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
+                />
+              )
+            }
             // Ritual (Build) — alocação simples por período. Player completo
             // continua no DiaPendenciasBlock no topo do /dia. Aqui é só sinal
             // de "planejado pra este período".
@@ -1944,8 +1988,8 @@ function PlannerDrawer({
   setDayPlan: (fn: (prev: any) => any) => void
   plannerRange: DateRange
   setPlannerRange: (r: DateRange) => void
-  plannerTypes: Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>
-  setPlannerTypes: (fn: (prev: Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>) => Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'>) => void
+  plannerTypes: Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health' | 'lang'>
+  setPlannerTypes: (fn: (prev: Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health' | 'lang'>) => Set<'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health' | 'lang'>) => void
   plannerIncludeUndated: boolean
   setPlannerIncludeUndated: (v: boolean) => void
   plannerShowAllDeliverables: boolean
@@ -2021,13 +2065,14 @@ function PlannerDrawer({
     return () => clearTimeout(t)
   }, [flashPeriod])
 
-  const typeChips: { key: 'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health'; label: string }[] = [
+  const typeChips: { key: 'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health' | 'lang'; label: string }[] = [
     { key: 'quest', label: 'Quests' },
     { key: 'task', label: 'Tarefas' },
     { key: 'routine', label: 'Rotinas' },
     { key: 'ritual', label: 'Rituais' },
     { key: 'mind', label: 'Mind' },
     { key: 'health', label: 'Exercícios' },
+    { key: 'lang', label: 'Lang Lab' },
   ]
 
   return (
@@ -3098,6 +3143,90 @@ function itemIsDone(item: any): boolean {
  * Mostra: título, cadência, duração alvo, e indicador done quando o ritual
  * já foi executado hoje (vem de `ultima_execucao === todayIso`).
  */
+/** Lang Lab planejado num período — alocação simples (padrão ritual):
+ *  o player completo, com bloqueio de sessão e banner, vive em /lang/exec.
+ *  Mostra os fatos da fila e ESTUDAR navega pra lá. */
+function LangPlannedRow({
+  item,
+  onRemoveFromPlan,
+}: {
+  item: any
+  onRemoveFromPlan: () => void
+}) {
+  const navigate = useNavigate()
+  const isDone = !!item.done
+  const sub = isDone
+    ? 'FILA LIMPA POR HOJE'
+    : [
+        item.due > 0 ? `${item.due} REVIEWS` : null,
+        item.novos > 0 ? `${item.novos} NOVOS` : null,
+      ].filter(Boolean).join(' · ')
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr auto auto',
+        gap: 10,
+        alignItems: 'center',
+        padding: '8px 12px',
+        background: 'rgba(8, 12, 18, 0.55)',
+        border: '1px solid rgba(143, 191, 211, 0.22)',
+        opacity: isDone ? 0.55 : 1,
+      }}
+    >
+      <span style={{ color: 'var(--color-ice)', display: 'flex' }}>
+        <Languages size={14} strokeWidth={1.8} />
+      </span>
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{
+          fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
+          color: 'var(--color-text-primary)',
+          textDecoration: isDone ? 'line-through' : 'none',
+        }}>
+          Lang Lab
+        </span>
+        <span style={{
+          fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+          letterSpacing: '0.22em', textTransform: 'uppercase',
+          color: 'var(--color-text-muted)',
+        }}>
+          {sub}
+        </span>
+      </div>
+      {!isDone && (
+        <button
+          type="button"
+          onClick={() => navigate('/lang/exec')}
+          title="Estudar agora"
+          style={{
+            background: 'rgba(143, 191, 211, 0.10)',
+            border: '1px solid var(--color-ice)',
+            color: 'var(--color-ice-light)',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 9, fontWeight: 700,
+            letterSpacing: '0.22em', textTransform: 'uppercase',
+            padding: '5px 12px',
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+          }}
+        >
+          <Play size={11} strokeWidth={2} />
+          Estudar
+        </button>
+      )}
+      <button
+        type="button"
+        className="hq-icon-btn"
+        onClick={onRemoveFromPlan}
+        title="Remover do plano"
+        aria-label="Remover do plano"
+      >
+        <X size={13} strokeWidth={1.8} />
+      </button>
+    </div>
+  )
+}
+
 function RitualPlannedRow({
   item,
   onRemoveFromPlan,
@@ -4364,11 +4493,13 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
   const routineItems: any[] = []
   const ritualItems: any[] = []
   const pendenciaItems: any[] = []
+  const langItems: any[] = []
   for (const it of items) {
     if (it.isPendencia) pendenciaItems.push(it)
     else if (it.isTask) taskItems.push(it)
     else if (it.isRoutine) routineItems.push(it)
     else if (it.isRitual) ritualItems.push(it)
+    else if (it.isLang) langItems.push(it)
     else questItems.push(it)
   }
 
@@ -4551,6 +4682,28 @@ function AvailableList({ items, areas, projects, delivsByProject, onDragStart, o
           </div>
         </div>
       )}
+
+      {langItems.length > 0 && (
+        <div>
+          <div style={sectionHeaderStyle}>
+            <span style={{ color: 'var(--color-ice)', opacity: 0.85, marginRight: 4, letterSpacing: 0 }}>//</span>
+            LANG LAB
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {langItems.map(item => (
+              <AvailableCard
+                key={item.id}
+                item={item}
+                areas={areas}
+                projects={projects}
+                delivsByProject={delivsByProject}
+                onDragStart={() => onDragStart(item)}
+                onDragEnd={onDragEnd}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -4567,10 +4720,11 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
   const isTask = !!item.isTask
   const isPendencia = !!item.isPendencia
   const isRitual = !!item.isRitual
+  const isLang = !!item.isLang
   const done = itemIsDone(item)
   // Quest é o catch-all: só calcula area/parent/deliverable quando NÃO é
-  // task/routine/pendência/ritual, pra não confundir tipos.
-  const isQuest = !isTask && !isRoutine && !isPendencia && !isRitual
+  // task/routine/pendência/ritual/lang, pra não confundir tipos.
+  const isQuest = !isTask && !isRoutine && !isPendencia && !isRitual && !isLang
   const area = isQuest
     ? areas.find(a => a.slug === (item as Quest).area_slug)
     : null
@@ -4585,7 +4739,9 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
         ? 'var(--color-routine-block)'
         : isRitual
           ? (ritualAtrasado ? '#dc2531' : 'var(--color-ice-light)')
-          : (area?.color ?? 'var(--color-text-tertiary)')
+          : isLang
+            ? 'var(--color-ice)'
+            : (area?.color ?? 'var(--color-text-tertiary)')
 
   const duration = itemDurationMin(item)
   const parent = isQuest && (item as Quest).project_id
@@ -4606,7 +4762,9 @@ function AvailableCard({ item, areas, projects, delivsByProject, onDragStart, on
         ? 'Rotina'
         : isRitual
           ? `Ritual · ${cadenciaLabel}${ritualAtrasado ? ` · ${item.dias_atraso}d atrasado` : ''}`
-          : (area?.name ?? (item as Quest).area_slug)
+          : isLang
+            ? `Lang Lab · ${item.due ?? 0} reviews${item.novos ? ` · ${item.novos} novos` : ''}`
+            : (area?.name ?? (item as Quest).area_slug)
 
   return (
     <div

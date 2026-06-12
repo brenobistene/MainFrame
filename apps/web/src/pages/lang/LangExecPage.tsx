@@ -15,7 +15,9 @@ import { Ban, Pencil, RotateCcw, Square, Volume2 } from 'lucide-react'
 
 import {
   BASE,
+  askLangAi,
   fetchActiveSession,
+  fetchLangAiStatus,
   fetchLangQueue,
   fetchLangSettings,
   reportApiError,
@@ -52,6 +54,13 @@ export function LangExecPage() {
   const [editFrente, setEditFrente] = useState('')
   const [editVerso, setEditVerso] = useState('')
   const [reviewedCount, setReviewedCount] = useState(0)
+  // Dúvida contextual — pergunta à tutora COM o card como contexto, sem
+  // sair do player (pedido literal: não sair do MAINFRAME pra pesquisar).
+  const [aiOn, setAiOn] = useState(false)
+  const [duvidaOpen, setDuvidaOpen] = useState(false)
+  const [duvida, setDuvida] = useState('')
+  const [duvidaResposta, setDuvidaResposta] = useState<string | null>(null)
+  const [duvidaLoading, setDuvidaLoading] = useState(false)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const card = cards[idx] ?? null
@@ -116,6 +125,7 @@ export function LangExecPage() {
         const s = await fetchLangSettings()
         if (cancelled) return
         setSettings(s)
+        fetchLangAiStatus().then(st => { if (!cancelled) setAiOn(st.configured) }).catch(() => undefined)
         const active = await fetchActiveSession().catch(() => null)
         if (cancelled) return
         if (active && active.type !== 'lang') {
@@ -147,9 +157,27 @@ export function LangExecPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card?.id, revealed, editing])
 
+  async function perguntarDuvida() {
+    const q = duvida.trim()
+    if (!q || !card || duvidaLoading) return
+    setDuvidaLoading(true)
+    try {
+      const a = await askLangAi(q, card.frente)
+      setDuvidaResposta(a.resposta)
+      setDuvida('')
+    } catch (err) {
+      reportApiError('LangExec.duvida', err)
+      setDuvidaResposta('(IA falhou — tente de novo em instantes)')
+    } finally {
+      setDuvidaLoading(false)
+    }
+  }
+
   const advance = useCallback(async () => {
     setRevealed(false)
     setEditing(false)
+    setDuvidaOpen(false)
+    setDuvidaResposta(null)
     if (idx + 1 < cards.length) {
       setIdx(idx + 1)
       return
@@ -459,6 +487,66 @@ export function LangExecPage() {
                 </button>
               </div>
             )
+          )}
+
+          {/* Dúvida contextual com a tutora — só após revelar (a dúvida
+              real nasce vendo a resposta). */}
+          {aiOn && revealed && !editing && (
+            <div style={{ marginTop: 18 }}>
+              {!duvidaOpen ? (
+                <button
+                  type="button"
+                  className="hq-btn hq-btn--ghost"
+                  onClick={() => setDuvidaOpen(true)}
+                  style={{ padding: '5px 12px' }}
+                >
+                  <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em' }}>
+                    DÚVIDA SOBRE ESSA FRASE?
+                  </span>
+                </button>
+              ) : (
+                <div style={{
+                  border: '1px solid rgba(143, 191, 211, 0.25)',
+                  background: 'rgba(143, 191, 211, 0.04)',
+                  padding: '12px 14px',
+                }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      value={duvida}
+                      onChange={e => setDuvida(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') perguntarDuvida(); e.stopPropagation() }}
+                      placeholder="ex.: por que esse tempo verbal? · quando uso essa expressão?"
+                      autoFocus
+                      style={{
+                        flex: 1, background: 'rgba(8, 12, 18, 0.7)',
+                        border: '1px solid var(--color-border)',
+                        color: 'var(--color-text-primary)', fontSize: 12.5,
+                        padding: '7px 10px', outline: 'none', borderRadius: 0,
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="hq-btn hq-btn--ghost"
+                      onClick={perguntarDuvida}
+                      disabled={duvidaLoading || !duvida.trim()}
+                    >
+                      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em' }}>
+                        {duvidaLoading ? '…' : 'PERGUNTAR'}
+                      </span>
+                    </button>
+                  </div>
+                  {duvidaResposta && (
+                    <div style={{
+                      marginTop: 10, fontSize: 12.5, color: 'var(--color-text-secondary)',
+                      whiteSpace: 'pre-wrap', lineHeight: 1.6,
+                    }}>
+                      {duvidaResposta}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           <div style={{

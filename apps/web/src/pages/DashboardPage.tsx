@@ -12,6 +12,7 @@ import { RitualNextCard } from '../components/RitualNextCard'
 import HealthDashboardCard from '../components/health/HealthDashboardCard'
 import LibraryDashboardCard from '../components/library/LibraryDashboardCard'
 import MindDashboardCard from '../components/mind/MindDashboardCard'
+import LangDashboardCard from '../components/lang/LangDashboardCard'
 import BuildDashboardCard from '../components/build/BuildDashboardCard'
 import { DashboardRetroPanel } from '../components/DashboardRetroPanel'
 import { CompromissosAlert } from '../components/CompromissosAlert'
@@ -1053,6 +1054,12 @@ export function DashboardView({ projects, quests, areas, profile, onProfileUpdat
           revisitas). Esconde quando library tá vazia. */}
       <section style={{ marginBottom: 32 }}>
         <LibraryDashboardCard />
+      </section>
+
+      {/* ─── LANG.LAB ─── Fila do dia / ausência factual. Esconde quando
+          não há nada a dizer (anti-nag). */}
+      <section style={{ marginBottom: 32 }}>
+        <LangDashboardCard />
       </section>
 
         </div>

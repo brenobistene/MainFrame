@@ -13,16 +13,22 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 
 from db import get_conn
 from models.lang import (
     AiStatusOut,
+    AnalysisOut,
     AskIn,
     AskOut,
     AssistIn,
     AssistOut,
     CardCreate,
+    MineIn,
+    MineOut,
+    SourceCreate,
+    SourceOut,
+    SourceUpdate,
     CardOut,
     CardUpdate,
     LangSessionClusterOut,
@@ -1121,3 +1127,315 @@ async def compose_assist(body: AssistIn):
     except LangAiError as e:
         raise HTTPException(502, detail=str(e))
     return AssistOut(sugestoes=sugestoes)
+
+
+# ─── Análise diária — "julgar meu progresso" com comparação temporal ─────
+
+
+def _current_day_label(settings: dict) -> str:
+    """Data 'do dia' respeitando day_cutoff_hour local (PLAN §3.8)."""
+    cutoff = int(settings.get("day_cutoff_hour") or 4)
+    now_local = datetime.now().astimezone()
+    day = now_local.date()
+    if now_local.hour < cutoff:
+        day = day - timedelta(days=1)
+    return day.isoformat()
+
+
+def _window_stats(conn, lang_id: int, since_iso: str) -> dict:
+    rev = conn.execute(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN r.rating > 1 THEN 1 ELSE 0 END) AS acertos
+           FROM lang_review r JOIN lang_card c ON c.id = r.card_id
+           WHERE c.language_id = ? AND r.reviewed_at >= ?""",
+        (lang_id, since_iso),
+    ).fetchone()
+    total = rev["total"] or 0
+    # Tags de erro dos feedbacks de produção na janela.
+    tags: dict[str, int] = {}
+    for row in conn.execute(
+        "SELECT feedback_json FROM lang_piece "
+        "WHERE language_id = ? AND criado_em >= ? AND feedback_json IS NOT NULL",
+        (lang_id, since_iso[:10]),
+    ).fetchall():
+        try:
+            for e in json.loads(row["feedback_json"]).get("erros", []):
+                t = e.get("tag")
+                if t:
+                    tags[t] = tags.get(t, 0) + 1
+        except ValueError:
+            continue
+    return {
+        "reviews": total,
+        "retencao": round(rev["acertos"] / total, 2) if total else None,
+        "tags_de_erro": dict(sorted(tags.items(), key=lambda x: -x[1])[:6]),
+    }
+
+
+def _analysis_out(row) -> dict:
+    d = dict(row)
+    raw = d.pop("resumo_json", None)
+    d.pop("language_id", None)
+    try:
+        d["analise"] = json.loads(raw) if raw else None
+    except ValueError:
+        d["analise"] = {"resumo": raw}
+    return d
+
+
+@router.post("/api/lang/analysis/today", response_model=AnalysisOut)
+async def analyze_today():
+    """Roda a análise do dia (sob demanda, nunca automática). UPSERT por
+    (língua, dia) — rodar de novo substitui, não duplica."""
+    with get_conn() as conn:
+        settings = _get_settings(conn)
+        lang_id = _active_language_id(conn, settings)
+        if not lang_id:
+            raise HTTPException(400, detail="nenhuma língua cadastrada")
+        day_start = _day_start_utc_iso(settings)
+        day_label = _current_day_label(settings)
+        cutoff_7d = (
+            (datetime.now(timezone.utc) - timedelta(days=7))
+            .isoformat().replace("+00:00", "Z")
+        )
+        cutoff_30d = (
+            (datetime.now(timezone.utc) - timedelta(days=30))
+            .isoformat().replace("+00:00", "Z")
+        )
+        pieces_hoje = [
+            {"prompt": r["prompt"], "texto": r["texto"][:600]}
+            for r in conn.execute(
+                "SELECT prompt, texto FROM lang_piece "
+                "WHERE language_id = ? AND criado_em >= ? ORDER BY id DESC LIMIT 5",
+                (lang_id, day_start[:10]),
+            ).fetchall()
+        ]
+        anteriores = [
+            _analysis_out(r)["analise"].get("resumo", "")
+            for r in conn.execute(
+                "SELECT * FROM lang_analysis WHERE language_id = ? "
+                "ORDER BY date DESC LIMIT 3",
+                (lang_id,),
+            ).fetchall()
+            if _analysis_out(r)["analise"]
+        ]
+        contexto = {
+            "hoje": _window_stats(conn, lang_id, day_start),
+            "ultimos_7d": _window_stats(conn, lang_id, cutoff_7d),
+            "ultimos_30d": _window_stats(conn, lang_id, cutoff_30d),
+            "producoes_de_hoje": pieces_hoje,
+            "resumos_de_analises_anteriores": anteriores,
+        }
+    try:
+        analise = await lang_ai.daily_analysis(settings, contexto)
+    except LangAiNotConfigured as e:
+        raise HTTPException(409, detail=f"IA não configurada: {e}")
+    except LangAiError as e:
+        raise HTTPException(502, detail=str(e))
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO lang_analysis(language_id, date, resumo_json)
+               VALUES (?, ?, ?)
+               ON CONFLICT(language_id, date)
+               DO UPDATE SET resumo_json = excluded.resumo_json""",
+            (lang_id, day_label, json.dumps(analise, ensure_ascii=False)),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM lang_analysis WHERE language_id = ? AND date = ?",
+            (lang_id, day_label),
+        ).fetchone()
+    return _analysis_out(row)
+
+
+@router.get("/api/lang/analyses", response_model=list[AnalysisOut])
+def list_analyses(limit: int = Query(10, ge=1, le=60)):
+    with get_conn() as conn:
+        settings = _get_settings(conn)
+        lang_id = _active_language_id(conn, settings)
+        rows = conn.execute(
+            "SELECT * FROM lang_analysis WHERE language_id = ? "
+            "ORDER BY date DESC LIMIT ?",
+            (lang_id, limit),
+        ).fetchall() if lang_id else []
+    return [_analysis_out(r) for r in rows]
+
+
+# ─── Fontes — corpus de mineração (método Vergara, PLAN §3.2) ────────────
+
+
+_AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".ogg", ".webm"}
+
+
+def _source_out(conn, row) -> dict:
+    d = dict(row)
+    audio_path = d.pop("audio_path", None)
+    d["audio_url"] = f"/api/media/lang/{audio_path}" if audio_path else None
+    d.pop("notas_json", None)
+    d.pop("atualizado_em", None)
+    d["cards_count"] = conn.execute(
+        "SELECT COUNT(*) AS n FROM lang_card WHERE source_id = ?", (d["id"],)
+    ).fetchone()["n"]
+    return d
+
+
+@router.get("/api/lang/sources", response_model=list[SourceOut])
+def list_sources(language_id: Optional[int] = Query(None)):
+    with get_conn() as conn:
+        settings = _get_settings(conn)
+        lang_id = language_id or _active_language_id(conn, settings)
+        rows = conn.execute(
+            "SELECT * FROM lang_source WHERE language_id = ? ORDER BY id DESC",
+            (lang_id,),
+        ).fetchall() if lang_id else []
+        return [_source_out(conn, r) for r in rows]
+
+
+@router.post("/api/lang/sources", response_model=SourceOut, status_code=201)
+def create_source(body: SourceCreate):
+    with get_conn() as conn:
+        settings = _get_settings(conn)
+        language_id = body.language_id or _active_language_id(conn, settings)
+        if not language_id:
+            raise HTTPException(400, detail="nenhuma língua cadastrada")
+        cur = conn.execute(
+            "INSERT INTO lang_source(language_id, tipo, titulo, origem, texto) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (language_id, body.tipo, body.titulo.strip(), body.origem, body.texto),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM lang_source WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return _source_out(conn, row)
+
+
+@router.patch("/api/lang/sources/{source_id}", response_model=SourceOut)
+def update_source(source_id: int, body: SourceUpdate):
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, detail="nada pra atualizar")
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE lang_source SET {sets}, atualizado_em = datetime('now') WHERE id = ?",
+            (*fields.values(), source_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="fonte não encontrada")
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM lang_source WHERE id = ?", (source_id,)
+        ).fetchone()
+        return _source_out(conn, row)
+
+
+@router.delete("/api/lang/sources/{source_id}", status_code=204)
+def delete_source(source_id: int):
+    """Cards minerados sobrevivem (source_id vira NULL — ON DELETE SET NULL)."""
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM lang_source WHERE id = ?", (source_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, detail="fonte não encontrada")
+        conn.commit()
+
+
+@router.post("/api/lang/sources/{source_id}/audio", response_model=SourceOut)
+async def upload_source_audio(source_id: int, file: UploadFile = File(...)):
+    """Áudio da fonte inteira (a lição do Vergara, o podcast). Vive em
+    media/lang/sources/ — fora do git; backup manual (PLAN §13.3)."""
+    import os
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _AUDIO_EXTS:
+        raise HTTPException(422, detail=f"extensão não suportada ({ext})")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM lang_source WHERE id = ?", (source_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, detail="fonte não encontrada")
+    lang_tts.ensure_dirs()
+    filename = f"source_{source_id}{ext}"
+    raw = await file.read()
+    with open(lang_tts.media_path("sources", filename), "wb") as f:
+        f.write(raw)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE lang_source SET audio_path = ?, atualizado_em = datetime('now') "
+            "WHERE id = ?",
+            (f"sources/{filename}", source_id),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM lang_source WHERE id = ?", (source_id,)
+        ).fetchone()
+        return _source_out(conn, row)
+
+
+async def _bg_tts_for_card(card_id: int, frente: str, voice: str) -> None:
+    """TTS pós-resposta (BackgroundTasks) — mineração não trava a request
+    e falha numa frase não derruba as outras (PLAN §5)."""
+    try:
+        rel, _ = await lang_tts.ensure_tts(frente, voice)
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE lang_card SET audio_path = ?, tts_hash = ? WHERE id = ?",
+                (rel, lang_tts.tts_hash(frente, voice), card_id),
+            )
+            conn.commit()
+    except Exception:
+        pass  # card fica sem arquivo; player cobre com speechSynthesis
+
+
+@router.post("/api/lang/sources/{source_id}/mine", response_model=MineOut)
+async def mine_source(source_id: int, body: MineIn, background: BackgroundTasks):
+    """Mineração em lote: frases selecionadas → cards. Dup check por frase
+    normalizada (re-minerar não duplica — caso de teste 1). Cards nascem
+    JÁ na resposta; os MP3s chegam em background."""
+    with get_conn() as conn:
+        settings = _get_settings(conn)
+        src = conn.execute(
+            "SELECT * FROM lang_source WHERE id = ?", (source_id,)
+        ).fetchone()
+        if not src:
+            raise HTTPException(404, detail="fonte não encontrada")
+        language_id = src["language_id"]
+        voice = _language_voice(conn, language_id)
+        tts_on = bool(settings.get("tts_enabled", 1))
+        existentes = {
+            _normalize_frente(r["frente"])
+            for r in conn.execute(
+                "SELECT frente FROM lang_card WHERE language_id = ?",
+                (language_id,),
+            ).fetchall()
+        }
+        now = utcnow_iso_z()
+        criados: list[tuple[int, str]] = []
+        duplicados = 0
+        for raw_line in body.lines:
+            frente = raw_line.strip()
+            if not frente:
+                continue
+            norm = _normalize_frente(frente)
+            if norm in existentes:
+                duplicados += 1
+                continue
+            existentes.add(norm)
+            cur = conn.execute(
+                """INSERT INTO lang_card
+                     (language_id, source_id, frente, direction, audio_mode, due)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (language_id, source_id, frente, body.direction,
+                 "tts" if tts_on else "none", now),
+            )
+            criados.append((cur.lastrowid, frente))
+        conn.commit()
+    if tts_on:
+        for card_id, frente in criados:
+            background.add_task(_bg_tts_for_card, card_id, frente, voice)
+    return MineOut(
+        criados=len(criados),
+        duplicados=duplicados,
+        card_ids=[c[0] for c in criados],
+    )

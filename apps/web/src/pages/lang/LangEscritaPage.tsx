@@ -56,6 +56,61 @@ function MonoNote({ children, color }: { children: React.ReactNode; color?: stri
   )
 }
 
+/** Pergunta respondida + "virar card": a frase que valeu da resposta vira
+ *  card de PRODUÇÃO — o ciclo dúvida → estudo espaçado se fecha. */
+function AskRow({ ask, onCard }: { ask: LangAsk; onCard: (frase: string) => void }) {
+  const [showCardForm, setShowCardForm] = useState(false)
+  const [frase, setFrase] = useState('')
+  return (
+    <div style={{
+      border: '1px solid var(--color-border)',
+      background: 'rgba(8, 12, 18, 0.45)', padding: '12px 16px',
+    }}>
+      <div style={{
+        fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+        color: 'var(--color-ice-light)', marginBottom: 8,
+      }}>
+        {ask.pergunta}
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+        {ask.resposta}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        {!showCardForm ? (
+          <button
+            type="button"
+            className="hq-btn hq-btn--ghost"
+            onClick={() => setShowCardForm(true)}
+            style={{ padding: '3px 10px' }}
+          >
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.12em' }}>+ VIRAR CARD</span>
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={frase}
+              onChange={e => setFrase(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && frase.trim()) { onCard(frase.trim()); setFrase(''); setShowCardForm(false) } }}
+              placeholder="cola aqui a frase em inglês da resposta que você quer treinar"
+              autoFocus
+              style={{ ...inputStyle, flex: 1, fontSize: 12 }}
+            />
+            <button
+              type="button"
+              className="hq-btn hq-btn--ghost"
+              onClick={() => { if (frase.trim()) { onCard(frase.trim()); setFrase(''); setShowCardForm(false) } }}
+              disabled={!frase.trim()}
+              style={{ padding: '3px 10px' }}
+            >
+              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.12em' }}>CRIAR</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function LangEscritaPage() {
   const [ai, setAi] = useState<LangAiStatus | null>(null)
   const [prompt, setPrompt] = useState('')
@@ -276,20 +331,7 @@ export function LangEscritaPage() {
           {asks.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
               {asks.map(a => (
-                <div key={a.id} style={{
-                  border: '1px solid var(--color-border)',
-                  background: 'rgba(8, 12, 18, 0.45)', padding: '12px 16px',
-                }}>
-                  <div style={{
-                    fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-                    color: 'var(--color-ice-light)', marginBottom: 8,
-                  }}>
-                    {a.pergunta}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                    {a.resposta}
-                  </div>
-                </div>
+                <AskRow key={a.id} ask={a} onCard={fraseParaCard} />
               ))}
             </div>
           )}

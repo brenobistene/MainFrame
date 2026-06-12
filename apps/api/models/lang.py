@@ -266,5 +266,57 @@ class AssistOut(BaseModel):
     sugestoes: str
 
 
+class AnalysisOut(BaseModel):
+    id: int
+    date: str
+    # JSON parseado: {resumo, padroes[], comparacao, foco_sugerido}
+    analise: Any
+    criado_em: str
+
+
+# ─── Fontes (corpus de mineração — método Vergara) ───────────────────────
+
+
+class SourceOut(BaseModel):
+    id: int
+    language_id: int
+    tipo: str
+    titulo: str
+    origem: Optional[str] = None
+    texto: Optional[str] = None
+    audio_url: Optional[str] = None
+    library_item_id: Optional[int] = None
+    cards_count: int = 0
+    criado_em: str
+
+
+class SourceCreate(BaseModel):
+    titulo: str = Field(..., min_length=1)
+    tipo: LangSourceTipo = "other"
+    origem: Optional[str] = None
+    texto: Optional[str] = None
+    language_id: Optional[int] = None
+
+
+class SourceUpdate(BaseModel):
+    titulo: Optional[str] = None
+    tipo: Optional[LangSourceTipo] = None
+    origem: Optional[str] = None
+    texto: Optional[str] = None
+
+
+class MineIn(BaseModel):
+    """Frases selecionadas do texto da fonte → viram cards em lote.
+    TTS roda em background (a request não trava 20-60s — PLAN §5)."""
+    lines: list[str] = Field(..., min_length=1, max_length=100)
+    direction: LangDirection = "recognition"
+
+
+class MineOut(BaseModel):
+    criados: int
+    duplicados: int
+    card_ids: list[int]
+
+
 class AnyDict(BaseModel):
     data: Any

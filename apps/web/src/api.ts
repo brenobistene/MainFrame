@@ -38,6 +38,7 @@ import type {
   ProjectPageMeta, ProjectPage, ProjectPageDescendantsResponse,
   LangLanguage, LangCard, LangQueue, LangSettings, LangSettingsUpdate,
   LangToday, LangVoice, LangAiStatus, LangAsk, LangPiece, LangMetricsSummary,
+  LangAnalysis, LangSource,
 } from './types'
 
 // URL base do backend. Default aponta pro backend local padrão; pode ser
@@ -2495,6 +2496,56 @@ export const langComposeAssist = (rascunho: string, intencao?: string) =>
 
 export const fetchLangMetricsSummary = () =>
   get<LangMetricsSummary>('/api/lang/metrics/summary')
+
+// Análise diária comparativa — sob demanda, UPSERT por (língua, dia).
+export const analyzeLangToday = () =>
+  jsonFetch<LangAnalysis>('/api/lang/analysis/today', { method: 'POST' })
+
+export const fetchLangAnalyses = (limit = 10) =>
+  get<LangAnalysis[]>(`/api/lang/analyses?limit=${limit}`)
+
+// Fontes — corpus de mineração (método Vergara).
+export const fetchLangSources = () =>
+  get<LangSource[]>('/api/lang/sources')
+
+export const createLangSource = (body: {
+  titulo: string
+  tipo?: LangSource['tipo']
+  origem?: string | null
+  texto?: string | null
+}) =>
+  jsonFetch<LangSource>('/api/lang/sources', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const updateLangSource = (id: number, patch: {
+  titulo?: string
+  tipo?: LangSource['tipo']
+  origem?: string | null
+  texto?: string | null
+}) =>
+  jsonFetch<LangSource>(`/api/lang/sources/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteLangSource = (id: number) =>
+  jsonFetch<void>(`/api/lang/sources/${id}`, { method: 'DELETE' })
+
+export const uploadLangSourceAudio = async (id: number, file: File): Promise<LangSource> => {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${BASE}/api/lang/sources/${id}/audio`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+  return res.json()
+}
+
+export const mineLangSource = (id: number, lines: string[], direction: 'recognition' | 'production' = 'recognition') =>
+  jsonFetch<{ criados: number; duplicados: number; card_ids: number[] }>(
+    `/api/lang/sources/${id}/mine`,
+    { method: 'POST', body: JSON.stringify({ lines, direction }) },
+  )
 
 // Range pro Calendário — sessões executadas viram blocos na timeline
 // (mesmo padrão de fetchMindSessionsRange).
