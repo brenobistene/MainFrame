@@ -28,6 +28,7 @@ import {
 import { TechLabel } from '../../components/ui/CyberShell'
 import { useReviewLangCard, useUndoLangReview } from '../../lib/lang-queries'
 import type { LangCard, LangSettings } from '../../types'
+import { SignalFrame, TxRxTag, Waveform, RX_COLOR, TX_COLOR } from './langUi'
 
 const RATING_LABELS: { rating: 1 | 2 | 3 | 4; label: string; color: string }[] = [
   { rating: 1, label: 'DE NOVO', color: 'var(--color-accent-light)' },
@@ -56,6 +57,8 @@ export function LangExecPage() {
   const [reviewedCount, setReviewedCount] = useState(0)
   const [nextDue, setNextDue] = useState<number | null>(null)
   const [queueErro, setQueueErro] = useState<string | null>(null)
+  // Waveform vivo: sinal funcional de "tem áudio tocando agora".
+  const [audioPlaying, setAudioPlaying] = useState(false)
   // Dúvida contextual — pergunta à tutora COM o card como contexto, sem
   // sair do player (pedido literal: não sair do MAINFRAME pra pesquisar).
   const [aiOn, setAiOn] = useState(false)
@@ -73,6 +76,9 @@ export function LangExecPage() {
       window.speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(text)
       u.lang = 'en'
+      u.onstart = () => setAudioPlaying(true)
+      u.onend = () => setAudioPlaying(false)
+      u.onerror = () => setAudioPlaying(false)
       window.speechSynthesis.speak(u)
     } catch { /* sem TTS local — review segue sem som */ }
   }
@@ -93,6 +99,9 @@ export function LangExecPage() {
     if (c.audio_url) {
       const a = new Audio(`${BASE}${c.audio_url}`)
       audioRef.current = a
+      a.onplay = () => setAudioPlaying(true)
+      a.onpause = () => setAudioPlaying(false)
+      a.onended = () => setAudioPlaying(false)
       a.play().catch((err: unknown) => {
         if (err instanceof DOMException && err.name === 'NotAllowedError') setNeedsGesture(true)
         else trySpeech(c.frente)
@@ -433,31 +442,73 @@ export function LangExecPage() {
               próximo card em ~{nextDue < 90 ? `${Math.max(nextDue, 5)}s` : `${Math.ceil(nextDue / 60)}min`} · a fila reabre sozinha
             </p>
           )}
-          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 20 }}>
-            {reviewedCount} reviews hoje. Cards em aprendizado voltam quando o
-            intervalo vencer. Que tal produzir? A aba ESCRITA treina o que a
-            revisão não treina.
+          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
+            {reviewedCount} reviews hoje. Recepção treinada; o que te falta é
+            transmissão. A sessão CONTINUA contando nas abas TX:
           </p>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <button type="button" className="hq-btn hq-btn--primary" onClick={endSession}>
-              <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>ENCERRAR SESSÃO</span>
+          {/* Esteira de treino: RX → TX, mesma sessão (cluster do módulo). */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '16px 0 18px' }}>
+            <button
+              type="button"
+              onClick={() => navigate('/lang/escrita')}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 10,
+                background: 'rgba(192, 138, 58, 0.08)',
+                border: '1px solid var(--color-warning)',
+                color: 'var(--color-warning)',
+                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                letterSpacing: '0.14em', padding: '12px 20px',
+                cursor: 'pointer', borderRadius: 0,
+                clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
+                transition: 'background 0.15s, box-shadow 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(192, 138, 58, 0.16)'; e.currentTarget.style.boxShadow = '0 0 14px rgba(192, 138, 58, 0.25)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(192, 138, 58, 0.08)'; e.currentTarget.style.boxShadow = 'none' }}
+            >
+              TX · ESCRITA
             </button>
-            <button type="button" className="hq-btn hq-btn--ghost" onClick={() => navigate('/lang/escrita')}>
-              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>IR PRA ESCRITA</span>
+            <button
+              type="button"
+              onClick={() => navigate('/lang/fala')}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 10,
+                background: 'rgba(192, 138, 58, 0.08)',
+                border: '1px solid var(--color-warning)',
+                color: 'var(--color-warning)',
+                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                letterSpacing: '0.14em', padding: '12px 20px',
+                cursor: 'pointer', borderRadius: 0,
+                clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
+                transition: 'background 0.15s, box-shadow 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(192, 138, 58, 0.16)'; e.currentTarget.style.boxShadow = '0 0 14px rgba(192, 138, 58, 0.25)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(192, 138, 58, 0.08)'; e.currentTarget.style.boxShadow = 'none' }}
+            >
+              TX · FALA
             </button>
           </div>
+          <button type="button" className="hq-btn hq-btn--ghost" onClick={endSession}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>ENCERRAR SESSÃO</span>
+          </button>
         </div>
       ) : !card ? (
         <TechLabel>FILA VAZIA · ADICIONE CARDS NA MAIN OU NO ACERVO</TechLabel>
       ) : (
         <>
-          <div style={{
-            border: '1px solid var(--color-ice-deep)',
-            background: 'rgba(8, 12, 18, 0.6)',
-            padding: '36px 32px',
-            marginBottom: 20,
-            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
-          }}>
+          <SignalFrame
+            accent={card.direction === 'production' ? TX_COLOR : RX_COLOR}
+            style={{ padding: '30px 34px 24px', marginBottom: 20 }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+              <TxRxTag tx={card.direction === 'production'} />
+              <span style={{ flex: 1 }} />
+              <Waveform
+                active={audioPlaying}
+                color={card.direction === 'production' ? TX_COLOR : RX_COLOR}
+                bars={22}
+                height={18}
+              />
+            </div>
             {editing ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <input
@@ -514,7 +565,7 @@ export function LangExecPage() {
                 )}
               </>
             )}
-          </div>
+          </SignalFrame>
 
           {!editing && (
             !revealed ? (
@@ -533,6 +584,8 @@ export function LangExecPage() {
               </div>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {/* Teclas de console: o número É a tecla física (1-4) —
+                    affordance de teclado em vez de botão genérico. */}
                 {RATING_LABELS.map(r => (
                   <button
                     key={r.rating}
@@ -540,15 +593,38 @@ export function LangExecPage() {
                     onClick={() => rate(r.rating)}
                     disabled={reviewMut.isPending}
                     style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 10,
                       background: 'rgba(8, 12, 18, 0.55)',
                       border: `1px solid ${r.color}`,
                       color: r.color,
                       fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-                      letterSpacing: '0.12em', padding: '10px 18px',
+                      letterSpacing: '0.12em', padding: '9px 16px 9px 9px',
                       cursor: 'pointer', borderRadius: 0,
+                      clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%)',
+                      transition: 'background 0.15s, box-shadow 0.15s, transform 0.1s',
                     }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = 'rgba(143, 191, 211, 0.07)'
+                      e.currentTarget.style.boxShadow = `0 0 12px ${r.color}33`
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'rgba(8, 12, 18, 0.55)'
+                      e.currentTarget.style.boxShadow = 'none'
+                      e.currentTarget.style.transform = 'none'
+                    }}
+                    onMouseDown={e => { e.currentTarget.style.transform = 'translateY(1px)' }}
+                    onMouseUp={e => { e.currentTarget.style.transform = 'none' }}
                   >
-                    {r.rating} · {r.label}
+                    <span aria-hidden="true" style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 24, height: 24,
+                      border: `1px solid ${r.color}`,
+                      fontSize: 13, fontWeight: 700,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {r.rating}
+                    </span>
+                    {r.label}
                   </button>
                 ))}
                 <span style={{ flex: 1 }} />

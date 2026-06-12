@@ -29,6 +29,7 @@ import {
 } from '../../api'
 import { TechLabel } from '../../components/ui/CyberShell'
 import type { LangAiStatus, LangAsk, LangPiece } from '../../types'
+import { TxRxTag } from './langUi'
 
 const PROMPTS = [
   'Describe your day in 3-5 sentences.',
@@ -207,6 +208,17 @@ export function LangEscritaPage() {
 
   return (
     <div style={{ maxWidth: 860 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <TxRxTag tx label="TX · ESCRITA" />
+        <span style={{
+          fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600,
+          letterSpacing: '0.18em', textTransform: 'uppercase',
+          color: 'var(--color-text-muted)',
+        }}>
+          transmitir é o treino que a recepção não dá
+        </span>
+      </div>
+
       {/* Status da IA / instrução de setup */}
       {ai && !aiOn && (
         <div style={{

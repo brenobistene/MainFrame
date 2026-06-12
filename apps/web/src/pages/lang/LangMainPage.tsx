@@ -38,7 +38,7 @@ function StatBlock({ label, value, suffix }: { label: string; value: number | st
       }}>{label}</div>
       <div style={{
         fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-        fontSize: 24, fontWeight: 700, color: 'var(--color-text-primary)', lineHeight: 1,
+        fontSize: 30, fontWeight: 700, color: 'var(--color-text-primary)', lineHeight: 1,
       }}>
         {value}
         {suffix && <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 4 }}>{suffix}</span>}

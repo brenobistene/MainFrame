@@ -15,6 +15,7 @@ import { ChevronRight, Mic, Square, Volume2 } from 'lucide-react'
 import { BASE, fetchLangCards, reportApiError } from '../../api'
 import { TechLabel } from '../../components/ui/CyberShell'
 import type { LangCard } from '../../types'
+import { TxRxTag } from './langUi'
 
 type SpeechRecognitionLike = {
   lang: string
@@ -199,6 +200,7 @@ export function LangFalaPage() {
         }}>
           {idx + 1}/{cards.length}
         </span>
+        <TxRxTag tx label="TX · VOZ" />
         <TechLabel size={9}>SHADOWING · OUÇA, IMITE, CONFIRA</TechLabel>
         <span style={{ flex: 1 }} />
         <button type="button" className="hq-btn hq-btn--ghost" onClick={nextCard}
