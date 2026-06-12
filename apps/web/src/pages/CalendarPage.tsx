@@ -3,10 +3,11 @@ import { ChevronLeft, ChevronRight, Target } from 'lucide-react'
 import type { Area, Deliverable, Project, Quest, Routine, Task } from '../types'
 import {
   fetchSessions, fetchTasks, fetchTaskSessions, fetchRoutineSessions, fetchDeliverables,
-  fetchMindSessionsRange, fetchHealthItemSessionsRange, fetchRitualClusterRange,
+  fetchMindSessionsRange,
+  fetchLangSessionsRange, fetchHealthItemSessionsRange, fetchRitualClusterRange,
   deleteRoutine, reportApiError,
 } from '../api'
-import type { MindSessionRangeRow, HealthItemSessionRangeRow, RitualClusterRangeRow } from '../api'
+import type { MindSessionRangeRow, HealthItemSessionRangeRow, RitualClusterRangeRow, LangSessionRangeRow } from '../api'
 import { useRoutines, useAppInvalidator } from '../lib/app-queries'
 import { tabSync } from '../lib/tabsync'
 import { parseIsoAsUtc } from '../utils/datetime'
@@ -145,6 +146,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
   // Sessões executadas de Mind e Health items (rows com started_at/ended_at)
   // — backend retorna por range, frontend só filtra rows do dia visível.
   const [mindSessionRows, setMindSessionRows] = useState<MindSessionRangeRow[]>([])
+  const [langSessionRows, setLangSessionRows] = useState<LangSessionRangeRow[]>([])
   const [healthSessionRows, setHealthSessionRows] = useState<HealthItemSessionRangeRow[]>([])
   const [ritualSessionRows, setRitualSessionRows] = useState<RitualClusterRangeRow[]>([])
   // Deliverables por projeto — usado pra resolver `effectiveQuestDeadline`
@@ -157,6 +159,7 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
   const [sessionModal, setSessionModal] = useState<
     | { kind: 'quest' | 'task' | 'routine'; entityId: string }
     | { kind: 'mind' }
+    | { kind: 'lang' }
     | { kind: 'health'; itemId: number }
     | { kind: 'ritual'; cadencia: string }
     | null
@@ -382,11 +385,13 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
       fetchMindSessionsRange(from, to).catch(() => [] as MindSessionRangeRow[]),
       fetchHealthItemSessionsRange(from, to).catch(() => [] as HealthItemSessionRangeRow[]),
       fetchRitualClusterRange(from, to).catch(() => [] as RitualClusterRangeRow[]),
-    ]).then(([mindRows, healthRows, ritualRows]) => {
+      fetchLangSessionsRange(from, to).catch(() => [] as LangSessionRangeRow[]),
+    ]).then(([mindRows, healthRows, ritualRows, langRows]) => {
       if (cancelled) return
       setMindSessionRows(mindRows)
       setHealthSessionRows(healthRows)
       setRitualSessionRows(ritualRows)
+      setLangSessionRows(langRows)
     })
     return () => { cancelled = true }
   }, [currentDate, sessionUpdateTrigger])
@@ -507,10 +512,21 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
         : Math.max(seg.startMin + 15, seg.endMin)
       evs.push({ id: `hi:${row.id}:${idx}`, startMin: seg.startMin, endMin: em })
     })
+    langSessionRows.forEach((row, idx) => {
+      if (!row.started_at) return
+      const start = parseIsoAsUtc(row.started_at)
+      const end = row.ended_at ? parseIsoAsUtc(row.ended_at) : new Date()
+      const seg = intersectDay(start, end, dateIso)
+      if (!seg) return
+      const em = (seg.crossesIn || seg.crossesOut)
+        ? seg.endMin
+        : Math.max(seg.startMin + 15, seg.endMin)
+      evs.push({ id: `lng:${row.id}:${idx}`, startMin: seg.startMin, endMin: em })
+    })
 
     return computeEventLayout(evs)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quests, tasks, routines, allSessions, allTaskSessions, allRoutineSessions, dateIso, ritualSessionsByCadencia, mindSessionRows, healthSessionRows])
+  }, [quests, tasks, routines, allSessions, allTaskSessions, allRoutineSessions, dateIso, ritualSessionsByCadencia, mindSessionRows, healthSessionRows, langSessionRows])
 
   return (
     <div style={{ color: 'var(--color-text-primary)' }}>
@@ -1452,6 +1468,93 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
                             <span style={{ opacity: 0.7, marginRight: 4 }}>MND</span>Meditar
                           </div>
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: 'rgba(255,255,255,0.92)', letterSpacing: '0.08em', marginTop: 2, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                            {timeLabel}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    </Fragment>
+                  )
+                })}
+
+                {/* Sessões EXECUTADAS do Lang Lab — blocos de estudo na
+                    timeline (paridade com mind/health). */}
+                {langSessionRows.map((row, idx) => {
+                  if (!row.started_at) return null
+                  const start = parseIsoAsUtc(row.started_at)
+                  const end = row.ended_at ? parseIsoAsUtc(row.ended_at) : new Date()
+                  const seg = intersectDay(start, end, dateIso)
+                  if (!seg) return null
+                  const startHour = seg.startMin / 60
+                  const durationMin = seg.endMin - seg.startMin
+                  const topPercent = 20 + startHour * 60 * timelineZoom
+                  const heightPercent = durationMin * timelineZoom
+                  const running = !row.ended_at
+                  const cor = '#8fbfd3'
+                  const isShort = durationMin < 25
+                  const displayTitle = 'Lang Lab'
+                  const fmtTime = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })
+                  const timeLabel = `${seg.crossesIn ? '↪ ' : ''}${fmtTime(start)} → ${fmtTime(end)}${seg.crossesOut ? ' ↩' : ''}`
+                  return (
+                    <Fragment key={`lang-sess-${row.id}-${idx}`}>
+                    {isShort && (
+                      <>
+                        <div
+                          title={`${displayTitle} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 24}px`,
+                            fontSize: 8, fontWeight: 400, lineHeight: 1,
+                            color: 'var(--color-text-muted)',
+                            fontFamily: 'var(--font-mono)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          {timeLabel}
+                        </div>
+                        <div
+                          title={`${displayTitle} · ${timeLabel}`}
+                          style={{
+                            position: 'absolute', left: '4px', right: '4px',
+                            top: `${topPercent - 13}px`,
+                            fontSize: 9, fontWeight: 600, lineHeight: 1.1,
+                            color: 'var(--color-text-primary)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            paddingLeft: 2, paddingRight: 2, zIndex: 3,
+                          }}
+                        >
+                          <span style={{ opacity: 0.55, marginRight: 4 }}>LNG</span>{displayTitle}
+                        </div>
+                      </>
+                    )}
+                    <div
+                      title={`${displayTitle} · ${running ? 'rodando' : 'finalizada'} · ${timeLabel} — clique pra editar histórico`}
+                      onClick={() => setSessionModal({ kind: 'lang' })}
+                      style={{
+                        position: 'absolute',
+                        left: '4px', right: '4px',
+                        top: `${topPercent}px`, height: `${heightPercent}px`,
+                        background: `linear-gradient(135deg, ${cor} 0%, ${cor}88 100%)`,
+                        border: running ? '1px dashed var(--color-ice-light)' : '1px solid rgba(255,255,255,0.18)',
+                        clipPath: seg.crossesIn || seg.crossesOut
+                          ? undefined
+                          : 'polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))',
+                        padding: isShort ? '0' : '4px 6px',
+                        overflow: 'hidden',
+                        opacity: 0.95, cursor: 'pointer',
+                        boxShadow: running
+                          ? `inset 0 0 0 1px rgba(143,191,211,0.35), 0 0 14px ${cor}55`
+                          : `inset 0 0 0 1px rgba(255,255,255,0.18), 0 0 8px ${cor}55`,
+                        zIndex: 4,
+                      }}
+                    >
+                      {!isShort && (
+                        <>
+                          <div style={{ fontFamily: 'var(--font-display)', fontSize: 10, fontWeight: 600, color: '#06222e', letterSpacing: '0.03em', textTransform: 'uppercase' }}>
+                            <span style={{ opacity: 0.7, marginRight: 4 }}>LNG</span>Lang Lab
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700, color: 'rgba(6,34,46,0.85)', letterSpacing: '0.08em', marginTop: 2 }}>
                             {timeLabel}
                           </div>
                         </>
@@ -3748,6 +3851,12 @@ export function CalendarView({ projects, quests, areas, sessionUpdateTrigger, on
           }))
         } else if (sessionModal.kind === 'mind') {
           sess = mindSessionRows.map(r => ({
+            id: r.id,
+            started_at: r.started_at,
+            ended_at: r.ended_at,
+          }))
+        } else if (sessionModal.kind === 'lang') {
+          sess = langSessionRows.map(r => ({
             id: r.id,
             started_at: r.started_at,
             ended_at: r.ended_at,

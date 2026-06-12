@@ -205,7 +205,7 @@ export interface Deliverable {
 }
 
 export interface ActiveSession {
-  type: 'quest' | 'task' | 'routine' | 'library' | 'mind' | 'health_item' | 'ritual'
+  type: 'quest' | 'task' | 'routine' | 'library' | 'lang' | 'mind' | 'health_item' | 'ritual'
   id: string
   title: string
   area_slug: string | null
@@ -231,6 +231,142 @@ export interface MicroTask {
   id: string
   title: string
   created_at: string
+}
+
+// ─── Lang Lab (docs/lang-lab/PLAN.md) ───────────────────────────────────
+
+export interface LangLanguage {
+  id: number
+  code: string
+  nome: string
+  tts_voice: string
+  ativo: boolean
+  criado_em: string
+}
+
+export interface LangCard {
+  id: number
+  language_id: number
+  source_id: number | null
+  /** Frase na língua-alvo (EN). `direction` decide qual lado mostra primeiro. */
+  frente: string
+  verso: string | null
+  notas: string | null
+  direction: 'recognition' | 'production'
+  audio_mode: 'tts' | 'upload' | 'none'
+  /** URL pronta pro <audio> (/api/media/lang/...). Null = toca via speechSynthesis. */
+  audio_url: string | null
+  origem_ai: boolean
+  suspenso: boolean
+  state: string
+  due: string
+  reps: number
+  lapses: number
+  last_review: string | null
+  criado_em: string
+}
+
+export interface LangQueue {
+  cards: LangCard[]
+  due_count: number
+  new_count: number
+  new_quota_left: number
+  reviews_done_today: number
+}
+
+export interface LangSettings {
+  idioma_ativo: number | null
+  new_cards_per_day: number
+  max_reviews_per_day: number | null
+  daily_goal_min: number
+  desired_retention: number
+  mature_threshold_days: number
+  day_cutoff_hour: number
+  tts_enabled: boolean
+  audio_autoplay: boolean
+  auto_session_on_review: boolean
+  ai_provider: 'gemini' | 'openai-compat' | 'none'
+  ai_model: string
+  ai_base_url: string | null
+  ausencia_threshold_dias: number
+  exec_card_visivel: boolean
+  dashboard_card_visivel: boolean
+  sidebar_badge_visivel: boolean
+  /** Agendamento estilo Anki: steps em minutos (CSV, ex. "1,10"). */
+  learning_steps_min: string
+  relearning_steps_min: string
+  maximum_interval_days: number
+  enable_fuzzing: boolean
+  atualizado_em: string
+}
+
+export type LangSettingsUpdate = Partial<Omit<LangSettings, 'atualizado_em'>>
+
+/** Fatos do dia — contagens e tempo, SEM fração de meta (anti-quota).
+ *  daily_goal_min vem junto só como linha de referência na página /lang. */
+export interface LangToday {
+  language_id: number | null
+  due: number
+  novos_disponiveis: number
+  reviews_hoje: number
+  tempo_hoje_min: number
+  /** Dias desde a última sessão, só quando >= threshold. Null = em dia
+   *  (ou nunca estudou — recém-chegado não é cobrado). */
+  dias_sem_estudo: number | null
+  daily_goal_min: number
+}
+
+export interface LangVoice {
+  short_name: string
+  locale: string
+  gender: string
+  friendly_name: string | null
+}
+
+export interface LangAiStatus {
+  configured: boolean
+  provider: 'gemini' | 'openai-compat' | 'none'
+  reason: string | null
+}
+
+export interface LangAsk {
+  id: number
+  pergunta: string
+  resposta: string | null
+  card_id: number | null
+  criado_em: string
+}
+
+/** Shape do feedback estruturado da IA (services/lang_ai.piece_feedback). */
+export interface LangFeedback {
+  versao_natural: string | null
+  erros: { trecho: string; correcao: string; por_que: string; tag: string }[]
+  observacao_registro: string | null
+  frases_pra_card: string[]
+}
+
+export interface LangPiece {
+  id: number
+  language_id: number
+  prompt: string | null
+  texto: string
+  feedback: LangFeedback | null
+  criado_em: string
+}
+
+/** Resumo de métricas do dashboard MAIN (observação, estilo Health). */
+export interface LangMetricsSummary {
+  tempo_30d_min: number
+  sessoes_30d: number
+  reviews_30d: number
+  /** % de ratings != Again (FSRS: Hard é acerto). Null = sem reviews. */
+  retencao_30d: number | null
+  hard_rate_30d: number | null
+  streak_dias: number
+  cards_total: number
+  cards_maduros: number
+  pieces_30d: number
+  heatmap: { date: string; reviews: number; pieces: number }[]
 }
 
 /**

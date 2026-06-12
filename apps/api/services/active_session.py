@@ -92,6 +92,24 @@ def find_active_session(
         if row:
             return {"type": "library", "id": row["id"], "title": row["title"], "started_at": row["started_at"]}
 
+    # Lang Lab — sessão de estudo nível-módulo (cluster com flag
+    # `finalizada`; ended_at IS NULL = rodando agora). exclude_type='lang'
+    # skip pra resume não conflitar consigo mesmo.
+    if exclude_type != "lang":
+        row = conn.execute(
+            """SELECT ls.started_at, COALESCE(ll.nome, '') AS lang_nome
+               FROM lang_session ls
+               LEFT JOIN lang_language ll ON ls.language_id = ll.id
+               WHERE ls.finalizada = 0 AND ls.ended_at IS NULL LIMIT 1"""
+        ).fetchone()
+        if row:
+            return {
+                "type": "lang",
+                "id": "lang",
+                "title": ("Lang Lab: " + row["lang_nome"]) if row["lang_nome"] else "Lang Lab",
+                "started_at": row["started_at"],
+            }
+
     # Mind — pendência diária com cronômetro. Sem `id` específico (Mind é
     # domain-level), title fixo. exclude_type='mind' skip pra evitar
     # auto-conflito ao reabrir.

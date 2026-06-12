@@ -36,6 +36,8 @@ import type {
   WishlistTransactionCandidate, WishlistMatchGroup,
   WishlistReservaVincularBody, WishlistReservaMatchGroup,
   ProjectPageMeta, ProjectPage, ProjectPageDescendantsResponse,
+  LangLanguage, LangCard, LangQueue, LangSettings, LangSettingsUpdate,
+  LangToday, LangVoice, LangAiStatus, LangAsk, LangPiece, LangMetricsSummary,
 } from './types'
 
 // URL base do backend. Default aponta pro backend local padrão; pode ser
@@ -551,7 +553,7 @@ export const fetchRitualClusterRange = (from: string, to: string) =>
   get<RitualClusterRangeRow[]>(`/api/ritual-cluster-sessions?from=${from}&to=${to}`)
 
 export interface ActiveSession {
-  type: 'quest' | 'task' | 'routine' | 'library' | 'mind' | 'health_item' | 'ritual'
+  type: 'quest' | 'task' | 'routine' | 'library' | 'lang' | 'mind' | 'health_item' | 'ritual'
   id: string
   title: string
   area_slug: string | null
@@ -2356,3 +2358,152 @@ export const reopenHealthItemSession = (itemId: number, data: string) =>
     `/api/health/items/${itemId}/session/reopen?data=${encodeURIComponent(data)}`,
     { method: 'POST' },
   )
+
+// ─── Lang Lab (/api/lang/*) — docs/lang-lab/PLAN.md ─────────────────────
+
+export const fetchLangLanguages = () =>
+  get<LangLanguage[]>('/api/lang/languages')
+
+export const updateLangLanguage = (id: number, patch: { nome?: string; tts_voice?: string; ativo?: boolean }) =>
+  jsonFetch<LangLanguage>(`/api/lang/languages/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const fetchLangSettings = () =>
+  get<LangSettings>('/api/lang/settings')
+
+export const updateLangSettings = (patch: LangSettingsUpdate) =>
+  jsonFetch<LangSettings>('/api/lang/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const fetchLangToday = () =>
+  get<LangToday>('/api/lang/today')
+
+export const fetchLangCards = (params?: { q?: string; suspenso?: boolean; limit?: number }) => {
+  const qs: string[] = []
+  if (params?.q) qs.push(`q=${encodeURIComponent(params.q)}`)
+  if (params?.suspenso !== undefined) qs.push(`suspenso=${params.suspenso}`)
+  if (params?.limit) qs.push(`limit=${params.limit}`)
+  return get<LangCard[]>(`/api/lang/cards${qs.length ? `?${qs.join('&')}` : ''}`)
+}
+
+export const createLangCard = (body: {
+  frente: string
+  verso?: string | null
+  notas?: string | null
+  direction?: 'recognition' | 'production'
+}) =>
+  jsonFetch<LangCard>('/api/lang/cards', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const updateLangCard = (
+  id: number,
+  patch: { frente?: string; verso?: string | null; notas?: string | null; suspenso?: boolean },
+) =>
+  jsonFetch<LangCard>(`/api/lang/cards/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteLangCard = (id: number) =>
+  jsonFetch<void>(`/api/lang/cards/${id}`, { method: 'DELETE' })
+
+export const fetchLangQueue = () =>
+  get<LangQueue>('/api/lang/review/queue')
+
+export const reviewLangCard = (cardId: number, rating: 1 | 2 | 3 | 4) =>
+  jsonFetch<LangCard>(`/api/lang/cards/${cardId}/review`, {
+    method: 'POST',
+    body: JSON.stringify({ rating }),
+  })
+
+export const undoLangReview = () =>
+  jsonFetch<{ card: LangCard; undone_review_id: number }>('/api/lang/review/undo', {
+    method: 'POST',
+  })
+
+export const fetchLangVoices = (locale?: string) =>
+  get<LangVoice[]>(`/api/lang/tts/voices${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`)
+
+// Sessão de estudo — cluster nível módulo (padrão Mind, flag finalizada).
+export const fetchLangSession = () =>
+  get<DiaSessionCluster>('/api/lang/session')
+
+export const startLangSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/lang/session/start', { method: 'POST' })
+
+export const pauseLangSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/lang/session/pause', { method: 'POST' })
+
+export const resumeLangSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/lang/session/resume', { method: 'POST' })
+
+export const stopLangSession = () =>
+  jsonFetch<DiaSessionCluster>('/api/lang/session/stop', { method: 'POST' })
+
+export const editLangSession = (sessionId: number, body: { started_at?: string; ended_at?: string | null }) =>
+  patchSession(`/api/lang/sessions/${sessionId}`, body)
+
+export const deleteLangSessionRow = (sessionId: number) =>
+  deleteSession(`/api/lang/sessions/${sessionId}`)
+
+// IA tutora — ask (dúvida com porquê) / pieces (produção escrita +
+// feedback estruturado) / assist (destravar DURANTE a escrita).
+export const fetchLangAiStatus = () =>
+  get<LangAiStatus>('/api/lang/ai/status')
+
+export const askLangAi = (pergunta: string, contexto?: string) =>
+  jsonFetch<LangAsk>('/api/lang/ask', {
+    method: 'POST',
+    body: JSON.stringify({ pergunta, contexto: contexto ?? null }),
+  })
+
+export const fetchLangAsks = (limit = 20) =>
+  get<LangAsk[]>(`/api/lang/asks?limit=${limit}`)
+
+export const createLangPiece = (texto: string, prompt?: string) =>
+  jsonFetch<LangPiece>('/api/lang/pieces', {
+    method: 'POST',
+    body: JSON.stringify({ texto, prompt: prompt ?? null }),
+  })
+
+export const fetchLangPieces = (limit = 20) =>
+  get<LangPiece[]>(`/api/lang/pieces?limit=${limit}`)
+
+export const updateLangPiece = (id: number, patch: { texto?: string; prompt?: string }) =>
+  jsonFetch<LangPiece>(`/api/lang/pieces/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteLangPiece = (id: number) =>
+  jsonFetch<void>(`/api/lang/pieces/${id}`, { method: 'DELETE' })
+
+export const requestLangPieceFeedback = (id: number) =>
+  jsonFetch<LangPiece>(`/api/lang/pieces/${id}/feedback`, { method: 'POST' })
+
+export const langComposeAssist = (rascunho: string, intencao?: string) =>
+  jsonFetch<{ sugestoes: string }>('/api/lang/compose/assist', {
+    method: 'POST',
+    body: JSON.stringify({ rascunho, intencao: intencao ?? null }),
+  })
+
+export const fetchLangMetricsSummary = () =>
+  get<LangMetricsSummary>('/api/lang/metrics/summary')
+
+// Range pro Calendário — sessões executadas viram blocos na timeline
+// (mesmo padrão de fetchMindSessionsRange).
+export interface LangSessionRangeRow {
+  id: number
+  session_num: number
+  started_at: string
+  ended_at: string | null
+}
+
+export const fetchLangSessionsRange = (from: string, to: string) =>
+  get<LangSessionRangeRow[]>(`/api/lang-sessions?from=${from}&to=${to}`)

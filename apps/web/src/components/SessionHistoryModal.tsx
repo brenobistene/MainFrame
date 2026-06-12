@@ -5,8 +5,10 @@ import { parseIsoAsUtc, formatHMS } from '../utils/datetime'
 import {
   editQuestSession, editTaskSession, editRoutineSession,
   editMindSession, editHealthItemSession, editRitualClusterSession,
+  editLangSession,
   deleteQuestSession, deleteTaskSession, deleteRoutineSessionById,
   deleteMindSessionRow, deleteHealthItemSessionRow, deleteRitualClusterRow,
+  deleteLangSessionRow,
   reportApiError,
 } from '../api'
 import {
@@ -30,7 +32,7 @@ export function SessionHistoryModal({ sessions, onClose, kind, onChanged }: {
   onClose: () => void
   /** Tipo da entity — necessário pra escolher o endpoint de PATCH/DELETE.
    *  Se omitido, modal fica em modo read-only (sem editar/excluir). */
-  kind?: 'quest' | 'task' | 'routine' | 'mind' | 'health' | 'ritual'
+  kind?: 'quest' | 'task' | 'routine' | 'mind' | 'health' | 'ritual' | 'lang'
   /** Disparado após uma edição/exclusão bem-sucedida. Geralmente é o
    *  `onSessionUpdate` do parent, que refaz fetch global de sessões. */
   onChanged?: () => void
@@ -64,6 +66,7 @@ export function SessionHistoryModal({ sessions, onClose, kind, onChanged }: {
     : kind === 'mind' ? editMindSession
     : kind === 'health' ? editHealthItemSession
     : kind === 'ritual' ? editRitualClusterSession
+    : kind === 'lang' ? editLangSession
     : editRoutineSession  // fallback inalcançável (canEdit guarda chamadas)
   const deleteFn =
     kind === 'quest' ? deleteQuestSession
@@ -72,6 +75,7 @@ export function SessionHistoryModal({ sessions, onClose, kind, onChanged }: {
     : kind === 'mind' ? deleteMindSessionRow
     : kind === 'health' ? deleteHealthItemSessionRow
     : kind === 'ritual' ? deleteRitualClusterRow
+    : kind === 'lang' ? deleteLangSessionRow
     : deleteRoutineSessionById
 
   async function handleDelete(sid: number) {

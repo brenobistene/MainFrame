@@ -984,6 +984,179 @@ def init_db() -> None:
             ON library_link(item_id);
         """)
 
+        # ─── Lang Lab — aquisição de idiomas (docs/lang-lab/PLAN.md) ─────
+        # Frase com áudio como unidade de SRS (FSRS agenda). Sessão é
+        # nível-módulo no padrão cluster do Mind, MAS com flag `finalizada`
+        # própria: pause seta ended_at (banner mostra PAUSED), stop seta
+        # finalizada=1 no cluster inteiro (sai do banner). Sem a flag não
+        # dá pra distinguir pausada de encerrada (PLAN §3.5).
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS lang_language (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            code       TEXT NOT NULL UNIQUE,
+            nome       TEXT NOT NULL,
+            tts_voice  TEXT NOT NULL DEFAULT 'en-US-AriaNeural',
+            ativo      INTEGER NOT NULL DEFAULT 1,
+            criado_em  TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Fonte = corpus de mineração (texto cru que vira cards). NÃO é a
+        -- Library: sem status/tese/destilação. library_item_id liga os dois
+        -- quando uma obra curada vira material de estudo.
+        CREATE TABLE IF NOT EXISTS lang_source (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            language_id     INTEGER NOT NULL REFERENCES lang_language(id) ON DELETE CASCADE,
+            tipo            TEXT NOT NULL DEFAULT 'other',
+            titulo          TEXT NOT NULL,
+            origem          TEXT,
+            texto           TEXT,
+            audio_path      TEXT,
+            notas_json      TEXT,
+            library_item_id INTEGER REFERENCES library_item(id) ON DELETE SET NULL,
+            criado_em       TEXT DEFAULT (datetime('now')),
+            atualizado_em   TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Card SRS. state segue py-fsrs (>=4 não tem 'new'; "novo" pra fila
+        -- = last_review IS NULL). `step` é obrigatório pra reconstruir o
+        -- Card da lib no meio dos learning steps. `due` é TIMESTAMP (não
+        -- data) — learning steps são intraday.
+        CREATE TABLE IF NOT EXISTS lang_card (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            language_id   INTEGER NOT NULL REFERENCES lang_language(id) ON DELETE CASCADE,
+            source_id     INTEGER REFERENCES lang_source(id) ON DELETE SET NULL,
+            frente        TEXT NOT NULL,
+            verso         TEXT,
+            notas         TEXT,
+            direction     TEXT NOT NULL DEFAULT 'recognition',
+            audio_mode    TEXT NOT NULL DEFAULT 'tts',
+            audio_path    TEXT,
+            tts_hash      TEXT,
+            origem_ai     INTEGER NOT NULL DEFAULT 0,
+            suspenso      INTEGER NOT NULL DEFAULT 0,
+            state         TEXT NOT NULL DEFAULT 'learning',
+            step          INTEGER,
+            due           TEXT NOT NULL,
+            stability     REAL,
+            difficulty    REAL,
+            reps          INTEGER NOT NULL DEFAULT 0,
+            lapses        INTEGER NOT NULL DEFAULT 0,
+            last_review   TEXT,
+            criado_em     TEXT DEFAULT (datetime('now')),
+            atualizado_em TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_lang_card_queue
+            ON lang_card(language_id, suspenso, due);
+
+        -- Log de revisões com snapshot pré-review (undo restaura o card).
+        CREATE TABLE IF NOT EXISTS lang_review (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id           INTEGER NOT NULL REFERENCES lang_card(id) ON DELETE CASCADE,
+            rating            INTEGER NOT NULL,
+            reviewed_at       TEXT NOT NULL,
+            state_before      TEXT,
+            state_after       TEXT,
+            due_before        TEXT,
+            stability_before  REAL,
+            difficulty_before REAL,
+            step_before       INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_lang_review_card
+            ON lang_review(card_id, reviewed_at);
+        CREATE INDEX IF NOT EXISTS idx_lang_review_when
+            ON lang_review(reviewed_at);
+
+        CREATE TABLE IF NOT EXISTS lang_session (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            language_id INTEGER REFERENCES lang_language(id) ON DELETE SET NULL,
+            session_num INTEGER NOT NULL,
+            started_at  TEXT NOT NULL,
+            ended_at    TEXT,
+            finalizada  INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_lang_session_active
+            ON lang_session(finalizada, ended_at);
+
+        -- Produção escrita (F3): texto persiste independente do feedback IA.
+        CREATE TABLE IF NOT EXISTS lang_piece (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            language_id   INTEGER NOT NULL REFERENCES lang_language(id) ON DELETE CASCADE,
+            session_id    INTEGER REFERENCES lang_session(id) ON DELETE SET NULL,
+            prompt        TEXT,
+            texto         TEXT NOT NULL,
+            feedback_json TEXT,
+            criado_em     TEXT DEFAULT (datetime('now')),
+            atualizado_em TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Perguntas à IA (F3). card_id liga quando a resposta vira card.
+        CREATE TABLE IF NOT EXISTS lang_ask (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            language_id INTEGER NOT NULL REFERENCES lang_language(id) ON DELETE CASCADE,
+            pergunta    TEXT NOT NULL,
+            resposta    TEXT,
+            card_id     INTEGER REFERENCES lang_card(id) ON DELETE SET NULL,
+            criado_em   TEXT DEFAULT (datetime('now'))
+        );
+
+        -- Análise diária da IA (F3). UNIQUE composto: multi-língua.
+        CREATE TABLE IF NOT EXISTS lang_analysis (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            language_id INTEGER NOT NULL REFERENCES lang_language(id) ON DELETE CASCADE,
+            date        TEXT NOT NULL,
+            resumo_json TEXT,
+            criado_em   TEXT DEFAULT (datetime('now')),
+            UNIQUE(language_id, date)
+        );
+
+        -- Settings linha única (padrão health_settings). Chave de API de IA
+        -- NUNCA aqui — vive em apps/api/.env (LANG_AI_API_KEY).
+        CREATE TABLE IF NOT EXISTS lang_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            idioma_ativo            INTEGER REFERENCES lang_language(id),
+            new_cards_per_day       INTEGER NOT NULL DEFAULT 15,
+            max_reviews_per_day     INTEGER,
+            daily_goal_min          INTEGER NOT NULL DEFAULT 15,
+            desired_retention       REAL NOT NULL DEFAULT 0.9,
+            mature_threshold_days   INTEGER NOT NULL DEFAULT 21,
+            day_cutoff_hour         INTEGER NOT NULL DEFAULT 4,
+            tts_enabled             INTEGER NOT NULL DEFAULT 1,
+            audio_autoplay          INTEGER NOT NULL DEFAULT 1,
+            auto_session_on_review  INTEGER NOT NULL DEFAULT 1,
+            ai_provider             TEXT NOT NULL DEFAULT 'none',
+            ai_model                TEXT NOT NULL DEFAULT 'gemini-flash-latest',
+            ai_base_url             TEXT,
+            ausencia_threshold_dias INTEGER NOT NULL DEFAULT 3,
+            exec_card_visivel       INTEGER NOT NULL DEFAULT 1,
+            dashboard_card_visivel  INTEGER NOT NULL DEFAULT 1,
+            sidebar_badge_visivel   INTEGER NOT NULL DEFAULT 1,
+            -- Agendamento estilo Anki (tudo configurável, PLAN §4):
+            -- learning steps em minutos (CSV), intervalo máximo e fuzzing.
+            learning_steps_min      TEXT NOT NULL DEFAULT '1,10',
+            relearning_steps_min    TEXT NOT NULL DEFAULT '10',
+            maximum_interval_days   INTEGER NOT NULL DEFAULT 36500,
+            enable_fuzzing          INTEGER NOT NULL DEFAULT 1,
+            atualizado_em           TEXT DEFAULT (datetime('now'))
+        );
+        """)
+
+        # Lang Lab — colunas de agendamento Anki-like adicionadas depois do
+        # v0.8.3 inicial (DBs que já criaram lang_settings precisam do ALTER).
+        _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN learning_steps_min TEXT NOT NULL DEFAULT '1,10'")
+        _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN relearning_steps_min TEXT NOT NULL DEFAULT '10'")
+        _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN maximum_interval_days INTEGER NOT NULL DEFAULT 36500")
+        _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN enable_fuzzing INTEGER NOT NULL DEFAULT 1")
+
+        # Seeds Lang Lab — preset "método Vergara" (PLAN §2, decisão 10).
+        # English com voz Aria (escolha do usuário); demais línguas e vozes
+        # são cadastráveis via UI (catálogo de vozes vem do edge-tts, sem
+        # lista hardcoded). new_cards_per_day=15 = ritmo escolhido.
+        conn.execute(
+            "INSERT OR IGNORE INTO lang_language(code, nome, tts_voice) "
+            "VALUES ('en', 'English', 'en-US-AriaNeural')"
+        )
+        conn.execute("INSERT OR IGNORE INTO lang_settings(id) VALUES (1)")
+
         # /Build — coluna criterion_current_value: progresso digitado manualmente
         # em v1 (pré-Health). Em v2, quando Meta aponta pra metric_slug, esse
         # valor passa a ser puxado automaticamente do Hub Health.

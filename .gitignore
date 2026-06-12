@@ -66,6 +66,10 @@ apps/web/public/*.personal.*
 # Refs visuais (CyberPunk 2077 UI) — ~1.8GB de imagens locais, só consulta de design, nunca vão pro repo público
 CyberPunk Refs For MainFrame/
 
+# Lang Lab — áudios locais (TTS cacheado é regenerável; uploads exigem
+# backup manual, ver docs/lang-lab/PLAN.md §13.3). Nunca vão pro repo.
+apps/api/media/
+
 # Documentação local — só os .md públicos vão pro repo. ARCHITECTURE,
 # COMANDOS, scans/auditorias, anotações etc. ficam fora.
 *.md

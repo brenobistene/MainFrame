@@ -1,0 +1,475 @@
+/**
+ * Lang Lab · EXEC — o player de revisão SRS (a execução real).
+ *
+ * Comportamento de SESSÃO igual quest (pedido explícito do usuário): se
+ * OUTRA sessão global está rodando, esta página BLOQUEIA — nada de revisar
+ * "sem cronômetro". Finalize a outra no banner e volte.
+ *
+ * Fluxo Anki: frente (áudio automático) → espaço revela → 1-4 avalia.
+ * R replay · Z desfaz · E edita inline (TTS regenera). Cards 'production'
+ * mostram PT primeiro — você CONSTRÓI a frase — e o EN+áudio vêm no reveal.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Ban, Pencil, RotateCcw, Square, Volume2 } from 'lucide-react'
+
+import {
+  BASE,
+  fetchActiveSession,
+  fetchLangQueue,
+  fetchLangSettings,
+  reportApiError,
+  startLangSession,
+  stopLangSession,
+  updateLangCard,
+} from '../../api'
+import { TechLabel } from '../../components/ui/CyberShell'
+import { useReviewLangCard, useUndoLangReview } from '../../lib/lang-queries'
+import type { LangCard, LangSettings } from '../../types'
+
+const RATING_LABELS: { rating: 1 | 2 | 3 | 4; label: string; color: string }[] = [
+  { rating: 1, label: 'DE NOVO', color: 'var(--color-accent-light)' },
+  { rating: 2, label: 'DIFÍCIL', color: 'var(--color-warning)' },
+  { rating: 3, label: 'BOM', color: 'var(--color-ice-light)' },
+  { rating: 4, label: 'FÁCIL', color: 'var(--color-success-light)' },
+]
+
+export function LangExecPage() {
+  const navigate = useNavigate()
+  const reviewMut = useReviewLangCard()
+  const undoMut = useUndoLangReview()
+
+  const [settings, setSettings] = useState<LangSettings | null>(null)
+  const [blockedBy, setBlockedBy] = useState<string | null>(null)
+  const [needsManualStart, setNeedsManualStart] = useState(false)
+  const [cards, setCards] = useState<LangCard[]>([])
+  const [idx, setIdx] = useState(0)
+  const [revealed, setRevealed] = useState(false)
+  const [done, setDone] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [needsGesture, setNeedsGesture] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editFrente, setEditFrente] = useState('')
+  const [editVerso, setEditVerso] = useState('')
+  const [reviewedCount, setReviewedCount] = useState(0)
+
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const card = cards[idx] ?? null
+
+  function trySpeech(text: string) {
+    try {
+      const u = new SpeechSynthesisUtterance(text)
+      u.lang = 'en'
+      window.speechSynthesis.speak(u)
+    } catch { /* sem TTS local — review segue sem som */ }
+  }
+
+  const playAudio = useCallback((c: LangCard | null) => {
+    if (!c) return
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    if (c.audio_url) {
+      const a = new Audio(`${BASE}${c.audio_url}`)
+      audioRef.current = a
+      a.play().catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'NotAllowedError') setNeedsGesture(true)
+        else trySpeech(c.frente)
+      })
+    } else {
+      trySpeech(c.frente)
+    }
+  }, [])
+
+  async function loadQueue() {
+    const q = await fetchLangQueue()
+    setCards(q.cards)
+    setReviewedCount(q.reviews_done_today)
+    setIdx(0)
+    setRevealed(false)
+    setDone(q.cards.length === 0)
+  }
+
+  async function startAndLoad() {
+    try {
+      await startLangSession()
+    } catch (err) {
+      // 409 = outra sessão entrou no meio tempo — re-checa e bloqueia.
+      const active = await fetchActiveSession().catch(() => null)
+      if (active && active.type !== 'lang') {
+        setBlockedBy(active.title)
+        setLoading(false)
+        return
+      }
+      reportApiError('LangExecPage.start', err)
+    }
+    await loadQueue()
+    setLoading(false)
+  }
+
+  // Boot: regra de quest — outra sessão rodando bloqueia a página.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const s = await fetchLangSettings()
+        if (cancelled) return
+        setSettings(s)
+        const active = await fetchActiveSession().catch(() => null)
+        if (cancelled) return
+        if (active && active.type !== 'lang') {
+          setBlockedBy(active.title)
+          setLoading(false)
+          return
+        }
+        if (s.auto_session_on_review || active?.type === 'lang') {
+          await startAndLoad()
+        } else {
+          setNeedsManualStart(true)
+          setLoading(false)
+        }
+      } catch (err) {
+        reportApiError('LangExecPage.boot', err)
+        setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Áudio automático: recognition na frente; production só no reveal.
+  useEffect(() => {
+    if (!card || editing) return
+    if (!settings?.audio_autoplay) return
+    if (card.direction === 'recognition' && !revealed) playAudio(card)
+    if (card.direction === 'production' && revealed) playAudio(card)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card?.id, revealed, editing])
+
+  const advance = useCallback(async () => {
+    setRevealed(false)
+    setEditing(false)
+    if (idx + 1 < cards.length) {
+      setIdx(idx + 1)
+      return
+    }
+    try {
+      const q = await fetchLangQueue()
+      if (q.cards.length > 0) { setCards(q.cards); setIdx(0) }
+      else setDone(true)
+    } catch { setDone(true) }
+  }, [idx, cards.length])
+
+  const rate = useCallback(async (rating: 1 | 2 | 3 | 4) => {
+    if (!card || !revealed || reviewMut.isPending) return
+    try {
+      await reviewMut.mutateAsync({ cardId: card.id, rating })
+      setReviewedCount(n => n + 1)
+      await advance()
+    } catch (err) { reportApiError('LangExecPage.rate', err) }
+  }, [card, revealed, reviewMut, advance])
+
+  const undo = useCallback(async () => {
+    if (undoMut.isPending) return
+    try {
+      await undoMut.mutateAsync()
+      setReviewedCount(n => Math.max(0, n - 1))
+      await loadQueue()
+    } catch (err) { reportApiError('LangExecPage.undo', err) }
+  }, [undoMut])
+
+  async function saveEdit() {
+    if (!card) return
+    try {
+      const updated = await updateLangCard(card.id, {
+        frente: editFrente.trim() || card.frente,
+        verso: editVerso.trim() || null,
+      })
+      setCards(cs => cs.map(c => (c.id === card.id ? updated : c)))
+      setEditing(false)
+      playAudio(updated)
+    } catch (err) { reportApiError('LangExecPage.saveEdit', err) }
+  }
+
+  async function endSession() {
+    try { await stopLangSession() } catch (err) { reportApiError('LangExecPage.stop', err) }
+    navigate('/lang/main')
+  }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+      if (editing || done || !card || blockedBy) return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (!revealed) setRevealed(true)
+        else playAudio(card)
+      } else if (e.key >= '1' && e.key <= '4') {
+        rate(Number(e.key) as 1 | 2 | 3 | 4)
+      } else if (e.key === 'r' || e.key === 'R') {
+        playAudio(card)
+      } else if (e.key === 'z' || e.key === 'Z') {
+        undo()
+      } else if (e.key === 'e' || e.key === 'E') {
+        setEditFrente(card.frente)
+        setEditVerso(card.verso ?? '')
+        setEditing(true)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [card, revealed, editing, done, blockedBy, rate, undo, playAudio])
+
+  const frontText = card
+    ? card.direction === 'production'
+      ? card.verso ?? '(sem tradução · produza a frase)'
+      : card.frente
+    : ''
+  const backText = card
+    ? card.direction === 'production' ? card.frente : card.verso ?? '(sem tradução)'
+    : ''
+
+  // ── Bloqueio estilo quest ──
+  if (blockedBy) {
+    return (
+      <div style={{ maxWidth: 560 }}>
+        <div style={{
+          border: '1px solid rgba(159, 18, 57, 0.55)',
+          background: 'rgba(159, 18, 57, 0.08)',
+          padding: '24px 28px',
+          clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <Ban size={16} color="var(--color-accent-light)" strokeWidth={2} />
+            <TechLabel color="var(--color-accent-light)">SESSÃO ATIVA EM OUTRO LUGAR</TechLabel>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
+            <span style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{blockedBy}</span> está rodando agora.
+          </p>
+          <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 18 }}>
+            Uma sessão por vez, como em tudo no sistema. Pause ou finalize no banner e volte.
+          </p>
+          <button type="button" className="hq-btn hq-btn--ghost" onClick={() => navigate('/lang/main')}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>VOLTAR</span>
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (loading) return <TechLabel>CARREGANDO…</TechLabel>
+
+  if (needsManualStart) {
+    return (
+      <div style={{ maxWidth: 560 }}>
+        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 16 }}>
+          Sessão automática desligada nas configurações. Iniciar agora?
+        </p>
+        <button
+          type="button"
+          className="hq-btn hq-btn--primary"
+          onClick={() => { setNeedsManualStart(false); setLoading(true); startAndLoad() }}
+        >
+          <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>INICIAR SESSÃO</span>
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ maxWidth: 760 }}>
+      {/* Header da execução */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
+        {!done && card && (
+          <>
+            <span style={{
+              fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.15em',
+              color: 'var(--color-text-muted)',
+            }}>
+              {idx + 1}/{cards.length}
+            </span>
+            <TechLabel size={9}>
+              {card.last_review ? card.state : 'novo'} · {card.direction === 'production' ? 'PRODUÇÃO' : 'RECONHECIMENTO'}
+            </TechLabel>
+          </>
+        )}
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="hq-btn hq-btn--ghost"
+          onClick={endSession}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        >
+          <Square size={12} strokeWidth={2} />
+          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>ENCERRAR</span>
+        </button>
+      </div>
+
+      {needsGesture && card && (
+        <div style={{ marginBottom: 16 }}>
+          <button
+            type="button"
+            className="hq-btn hq-btn--primary"
+            onClick={() => { setNeedsGesture(false); playAudio(card) }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            <Volume2 size={14} strokeWidth={2} />
+            <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>TOCAR ÁUDIO</span>
+          </button>
+        </div>
+      )}
+
+      {done ? (
+        <div style={{ maxWidth: 560 }}>
+          <div style={{ marginBottom: 12 }}>
+            <TechLabel color="var(--color-success-light)">FILA LIMPA POR AGORA</TechLabel>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 20 }}>
+            {reviewedCount} reviews hoje. Cards em aprendizado voltam quando o
+            intervalo vencer. Que tal produzir? A aba ESCRITA treina o que a
+            revisão não treina.
+          </p>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button type="button" className="hq-btn hq-btn--primary" onClick={endSession}>
+              <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>ENCERRAR SESSÃO</span>
+            </button>
+            <button type="button" className="hq-btn hq-btn--ghost" onClick={() => navigate('/lang/escrita')}>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>IR PRA ESCRITA</span>
+            </button>
+          </div>
+        </div>
+      ) : !card ? (
+        <TechLabel>FILA VAZIA — adicione cards na MAIN ou no ACERVO</TechLabel>
+      ) : (
+        <>
+          <div style={{
+            border: '1px solid var(--color-ice-deep)',
+            background: 'rgba(8, 12, 18, 0.6)',
+            padding: '36px 32px',
+            marginBottom: 20,
+            clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
+          }}>
+            {editing ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <input
+                  value={editFrente}
+                  onChange={e => setEditFrente(e.target.value)}
+                  autoFocus
+                  style={{
+                    background: 'rgba(8, 12, 18, 0.7)', border: '1px solid var(--color-ice)',
+                    color: 'var(--color-text-primary)', fontSize: 16, padding: '10px 12px',
+                    fontFamily: 'inherit', outline: 'none', borderRadius: 0,
+                  }}
+                />
+                <input
+                  value={editVerso}
+                  onChange={e => setEditVerso(e.target.value)}
+                  placeholder="tradução / nota"
+                  style={{
+                    background: 'rgba(8, 12, 18, 0.7)', border: '1px solid var(--color-border)',
+                    color: 'var(--color-text-secondary)', fontSize: 13, padding: '8px 12px',
+                    fontFamily: 'inherit', outline: 'none', borderRadius: 0,
+                  }}
+                />
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button type="button" className="hq-btn hq-btn--primary" onClick={saveEdit}>
+                    <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>SALVAR</span>
+                  </button>
+                  <button type="button" className="hq-btn hq-btn--ghost" onClick={() => setEditing(false)}>
+                    <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>CANCELAR</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{
+                  fontSize: 22, fontWeight: 600, color: 'var(--color-text-primary)',
+                  lineHeight: 1.4, marginBottom: revealed ? 18 : 0,
+                }}>
+                  {frontText}
+                </div>
+                {revealed && (
+                  <div style={{ borderTop: '1px solid var(--color-divider)', paddingTop: 16 }}>
+                    <div style={{ fontSize: 17, color: 'var(--color-ice-light)', lineHeight: 1.4 }}>
+                      {backText}
+                    </div>
+                    {card.notas && (
+                      <div style={{ marginTop: 10, fontSize: 12, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                        {card.notas}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {!editing && (
+            !revealed ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <button
+                  type="button"
+                  className="hq-btn hq-btn--primary"
+                  onClick={() => setRevealed(true)}
+                  style={{ padding: '10px 26px' }}
+                >
+                  <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>REVELAR</span>
+                </button>
+                <button type="button" className="hq-icon-btn" onClick={() => playAudio(card)} title="replay (R)" aria-label="tocar áudio">
+                  <Volume2 size={15} strokeWidth={1.8} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {RATING_LABELS.map(r => (
+                  <button
+                    key={r.rating}
+                    type="button"
+                    onClick={() => rate(r.rating)}
+                    disabled={reviewMut.isPending}
+                    style={{
+                      background: 'rgba(8, 12, 18, 0.55)',
+                      border: `1px solid ${r.color}`,
+                      color: r.color,
+                      fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                      letterSpacing: '0.12em', padding: '10px 18px',
+                      cursor: 'pointer', borderRadius: 0,
+                    }}
+                  >
+                    {r.rating} · {r.label}
+                  </button>
+                ))}
+                <span style={{ flex: 1 }} />
+                <button type="button" className="hq-icon-btn" onClick={() => playAudio(card)} title="replay (R)" aria-label="tocar áudio">
+                  <Volume2 size={15} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className="hq-icon-btn"
+                  onClick={() => { setEditFrente(card.frente); setEditVerso(card.verso ?? ''); setEditing(true) }}
+                  title="editar (E)" aria-label="editar card"
+                >
+                  <Pencil size={14} strokeWidth={1.8} />
+                </button>
+                <button type="button" className="hq-icon-btn" onClick={undo} title="desfazer (Z)" aria-label="desfazer rating">
+                  <RotateCcw size={14} strokeWidth={1.8} />
+                </button>
+              </div>
+            )
+          )}
+
+          <div style={{
+            marginTop: 28, paddingTop: 10, borderTop: '1px solid var(--color-divider)',
+            fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--color-text-muted)',
+            letterSpacing: '0.12em', textTransform: 'uppercase',
+          }}>
+            ESPAÇO REVELA · 1-4 AVALIA · R REPLAY · Z DESFAZ · E EDITA
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

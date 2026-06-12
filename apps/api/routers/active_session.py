@@ -44,6 +44,12 @@ def get_active_session(
                FROM routine_sessions rs JOIN routines r ON rs.routine_id = r.id
                WHERE rs.ended_at IS NULL
                UNION ALL
+               SELECT 'lang' AS type, 'lang' AS id, ('Lang Lab: ' || COALESCE(ll.nome, '')) AS title, NULL AS area_slug, lgs.started_at, lgs.ended_at, lgs.id AS sid, NULL AS routine_date, NULL AS estimated_minutes
+               FROM lang_session lgs
+               LEFT JOIN lang_language ll ON lgs.language_id = ll.id
+               WHERE lgs.finalizada = 0
+                 AND lgs.id = (SELECT MAX(id) FROM lang_session WHERE finalizada = 0)
+               UNION ALL
                SELECT 'mind' AS type, 'mind' AS id, 'Meditar' AS title, NULL AS area_slug, ms.started_at, ms.ended_at, ms.id AS sid, NULL AS routine_date, NULL AS estimated_minutes
                FROM mind_session ms
                WHERE ms.record_id IS NULL

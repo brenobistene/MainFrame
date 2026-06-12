@@ -16,6 +16,12 @@ python-multipart>=0.0.7
 # alembic/versions/0001_baseline.py marca o estado atual do DB criado por
 # init_db(); novas migrations daqui em diante. Ver alembic/README.md.
 alembic>=1.13
+# Lang Lab — agendador de repetição espaçada (algoritmo FSRS, mesmo do
+# Anki moderno) e TTS neural gratuito via endpoint do Edge. Ver
+# docs/lang-lab/PLAN.md §4-5.
+fsrs>=4.0
+edge-tts>=6.1
+
 # Test stack — pytest + httpx (TestClient do FastAPI usa httpx por baixo,
 # pra rodar requests sem subir uvicorn). pytest-cov pra coverage report.
 pytest>=8.0

@@ -16,6 +16,7 @@ import {
   pauseMindSession, resumeMindSession, fetchMindSession,
   pauseHealthItemSession, resumeHealthItemSession, fetchHealthItemSession,
   pauseRitualCluster, resumeRitualCluster, fetchRitualCluster,
+  pauseLangSession, resumeLangSession, stopLangSession, fetchLangSession,
   reportApiError,
 } from './api'
 import {
@@ -64,6 +65,13 @@ const MindHipotesesPage  = lazy(() => import('./pages/mind/MindHipotesesPage'))
 const LibraryPage        = lazy(() => import('./pages/library/LibraryPage'))
 const LibraryItemPage    = lazy(() => import('./pages/library/LibraryItemPage'))
 const LibraryTemasPage   = lazy(() => import('./pages/library/LibraryTemasPage'))
+const HubLangLayout      = lazy(() => import('./pages/lang/HubLangLayout').then(m => ({ default: m.HubLangLayout })))
+const LangMainPage       = lazy(() => import('./pages/lang/LangMainPage').then(m => ({ default: m.LangMainPage })))
+const LangExecPage       = lazy(() => import('./pages/lang/LangExecPage').then(m => ({ default: m.LangExecPage })))
+const LangEscritaPage    = lazy(() => import('./pages/lang/LangEscritaPage').then(m => ({ default: m.LangEscritaPage })))
+const LangFalaPage       = lazy(() => import('./pages/lang/LangFalaPage').then(m => ({ default: m.LangFalaPage })))
+const LangAcervoPage     = lazy(() => import('./pages/lang/LangAcervoPage').then(m => ({ default: m.LangAcervoPage })))
+const LangConfigPage     = lazy(() => import('./pages/lang/LangConfigPage').then(m => ({ default: m.LangConfigPage })))
 import { useRituals } from './lib/build-queries'
 import { useHealthPending } from './lib/health-queries'
 
@@ -100,6 +108,7 @@ const NAV_SECTIONS: NavSection[] = [
       { path: '/build',       label: '/Build',      abbr: 'BLD' },
       { path: '/mind',        label: 'Mind',        abbr: 'MND' },
       { path: '/library',     label: 'Library',     abbr: 'LIB' },
+      { path: '/lang',        label: 'Lang Lab',    abbr: 'LAB' },
     ],
   },
   {
@@ -302,6 +311,9 @@ export default function App() {
       list = cluster.rows ?? []
     } else if (cur.type === 'ritual') {
       const cluster = await fetchRitualCluster(cur.id)
+      list = cluster.rows ?? []
+    } else if (cur.type === 'lang') {
+      const cluster = await fetchLangSession()
       list = cluster.rows ?? []
     }
     setBannerHistorySessions(
@@ -1178,6 +1190,7 @@ export default function App() {
                   : activeSession.type === 'mind' ? 'MND'
                   : activeSession.type === 'health_item' ? 'HLT'
                   : activeSession.type === 'library' ? 'LIB'
+                  : activeSession.type === 'lang' ? 'LNG'
                   : activeSession.type === 'ritual' ? 'RTL'
                   : 'SES'}
               </span>
@@ -1301,6 +1314,7 @@ export default function App() {
                     : type === 'mind' ? pauseMindSession()
                     : type === 'health_item' ? pauseHealthItemSession(healthItemId)
                     : type === 'ritual' ? pauseRitualCluster(id)
+                    : type === 'lang' ? pauseLangSession()
                     : Promise.resolve()
                 } else {
                   call = type === 'quest' ? resumeSession(id)
@@ -1309,6 +1323,7 @@ export default function App() {
                     : type === 'mind' ? resumeMindSession()
                     : type === 'health_item' ? resumeHealthItemSession(healthItemId)
                     : type === 'ritual' ? resumeRitualCluster(id)
+                    : type === 'lang' ? resumeLangSession()
                     : Promise.resolve()
                 }
                 call.then(() => onSessionUpdate()).catch(err => reportApiError('App', err))
@@ -1354,6 +1369,10 @@ export default function App() {
                   } else {
                     finalizeQuest()
                   }
+                } else if (type === 'lang') {
+                  // Lang: stop encerra o cluster (finalizada=1) — sem modal,
+                  // a sessão de estudo não tem registro a preencher.
+                  stopLangSession().then(clearBanner).catch(err => reportApiError('App', err))
                 } else if (type === 'task') {
                   stopTaskSession(id).then(clearBanner).catch(err => reportApiError('App', err))
                 } else if (type === 'routine') {
@@ -1399,6 +1418,7 @@ export default function App() {
             : activeSession?.type === 'mind' ? 'mind'
             : activeSession?.type === 'health_item' ? 'health'
             : activeSession?.type === 'ritual' ? 'ritual'
+            : activeSession?.type === 'lang' ? 'lang'
             : undefined
           }
           onChanged={() => {
@@ -1500,6 +1520,20 @@ export default function App() {
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/library/temas" element={<LibraryTemasPage />} />
           <Route path="/library/item/:id" element={<LibraryItemPage />} />
+          {/* Lang Lab — aquisição de idiomas em 6 frentes (tabs estilo
+              Health/Finance): MAIN dashboard, EXEC player SRS, ESCRITA com
+              IA tutora, FALA shadowing, ACERVO, CONFIG estilo Anki.
+              Doc: docs/lang-lab/PLAN.md. */}
+          <Route path="/lang" element={<HubLangLayout />}>
+            <Route index element={<Navigate to="main" replace />} />
+            <Route path="main" element={<LangMainPage />} />
+            <Route path="exec" element={<LangExecPage />} />
+            <Route path="escrita" element={<LangEscritaPage />} />
+            <Route path="fala" element={<LangFalaPage />} />
+            <Route path="acervo" element={<LangAcervoPage />} />
+            <Route path="config" element={<LangConfigPage />} />
+          </Route>
+          <Route path="/lang/review" element={<Navigate to="/lang/exec" replace />} />
           {/* Mind — promovido a peer top-level (saiu de /health/mind).
               Filosofia: Mind é instrumentação cognitiva (observação→hipótese
               →validação), não monitoramento de estado corporal. Junto com
