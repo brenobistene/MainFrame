@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Ban, Pencil, RotateCcw, Square, Volume2 } from 'lucide-react'
+import { Ban, Pencil, Play, RotateCcw, Square, Volume2 } from 'lucide-react'
 
 import {
   BASE,
@@ -26,7 +26,7 @@ import {
   updateLangCard,
 } from '../../api'
 import { TechLabel } from '../../components/ui/CyberShell'
-import { useReviewLangCard, useUndoLangReview } from '../../lib/lang-queries'
+import { useLangToday, useReviewLangCard, useUndoLangReview } from '../../lib/lang-queries'
 import type { LangCard, LangSettings } from '../../types'
 import { SignalFrame, TxRxTag, Waveform, RX_COLOR, TX_COLOR } from './langUi'
 
@@ -41,6 +41,7 @@ export function LangExecPage() {
   const navigate = useNavigate()
   const reviewMut = useReviewLangCard()
   const undoMut = useUndoLangReview()
+  const { data: today } = useLangToday()
 
   const [settings, setSettings] = useState<LangSettings | null>(null)
   const [blockedBy, setBlockedBy] = useState<string | null>(null)
@@ -347,19 +348,43 @@ export function LangExecPage() {
   if (loading) return <TechLabel>CARREGANDO…</TechLabel>
 
   if (needsManualStart) {
+    // Portal de início (default manual a pedido do usuário). Bônus: o
+    // CLIQUE é o gesto que o navegador exige — o primeiro áudio toca sem
+    // CTA de destrave.
+    const filaDesc = today
+      ? [
+          today.due > 0 ? `${today.due} reviews` : null,
+          today.novos_disponiveis > 0 ? `${today.novos_disponiveis} novos` : null,
+        ].filter(Boolean).join(' · ') || 'fila limpa por agora'
+      : '…'
     return (
-      <div style={{ maxWidth: 560 }}>
-        <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 16 }}>
-          Sessão automática desligada nas configurações. Iniciar agora?
+      <SignalFrame style={{ maxWidth: 560, padding: '34px 36px 30px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <TxRxTag tx={false} />
+          <span style={{ flex: 1 }} />
+          <Waveform active={false} bars={22} height={18} />
+        </div>
+        <div style={{
+          fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+          fontSize: 22, fontWeight: 700, color: 'var(--color-text-primary)',
+          letterSpacing: '0.02em', marginBottom: 6,
+        }}>
+          {filaDesc}
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--color-text-muted)', margin: '0 0 22px', lineHeight: 1.6 }}>
+          O cronômetro entra no banner global ao iniciar, e segue contando
+          na ESCRITA e na FALA. Encerre quando o treino inteiro acabar.
         </p>
         <button
           type="button"
           className="hq-btn hq-btn--primary"
           onClick={() => { setNeedsManualStart(false); setLoading(true); startAndLoad() }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '12px 28px' }}
         >
-          <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>INICIAR SESSÃO</span>
+          <Play size={15} strokeWidth={2} />
+          <span style={{ fontWeight: 600, letterSpacing: '0.1em', fontSize: 13 }}>INICIAR SESSÃO</span>
         </button>
-      </div>
+      </SignalFrame>
     )
   }
 

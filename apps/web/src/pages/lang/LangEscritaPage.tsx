@@ -246,6 +246,40 @@ export function LangEscritaPage() {
         </div>
       )}
 
+      {/* Perguntar à IA — PRIMEIRO da página: tirar dúvida sem sair do
+          MAINFRAME é o uso nº 1 declarado (promovido pro topo a pedido). */}
+      {aiOn && (
+        <div style={{ marginBottom: 36 }}>
+          <div style={{ marginBottom: 10 }}><TechLabel>PERGUNTAR · DÚVIDA DIRETA COM A TUTORA</TechLabel></div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input
+              value={pergunta}
+              onChange={e => setPergunta(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAsk() }}
+              placeholder='ex.: como digo "deu ruim" informal? · por que "I have been working"?'
+              style={{ ...inputStyle, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            />
+            <button
+              type="button"
+              className="hq-btn hq-btn--ghost"
+              onClick={handleAsk}
+              disabled={askLoading || !pergunta.trim()}
+            >
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
+                {askLoading ? '…' : 'PERGUNTAR'}
+              </span>
+            </button>
+          </div>
+          {asks.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+              {asks.map(a => (
+                <AskRow key={a.id} ask={a} onCard={fraseParaCard} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Treino de produção */}
       <div style={{ marginBottom: 10 }}><TechLabel>TREINO DE PRODUÇÃO</TechLabel></div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -317,38 +351,6 @@ export function LangEscritaPage() {
         </div>
       )}
 
-      {/* Perguntar à IA */}
-      {aiOn && (
-        <div style={{ marginTop: 36 }}>
-          <div style={{ marginBottom: 10 }}><TechLabel>PERGUNTAR</TechLabel></div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <input
-              value={pergunta}
-              onChange={e => setPergunta(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleAsk() }}
-              placeholder='ex.: como digo "deu ruim" informal? · por que "I have been working"?'
-              style={{ ...inputStyle, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
-            />
-            <button
-              type="button"
-              className="hq-btn hq-btn--ghost"
-              onClick={handleAsk}
-              disabled={askLoading || !pergunta.trim()}
-            >
-              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em' }}>
-                {askLoading ? '…' : 'PERGUNTAR'}
-              </span>
-            </button>
-          </div>
-          {asks.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-              {asks.map(a => (
-                <AskRow key={a.id} ask={a} onCard={fraseParaCard} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Produções salvas + feedback */}
       <div style={{ marginTop: 36, marginBottom: 10 }}><TechLabel>SUAS PRODUÇÕES</TechLabel></div>

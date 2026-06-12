@@ -156,7 +156,7 @@ def upgrade() -> None:
             day_cutoff_hour         INTEGER NOT NULL DEFAULT 4,
             tts_enabled             INTEGER NOT NULL DEFAULT 1,
             audio_autoplay          INTEGER NOT NULL DEFAULT 1,
-            auto_session_on_review  INTEGER NOT NULL DEFAULT 1,
+            auto_session_on_review  INTEGER NOT NULL DEFAULT 0,
             ai_provider             TEXT NOT NULL DEFAULT 'none',
             ai_model                TEXT NOT NULL DEFAULT 'gemini-flash-latest',
             ai_base_url             TEXT,
