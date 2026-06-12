@@ -258,7 +258,7 @@ export function LangEscritaPage() {
       <textarea
         value={texto}
         onChange={e => setTexto(e.target.value)}
-        placeholder={prompt || 'Escreva em inglês. Errar aqui é o método — o feedback explica o porquê.'}
+        placeholder={prompt || 'Escreva em inglês. Errar aqui é o método: o feedback explica o porquê.'}
         rows={5}
         style={{ ...inputStyle, width: '100%', resize: 'vertical', lineHeight: 1.6 }}
       />
@@ -341,7 +341,7 @@ export function LangEscritaPage() {
       {/* Produções salvas + feedback */}
       <div style={{ marginTop: 36, marginBottom: 10 }}><TechLabel>SUAS PRODUÇÕES</TechLabel></div>
       {pieces.length === 0 && (
-        <MonoNote>NENHUMA AINDA — a primeira é a mais difícil, e é só sua</MonoNote>
+        <MonoNote>NENHUMA AINDA · A PRIMEIRA É A MAIS DIFÍCIL, E É SÓ SUA</MonoNote>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {pieces.map(p => (

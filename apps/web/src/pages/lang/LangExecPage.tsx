@@ -167,7 +167,7 @@ export function LangExecPage() {
       setDuvida('')
     } catch (err) {
       reportApiError('LangExec.duvida', err)
-      setDuvidaResposta('(IA falhou — tente de novo em instantes)')
+      setDuvidaResposta('(IA falhou, tente de novo em instantes)')
     } finally {
       setDuvidaLoading(false)
     }
@@ -370,7 +370,7 @@ export function LangExecPage() {
           </div>
         </div>
       ) : !card ? (
-        <TechLabel>FILA VAZIA — adicione cards na MAIN ou no ACERVO</TechLabel>
+        <TechLabel>FILA VAZIA · ADICIONE CARDS NA MAIN OU NO ACERVO</TechLabel>
       ) : (
         <>
           <div style={{
@@ -413,15 +413,18 @@ export function LangExecPage() {
               </div>
             ) : (
               <>
+                {/* A frase é O conteúdo do player — escala de destaque
+                    (1.4x sobre o verso, polish F5). */}
                 <div style={{
-                  fontSize: 22, fontWeight: 600, color: 'var(--color-text-primary)',
-                  lineHeight: 1.4, marginBottom: revealed ? 18 : 0,
+                  fontSize: 27, fontWeight: 600, color: 'var(--color-text-primary)',
+                  lineHeight: 1.45, marginBottom: revealed ? 20 : 0,
+                  letterSpacing: '0.005em',
                 }}>
                   {frontText}
                 </div>
                 {revealed && (
                   <div style={{ borderTop: '1px solid var(--color-divider)', paddingTop: 16 }}>
-                    <div style={{ fontSize: 17, color: 'var(--color-ice-light)', lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 19, color: 'var(--color-ice-light)', lineHeight: 1.5 }}>
                       {backText}
                     </div>
                     {card.notas && (

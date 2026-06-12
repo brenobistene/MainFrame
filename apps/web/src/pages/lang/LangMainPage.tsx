@@ -128,10 +128,13 @@ export function LangMainPage() {
 
   const fila = (today?.due ?? 0) + (today?.novos_disponiveis ?? 0)
   const ret = metrics?.retencao_30d
+  // Primeiro uso: acervo zerado. Dashboard de zeros é ruído; a página
+  // recebe o operador e aponta os dois caminhos de entrada.
+  const firstRun = metrics != null && metrics.cards_total === 0
 
   return (
     <div style={{ maxWidth: 980 }}>
-      {today?.dias_sem_estudo != null && (
+      {today?.dias_sem_estudo != null && !firstRun && (
         <div style={{ marginBottom: 16 }}>
           <TechLabel color="var(--color-warning)">
             SEM ESTUDO HÁ {today.dias_sem_estudo} DIAS
@@ -139,15 +142,40 @@ export function LangMainPage() {
         </div>
       )}
 
+      {/* Primeiro uso — a UI fala com o operador (Serif Reserved Rule). */}
+      {firstRun && (
+        <div style={{ marginBottom: 36, maxWidth: 640 }}>
+          <p style={{
+            fontFamily: 'Bitter, Iowan Old Style, Georgia, serif',
+            fontStyle: 'italic', fontSize: 17, lineHeight: 1.7,
+            color: 'var(--color-text-secondary)', margin: '0 0 14px',
+          }}>
+            Toda língua que você admira em alguém foi construída frase por
+            frase. A sua começa com a primeira.
+          </p>
+          <p style={{ fontSize: 12.5, color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.6 }}>
+            Cola uma frase no campo abaixo, ou leva um texto inteiro
+            (lição, transcrição, letra) pra aba <span
+              onClick={() => navigate('/lang/fontes')}
+              style={{ color: 'var(--color-ice-light)', cursor: 'pointer', fontWeight: 600 }}
+            >FONTES</span> e minera as frases que valem.
+          </p>
+        </div>
+      )}
+
       {/* Hoje */}
-      <div style={{ marginBottom: 10 }}><TechLabel>HOJE</TechLabel></div>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-        <StatBlock label="DUE AGORA" value={today?.due ?? '—'} />
-        <StatBlock label="NOVOS" value={today?.novos_disponiveis ?? '—'} />
-        <StatBlock label="REVIEWS" value={today?.reviews_hoje ?? '—'} />
-        <StatBlock label="TEMPO" value={today?.tempo_hoje_min ?? '—'} suffix="min" />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 30 }}>
+      {!firstRun && (
+        <>
+          <div style={{ marginBottom: 10 }}><TechLabel>HOJE</TechLabel></div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+            <StatBlock label="DUE AGORA" value={today?.due ?? '—'} />
+            <StatBlock label="NOVOS" value={today?.novos_disponiveis ?? '—'} />
+            <StatBlock label="REVIEWS" value={today?.reviews_hoje ?? '—'} />
+            <StatBlock label="TEMPO" value={today?.tempo_hoje_min ?? '—'} suffix="min" />
+          </div>
+        </>
+      )}
+      <div style={{ display: firstRun ? 'none' : 'flex', alignItems: 'center', gap: 16, marginBottom: 30 }}>
         <button
           type="button"
           className="hq-btn hq-btn--primary"
@@ -165,30 +193,39 @@ export function LangMainPage() {
         </span>
       </div>
 
-      {/* Evolução 30d */}
-      <div style={{ marginBottom: 10 }}><TechLabel>EVOLUÇÃO · 30D</TechLabel></div>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-        <StatBlock label="TEMPO 30D" value={metrics?.tempo_30d_min ?? '—'} suffix="min" />
-        <StatBlock label="REVIEWS 30D" value={metrics?.reviews_30d ?? '—'} />
-        <StatBlock
-          label="RETENÇÃO"
-          value={ret == null ? '—' : Math.round(ret * 100)}
-          suffix={ret == null ? undefined : '%'}
-        />
-        <StatBlock label="DIAS SEGUIDOS" value={metrics?.streak_dias ?? '—'} />
-        <StatBlock label="ACERVO" value={metrics?.cards_total ?? '—'} />
-        <StatBlock label="MADUROS" value={metrics?.cards_maduros ?? '—'} />
-        <StatBlock label="PRODUÇÕES 30D" value={metrics?.pieces_30d ?? '—'} />
-      </div>
-      {metrics && (
+      {/* Evolução 30d — observação, não ação: leitura mono quieta (hoje
+          acionável ganha blocos; 30d observacional ganha texto). */}
+      {metrics && !firstRun && (
         <div style={{ marginBottom: 32 }}>
+          <div style={{ marginBottom: 10 }}><TechLabel>EVOLUÇÃO · 30D</TechLabel></div>
+          <div style={{
+            fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+            fontSize: 11, letterSpacing: '0.06em', lineHeight: 2,
+            color: 'var(--color-text-muted)', marginBottom: 14, maxWidth: 760,
+          }}>
+            {[
+              ['RETENÇÃO', ret == null ? null : `${Math.round(ret * 100)}%`],
+              ['DIAS SEGUIDOS', metrics.streak_dias],
+              ['REVIEWS', metrics.reviews_30d],
+              ['TEMPO', `${metrics.tempo_30d_min}min`],
+              ['ACERVO', metrics.cards_total],
+              ['MADUROS', metrics.cards_maduros],
+              ['PRODUÇÕES', metrics.pieces_30d],
+            ].filter(([, v]) => v !== null).map(([label, value], i) => (
+              <span key={String(label)} style={{ whiteSpace: 'nowrap' }}>
+                {i > 0 && <span style={{ margin: '0 10px', opacity: 0.4 }}>·</span>}
+                {label}{' '}
+                <span style={{ color: 'var(--color-ice-light)', fontWeight: 700 }}>{String(value)}</span>
+              </span>
+            ))}
+          </div>
           <Heatmap30d data={metrics.heatmap} />
         </div>
       )}
 
       {/* Análise do dia — a tutora julga o progresso COMPARANDO com as
           semanas anteriores (pedido literal). Sob demanda, nunca automática. */}
-      {aiOn && (
+      {aiOn && !firstRun && (
         <div style={{ marginBottom: 32 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 10 }}>
             <TechLabel>ANÁLISE DO DIA</TechLabel>

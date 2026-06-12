@@ -125,7 +125,7 @@ export function LangConfigPage() {
     <div style={{ maxWidth: 860 }}>
       <Section
         title="AGENDAMENTO · SRS"
-        hint="Learning steps = de quanto em quanto tempo (minutos) o card volta enquanto você está aprendendo ou errou (ex.: 1,10 = volta em 1 min, depois em 10). Depois de graduar, a retenção desejada manda: 0.90 significa que o card volta quando a chance de lembrar cai pra 90% — subir aproxima os retornos, descer espaça."
+        hint="Learning steps = de quanto em quanto tempo (minutos) o card volta enquanto você está aprendendo ou errou (ex.: 1,10 = volta em 1 min, depois em 10). Depois de graduar, a retenção desejada manda: 0.90 significa que o card volta quando a chance de lembrar cai pra 90%: subir aproxima os retornos, descer espaça."
       >
         <Field label="LEARNING STEPS (MIN, CSV)">
           <input
@@ -244,7 +244,7 @@ export function LangConfigPage() {
         ))}
         {voices.length === 0 && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-muted)' }}>
-            catálogo de vozes indisponível (rede) — a voz atual continua valendo
+            catálogo de vozes indisponível (rede) · a voz atual continua valendo
           </span>
         )}
       </Section>
@@ -304,7 +304,7 @@ export function LangConfigPage() {
 
       <Section
         title="SUPERFÍCIES"
-        hint="Onde o Lang Lab aparece fora daqui. Tudo desligável — aviso é observação, não nag."
+        hint="Onde o Lang Lab aparece fora daqui. Tudo desligável: aviso é observação, não nag."
       >
         <Toggle label="CARD NO EXEC" value={v.exec_card_visivel ?? true} onChange={x => set({ exec_card_visivel: x })} />
         <Toggle label="CARD NO DASHBOARD" value={v.dashboard_card_visivel ?? true} onChange={x => set({ dashboard_card_visivel: x })} />

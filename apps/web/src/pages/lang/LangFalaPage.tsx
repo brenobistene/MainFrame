@@ -159,7 +159,7 @@ export function LangFalaPage() {
   }
 
   if (!card) {
-    return <TechLabel>SEM CARDS — adicione frases na MAIN ou no ACERVO primeiro</TechLabel>
+    return <TechLabel>SEM CARDS · ADICIONE FRASES NA MAIN OU NO ACERVO PRIMEIRO</TechLabel>
   }
 
   const sim = heard ? similarity(card.frente, heard) : null
@@ -286,7 +286,7 @@ export function LangFalaPage() {
         fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--color-text-muted)',
         letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.8,
       }}>
-        GRAVAÇÃO É EFÊMERA — NADA É SALVO OU ENVIADO · O CHECAR USA O RECONHECIMENTO DO PRÓPRIO NAVEGADOR
+        GRAVAÇÃO É EFÊMERA · NADA É SALVO OU ENVIADO · O CHECAR USA O RECONHECIMENTO DO PRÓPRIO NAVEGADOR
       </div>
     </div>
   )

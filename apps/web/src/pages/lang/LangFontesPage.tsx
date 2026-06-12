@@ -142,7 +142,7 @@ export function LangFontesPage() {
           <textarea
             value={texto}
             onChange={e => setTexto(e.target.value)}
-            placeholder={'Cole o texto aqui — UMA FRASE POR LINHA facilita a mineração.\nI should have known better.\nIt went south pretty fast.\n…'}
+            placeholder={'Cole o texto aqui, UMA FRASE POR LINHA facilita a mineração.\nI should have known better.\nIt went south pretty fast.\n…'}
             rows={6}
             style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6, fontSize: 13 }}
           />
@@ -162,7 +162,7 @@ export function LangFontesPage() {
       {sources.length === 0 && !showForm && (
         <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
           Nenhuma fonte ainda. Cola uma lição do Vergara, a transcrição de um
-          vídeo ou a letra de uma música — e minera as frases que valem.
+          vídeo ou a letra de uma música, e minera as frases que valem.
         </p>
       )}
 
@@ -299,7 +299,7 @@ function SourceCard({ source, open, onToggle, onDelete, onChanged }: {
           {/* Mineração */}
           {linhas.length === 0 ? (
             <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              Fonte sem texto — edite e cole as frases (uma por linha) pra minerar.
+              Fonte sem texto: edite e cole as frases (uma por linha) pra minerar.
             </span>
           ) : (
             <>
