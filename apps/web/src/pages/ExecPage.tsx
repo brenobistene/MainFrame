@@ -1057,7 +1057,11 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
     }] : []),
   ]
   const plannedItems = fullPool.filter(item => plannedItemIds.includes(item.id))
-  const questCount = plannedItems.filter(i => !i.isTask && !i.isRoutine).length
+  // QST conta SÓ quests — ritual/pendência/lang no plano inflavam o
+  // contador do SCHEDULE.LIVE (QA 2026-06-12).
+  const questCount = plannedItems.filter(i =>
+    !i.isTask && !i.isRoutine && !i.isRitual && !i.isPendencia && !i.isLang
+  ).length
   const taskCount = plannedItems.filter(i => i.isTask).length
   const routineCount = plannedItems.filter(i => i.isRoutine).length
 
@@ -1724,6 +1728,8 @@ function PeriodSection({
   }, 0)
   const availableMin = Math.max(0, effectiveWindowMin - unproductiveMin)
 
+  // Lang Lab — TanStack dedupa pela queryKey, custo zero de re-fetch.
+  const { data: periodLangToday } = useLangToday()
   const allItems = [
     ...quests,
     ...routines.map(r => ({ ...r, isRoutine: true, done: doneRoutineIds.has(r.id) })),
@@ -1755,6 +1761,17 @@ function PeriodSection({
       done: p.done,
       existing_record_id: p.existing_record_id,
     })),
+    // Lang Lab (id fixo 'lang') — sem ele aqui, o item arrastado pro
+    // período DESAPARECIA (periodItems não resolvia o id; QA 2026-06-12).
+    ...(periodLangToday ? [{
+      id: 'lang',
+      title: 'Lang Lab',
+      estimated_minutes: periodLangToday.daily_goal_min ?? 0,
+      isLang: true,
+      due: periodLangToday.due,
+      novos: periodLangToday.novos_disponiveis,
+      done: (periodLangToday.due + periodLangToday.novos_disponiveis) === 0,
+    }] : []),
   ]
   // Renderiza NA ORDEM do dayPlan (e não na ordem do pool) pra respeitar a
   // reordenação que o user faz via drag-and-drop.
@@ -2065,6 +2082,9 @@ function PlannerDrawer({
     return () => clearTimeout(t)
   }, [flashPeriod])
 
+  // Lang Lab pro pool do drawer (hook no topo do componente — o pool em si
+  // vive dentro do map de períodos, onde hook não pode).
+  const { data: drawerLangToday } = useLangToday()
   const typeChips: { key: 'quest' | 'task' | 'routine' | 'ritual' | 'mind' | 'health' | 'lang'; label: string }[] = [
     { key: 'quest', label: 'Quests' },
     { key: 'task', label: 'Tarefas' },
@@ -2562,6 +2582,17 @@ function PlannerDrawer({
                   done: p.done,
                   existing_record_id: p.existing_record_id,
                 })),
+                // Lang Lab — mesmo motivo dos rituais/pendências acima:
+                // sem resolver o id 'lang', o item some do período (QA).
+                ...(drawerLangToday ? [{
+                  id: 'lang',
+                  title: 'Lang Lab',
+                  estimated_minutes: drawerLangToday.daily_goal_min ?? 0,
+                  isLang: true,
+                  due: drawerLangToday.due,
+                  novos: drawerLangToday.novos_disponiveis,
+                  done: (drawerLangToday.due + drawerLangToday.novos_disponiveis) === 0,
+                }] : []),
               ]
               // Renderiza NA ORDEM do dayPlan pra refletir reordenação por drag.
               const periodItems = dayPlan[period]

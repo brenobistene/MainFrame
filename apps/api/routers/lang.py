@@ -81,11 +81,18 @@ def _active_language_id(conn, settings: dict) -> Optional[int]:
     return row["id"] if row else None
 
 
+def _cutoff_hour(settings: dict) -> int:
+    """day_cutoff_hour respeitando 0 (meia-noite é valor válido — `or 4`
+    engolia o zero e virava hardcode disfarçado; QA 2026-06-12)."""
+    v = settings.get("day_cutoff_hour")
+    return int(v) if v is not None else 4
+
+
 def _day_start_utc_iso(settings: dict) -> str:
     """Início do 'dia' corrente em UTC ISO. O dia vira em day_cutoff_hour
     LOCAL (default 4h) — usuário estuda à noite, ANALYZE/contadores às
     00h15 pertencem ao dia anterior (PLAN §3.8)."""
-    cutoff = int(settings.get("day_cutoff_hour") or 4)
+    cutoff = _cutoff_hour(settings)
     now_local = datetime.now().astimezone()
     day = now_local.date()
     if now_local.hour < cutoff:
@@ -248,18 +255,15 @@ async def create_card(body: CardCreate):
         if not language_id:
             raise HTTPException(400, detail="nenhuma língua cadastrada")
         # Dup check por frente normalizada — re-colar a mesma frase avisa
-        # em vez de duplicar silenciosamente (PLAN §3.3).
+        # em vez de duplicar silenciosamente (PLAN §3.3). Um SELECT só
+        # (o N+1 por card degradava com o acervo; QA 2026-06-12).
         norm = _normalize_frente(frente)
-        dup = conn.execute(
-            "SELECT id FROM lang_card WHERE language_id = ?",
+        existentes = conn.execute(
+            "SELECT frente FROM lang_card WHERE language_id = ?",
             (language_id,),
         ).fetchall()
-        for r in dup:
-            existing = conn.execute(
-                "SELECT frente FROM lang_card WHERE id = ?", (r["id"],)
-            ).fetchone()
-            if existing and _normalize_frente(existing["frente"]) == norm:
-                raise HTTPException(409, detail="card com essa frase já existe")
+        if any(_normalize_frente(r["frente"]) == norm for r in existentes):
+            raise HTTPException(409, detail="card com essa frase já existe")
         now = utcnow_iso_z()
         tts_on = bool(settings.get("tts_enabled", 1))
         cur = conn.execute(
@@ -303,10 +307,17 @@ async def update_card(card_id: int, body: CardUpdate):
             (*fields.values(), card_id),
         )
         conn.commit()
-        # frente mudou num card TTS → hash velho não vale; regenera (typo
-        # corrigido no review não pode continuar tocando o áudio errado).
+        # frente mudou num card TTS → hash velho não vale. INVALIDA o áudio
+        # ANTES da regeneração best-effort: se o TTS estiver fora do ar, o
+        # card toca via speechSynthesis com o texto novo — nunca o MP3
+        # antigo com a frase errada (QA 2026-06-12).
         new_frente = fields.get("frente")
         if new_frente and row["audio_mode"] == "tts":
+            conn.execute(
+                "UPDATE lang_card SET audio_path = NULL, tts_hash = NULL WHERE id = ?",
+                (card_id,),
+            )
+            conn.commit()
             voice = _language_voice(conn, row["language_id"])
             await _tts_best_effort(conn, card_id, new_frente.strip(), voice)
         out = _fetch_card(conn, card_id)
@@ -400,10 +411,19 @@ def review_queue(language_id: Optional[int] = Query(None)):
             (lang_id, now),
         ).fetchall()
 
+        # Cap de reviews/dia — semântica Anki (QA 2026-06-12): o teto vale
+        # SÓ pros cards 'review'; learning/relearning SEMPRE entram (cortar
+        # um card no meio dos steps o abandona meio-aprendido até amanhã).
+        # Cap estourado também fecha a torneira de NOVOS (cada novo gera
+        # mais reviews).
         max_rev = settings.get("max_reviews_per_day")
         if max_rev:
             allowed = max(0, int(max_rev) - reviews_done_today)
-            due_rows = due_rows[:allowed]
+            learning_rows = [r for r in due_rows if r["state"] != "review"]
+            review_rows = [r for r in due_rows if r["state"] == "review"]
+            due_rows = learning_rows + review_rows[:allowed]
+            if allowed == 0:
+                new_quota_left = 0
 
         new_rows = []
         if new_quota_left > 0:
@@ -414,12 +434,35 @@ def review_queue(language_id: Optional[int] = Query(None)):
                 (lang_id, new_quota_left),
             ).fetchall()
 
+        # Learn-ahead (QA 2026-06-12): fila vazia mas há card em learning
+        # step a minutos de vencer → informa quando, pro player mostrar
+        # countdown e re-buscar em vez de "FILA LIMPA" enganoso ("card com
+        # Again volta na MESMA sessão", lang_srs.py).
+        next_due_seconds = None
+        if not due_rows and not new_rows:
+            nxt = conn.execute(
+                """SELECT MIN(due) AS d FROM lang_card
+                   WHERE language_id = ? AND suspenso = 0
+                     AND state IN ('learning', 'relearning')""",
+                (lang_id,),
+            ).fetchone()["d"]
+            if nxt:
+                try:
+                    delta = (
+                        datetime.fromisoformat(nxt.replace("Z", "+00:00"))
+                        - datetime.now(timezone.utc)
+                    ).total_seconds()
+                    next_due_seconds = max(0, int(delta))
+                except ValueError:
+                    pass
+
     return QueueOut(
         cards=[_card_out(r) for r in due_rows] + [_card_out(r) for r in new_rows],
         due_count=len(due_rows),
         new_count=len(new_rows),
         new_quota_left=new_quota_left,
         reviews_done_today=reviews_done_today,
+        next_due_seconds=next_due_seconds,
     )
 
 
@@ -472,17 +515,21 @@ def review_card(card_id: int, body: ReviewIn):
 
 @router.post("/api/lang/review/undo", response_model=UndoOut)
 def undo_last_review():
-    """Desfaz o último review do dia (tecla Z no player). Restaura o card
-    pelo snapshot e apaga a row do log."""
+    """Desfaz o último review RECENTE (tecla Z no player). Janela de 12h
+    corridas em vez de "hoje": na virada do day_cutoff, um review de
+    minutos atrás não pode virar 'nenhum review pra desfazer' (QA
+    2026-06-12). Restaura o card pelo snapshot e apaga a row do log."""
     with get_conn() as conn:
-        settings = _get_settings(conn)
-        day_start = _day_start_utc_iso(settings)
+        recent = (
+            (datetime.now(timezone.utc) - timedelta(hours=12))
+            .isoformat().replace("+00:00", "Z")
+        )
         rev = conn.execute(
             "SELECT * FROM lang_review WHERE reviewed_at >= ? ORDER BY id DESC LIMIT 1",
-            (day_start,),
+            (recent,),
         ).fetchone()
         if not rev:
-            raise HTTPException(404, detail="nenhum review hoje pra desfazer")
+            raise HTTPException(404, detail="nenhum review recente pra desfazer")
         prev_review = conn.execute(
             "SELECT MAX(reviewed_at) AS t FROM lang_review WHERE card_id = ? AND id < ?",
             (rev["card_id"], rev["id"]),
@@ -1134,7 +1181,7 @@ async def compose_assist(body: AssistIn):
 
 def _current_day_label(settings: dict) -> str:
     """Data 'do dia' respeitando day_cutoff_hour local (PLAN §3.8)."""
-    cutoff = int(settings.get("day_cutoff_hour") or 4)
+    cutoff = _cutoff_hour(settings)
     now_local = datetime.now().astimezone()
     day = now_local.date()
     if now_local.hour < cutoff:
@@ -1210,15 +1257,18 @@ async def analyze_today():
                 (lang_id, day_start[:10]),
             ).fetchall()
         ]
-        anteriores = [
-            _analysis_out(r)["analise"].get("resumo", "")
-            for r in conn.execute(
-                "SELECT * FROM lang_analysis WHERE language_id = ? "
-                "ORDER BY date DESC LIMIT 3",
-                (lang_id,),
-            ).fetchall()
-            if _analysis_out(r)["analise"]
-        ]
+        # Guard de tipo: análise antiga com JSON não-objeto (modelo fugiu
+        # do shape) não pode quebrar TODAS as análises futuras com 500
+        # permanente (QA 2026-06-12).
+        anteriores = []
+        for r in conn.execute(
+            "SELECT * FROM lang_analysis WHERE language_id = ? "
+            "ORDER BY date DESC LIMIT 3",
+            (lang_id,),
+        ).fetchall():
+            a = _analysis_out(r)["analise"]
+            if isinstance(a, dict):
+                anteriores.append(str(a.get("resumo", "")))
         contexto = {
             "hoje": _window_stats(conn, lang_id, day_start),
             "ultimos_7d": _window_stats(conn, lang_id, cutoff_7d),
@@ -1358,8 +1408,16 @@ async def upload_source_audio(source_id: int, file: UploadFile = File(...)):
     lang_tts.ensure_dirs()
     filename = f"source_{source_id}{ext}"
     raw = await file.read()
-    with open(lang_tts.media_path("sources", filename), "wb") as f:
+    # Limite de tamanho + escrita atômica (tmp → replace): upload
+    # interrompido não pode deixar arquivo corrompido servível (QA).
+    if len(raw) > 100 * 1024 * 1024:
+        raise HTTPException(413, detail="áudio acima de 100MB")
+    dest = lang_tts.media_path("sources", filename)
+    tmp = dest + ".part"
+    with open(tmp, "wb") as f:
         f.write(raw)
+    import os as _os
+    _os.replace(tmp, dest)
     with get_conn() as conn:
         conn.execute(
             "UPDATE lang_source SET audio_path = ?, atualizado_em = datetime('now') "

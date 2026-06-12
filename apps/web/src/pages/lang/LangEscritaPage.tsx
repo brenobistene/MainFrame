@@ -141,8 +141,8 @@ export function LangEscritaPage() {
       const r = await langComposeAssist(texto, intencao || undefined)
       setAssist(r.sugestoes)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setErro(msg.includes('502') ? 'IA falhou (rate limit?) · tente de novo' : 'assist indisponível')
+      const status = (err as { status?: number } | null)?.status
+      setErro(status === 502 ? 'IA falhou (rate limit?) · tente de novo' : 'assist indisponível')
     } finally {
       setAssistLoading(false)
     }
@@ -169,8 +169,8 @@ export function LangEscritaPage() {
       const updated = await requestLangPieceFeedback(pieceId)
       setPieces(ps => ps.map(p => (p.id === pieceId ? updated : p)))
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setErro(msg.includes('502')
+      const status = (err as { status?: number } | null)?.status
+      setErro(status === 502
         ? 'feedback falhou (rate limit?) · o texto está salvo, tente de novo'
         : 'feedback indisponível · o texto está salvo')
     } finally {
@@ -188,8 +188,8 @@ export function LangEscritaPage() {
       setAsks(list => [a, ...list])
       setPergunta('')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setErro(msg.includes('502') ? 'IA falhou (rate limit?) · tente de novo' : 'pergunta indisponível')
+      const status = (err as { status?: number } | null)?.status
+      setErro(status === 502 ? 'IA falhou (rate limit?) · tente de novo' : 'pergunta indisponível')
     } finally {
       setAskLoading(false)
     }
@@ -200,8 +200,8 @@ export function LangEscritaPage() {
       await createLangCard({ frente: frase, direction: 'production' })
       setErro(null)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setErro(msg.includes('409') ? 'já existe card com essa frase' : 'falha ao criar card')
+      const status = (err as { status?: number } | null)?.status
+      setErro(status === 409 ? 'já existe card com essa frase' : 'falha ao criar card')
     }
   }
 

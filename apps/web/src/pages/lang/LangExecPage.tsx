@@ -54,6 +54,8 @@ export function LangExecPage() {
   const [editFrente, setEditFrente] = useState('')
   const [editVerso, setEditVerso] = useState('')
   const [reviewedCount, setReviewedCount] = useState(0)
+  const [nextDue, setNextDue] = useState<number | null>(null)
+  const [queueErro, setQueueErro] = useState<string | null>(null)
   // Dúvida contextual — pergunta à tutora COM o card como contexto, sem
   // sair do player (pedido literal: não sair do MAINFRAME pra pesquisar).
   const [aiOn, setAiOn] = useState(false)
@@ -67,11 +69,20 @@ export function LangExecPage() {
 
   function trySpeech(text: string) {
     try {
+      // cancel() antes: replays com R não podem ENFILEIRAR utterances (QA).
+      window.speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(text)
       u.lang = 'en'
       window.speechSynthesis.speak(u)
     } catch { /* sem TTS local — review segue sem som */ }
   }
+
+  // Som morre com a página: navegar/ENCERRAR não pode deixar áudio tocando
+  // nem utterance pendente (QA 2026-06-12).
+  useEffect(() => () => {
+    audioRef.current?.pause()
+    try { window.speechSynthesis.cancel() } catch { /* indisponível */ }
+  }, [])
 
   const playAudio = useCallback((c: LangCard | null) => {
     if (!c) return
@@ -98,11 +109,14 @@ export function LangExecPage() {
     setIdx(0)
     setRevealed(false)
     setDone(q.cards.length === 0)
+    setNextDue(q.next_due_seconds)
   }
 
   async function startAndLoad() {
     try {
       await startLangSession()
+      // Banner global atualiza na hora, não no próximo poll de 15s (QA).
+      window.dispatchEvent(new CustomEvent('hq-session-changed'))
     } catch (err) {
       // 409 = outra sessão entrou no meio tempo — re-checa e bloqueia.
       const active = await fetchActiveSession().catch(() => null)
@@ -113,8 +127,16 @@ export function LangExecPage() {
       }
       reportApiError('LangExecPage.start', err)
     }
-    await loadQueue()
-    setLoading(false)
+    // loadQueue FORA do try da sessão mas com guarda própria: falha de
+    // rede não pode deixar CARREGANDO… eterno (QA 2026-06-12).
+    try {
+      await loadQueue()
+    } catch (err) {
+      reportApiError('LangExecPage.queue', err)
+      setQueueErro('falha ao buscar a fila')
+    } finally {
+      setLoading(false)
+    }
   }
 
   // Boot: regra de quest — outra sessão rodando bloqueia a página.
@@ -185,8 +207,13 @@ export function LangExecPage() {
     try {
       const q = await fetchLangQueue()
       if (q.cards.length > 0) { setCards(q.cards); setIdx(0) }
-      else setDone(true)
-    } catch { setDone(true) }
+      else { setDone(true); setNextDue(q.next_due_seconds) }
+    } catch (err) {
+      // Rede falhou ≠ fila limpa: "FILA LIMPA" falsa faria o usuário
+      // encerrar com cards pendentes (QA 2026-06-12).
+      reportApiError('LangExecPage.advance', err)
+      setQueueErro('rede falhou ao buscar a fila')
+    }
   }, [idx, cards.length])
 
   const rate = useCallback(async (rating: 1 | 2 | 3 | 4) => {
@@ -201,9 +228,16 @@ export function LangExecPage() {
   const undo = useCallback(async () => {
     if (undoMut.isPending) return
     try {
-      await undoMut.mutateAsync()
+      const r = await undoMut.mutateAsync()
       setReviewedCount(n => Math.max(0, n - 1))
-      await loadQueue()
+      // O card desfeito volta JÁ REVELADO como card atual — recarregar a
+      // fila inteira jogava ele pro fim e mostrava outro card, impedindo
+      // corrigir o rating na hora (QA 2026-06-12).
+      setCards(cs => [r.card, ...cs.filter(c => c.id !== r.card.id)])
+      setIdx(0)
+      setRevealed(true)
+      setEditing(false)
+      setDone(false)
     } catch (err) { reportApiError('LangExecPage.undo', err) }
   }, [undoMut])
 
@@ -221,9 +255,23 @@ export function LangExecPage() {
   }
 
   async function endSession() {
-    try { await stopLangSession() } catch (err) { reportApiError('LangExecPage.stop', err) }
+    try {
+      await stopLangSession()
+      window.dispatchEvent(new CustomEvent('hq-session-changed'))
+    } catch (err) { reportApiError('LangExecPage.stop', err) }
     navigate('/lang/main')
   }
+
+  // Learn-ahead: fila vazia com learning step a segundos de vencer →
+  // re-busca sozinho no vencimento ("Again volta na MESMA sessão").
+  useEffect(() => {
+    if (!done || nextDue == null) return
+    const t = setTimeout(() => {
+      loadQueue().catch(() => setQueueErro('falha ao buscar a fila'))
+    }, (nextDue + 2) * 1000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done, nextDue])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -350,11 +398,41 @@ export function LangExecPage() {
         </div>
       )}
 
-      {done ? (
+      {queueErro ? (
         <div style={{ maxWidth: 560 }}>
           <div style={{ marginBottom: 12 }}>
-            <TechLabel color="var(--color-success-light)">FILA LIMPA POR AGORA</TechLabel>
+            <TechLabel color="var(--color-warning)">{queueErro.toUpperCase()}</TechLabel>
           </div>
+          <button
+            type="button"
+            className="hq-btn hq-btn--primary"
+            onClick={() => {
+              setQueueErro(null)
+              setLoading(true)
+              loadQueue()
+                .catch(() => setQueueErro('falha ao buscar a fila'))
+                .finally(() => setLoading(false))
+            }}
+          >
+            <span style={{ fontWeight: 600, letterSpacing: '0.08em' }}>TENTAR DE NOVO</span>
+          </button>
+        </div>
+      ) : done ? (
+        <div style={{ maxWidth: 560 }}>
+          <div style={{ marginBottom: 12 }}>
+            <TechLabel color="var(--color-success-light)">
+              {nextDue != null ? 'FILA LIMPA · UM CARD VOLTANDO' : 'FILA LIMPA POR AGORA'}
+            </TechLabel>
+          </div>
+          {nextDue != null && (
+            <p style={{
+              fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+              fontSize: 12, color: 'var(--color-ice-light)', marginBottom: 10,
+              letterSpacing: '0.06em',
+            }}>
+              próximo card em ~{nextDue < 90 ? `${Math.max(nextDue, 5)}s` : `${Math.ceil(nextDue / 60)}min`} · a fila reabre sozinha
+            </p>
+          )}
           <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 20 }}>
             {reviewedCount} reviews hoje. Cards em aprendizado voltam quando o
             intervalo vencer. Que tal produzir? A aba ESCRITA treina o que a

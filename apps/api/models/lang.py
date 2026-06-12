@@ -95,6 +95,9 @@ class QueueOut(BaseModel):
     new_count: int            # novos incluídos nesta fila (dentro da cota)
     new_quota_left: int       # quanto da cota diária de novos ainda resta
     reviews_done_today: int
+    # Fila vazia mas há learning step a segundos de vencer → player mostra
+    # countdown e re-busca ("Again volta na MESMA sessão").
+    next_due_seconds: Optional[int] = None
 
 
 # ─── Sessão (cluster nível módulo) ───────────────────────────────────────

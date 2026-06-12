@@ -272,6 +272,8 @@ export interface LangQueue {
   new_count: number
   new_quota_left: number
   reviews_done_today: number
+  /** Fila vazia mas há learning step a N segundos de vencer → countdown. */
+  next_due_seconds: number | null
 }
 
 export interface LangSettings {

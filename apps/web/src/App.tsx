@@ -218,6 +218,15 @@ export default function App() {
     window.addEventListener('hq-select-project', handler)
     return () => window.removeEventListener('hq-select-project', handler)
   }, [])
+
+  // Sessão mudou em alguma página (ex.: /lang/exec deu start/stop) →
+  // banner atualiza na hora em vez de esperar o poll de 15s (QA 2026-06-12).
+  useEffect(() => {
+    function onSessionChanged() { refreshActiveSession() }
+    window.addEventListener('hq-session-changed', onSessionChanged)
+    return () => window.removeEventListener('hq-session-changed', onSessionChanged)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [sessionUpdateTrigger, setSessionUpdateTrigger] = useState(0)
   const [sidebarCollapsedRaw, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('hq-sidebar-collapsed')
@@ -507,7 +516,11 @@ export default function App() {
         ? fetchTaskSessions(id)
         : type === 'routine'
           ? fetchRoutineSessions(id, activeSession.routine_date ?? undefined)
-          : Promise.resolve([])  // mind/health_item/library: cluster próprio
+          : type === 'lang'
+            // Cluster do lang: pause/resume cria várias rows — sem somar as
+            // fechadas, o cronômetro do banner ZERAVA ao retomar (QA).
+            ? fetchLangSession().then(c => c.rows ?? [])
+            : Promise.resolve([])  // mind/health_item/library: cluster próprio
     let cancelled = false
     loader
       .then(list => {

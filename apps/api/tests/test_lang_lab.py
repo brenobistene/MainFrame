@@ -191,6 +191,27 @@ def test_settings_anki_like_validacao(lang_client):
     ).status_code == 422
 
 
+def test_learn_ahead_e_cutoff_zero(lang_client):
+    # Learn-ahead (QA): Again no último card → fila vazia MAS com
+    # next_due_seconds informando quando o learning step vence — o player
+    # mostra countdown em vez de "FILA LIMPA" enganoso.
+    card = lang_client.post("/api/lang/cards", json={"frente": "learn ahead probe"}).json()
+    lang_client.post(f"/api/lang/cards/{card['id']}/review", json={"rating": 1})
+    q = lang_client.get("/api/lang/review/queue").json()
+    assert q["cards"] == []
+    assert q["next_due_seconds"] is not None
+    assert 0 <= q["next_due_seconds"] <= 120  # step default = 1 min
+
+    # day_cutoff_hour=0 é valor VÁLIDO (meia-noite) — o `or 4` engolia o
+    # zero (QA). Settings aceita e o /today continua funcionando.
+    r = lang_client.patch("/api/lang/settings", json={"day_cutoff_hour": 0})
+    assert r.status_code == 200 and r.json()["day_cutoff_hour"] == 0
+    assert lang_client.get("/api/lang/today").status_code == 200
+
+    # Undo continua funcionando (janela de 12h, não "hoje" do cutoff).
+    assert lang_client.post("/api/lang/review/undo").status_code == 200
+
+
 def test_today_fatos_sem_quota(lang_client):
     lang_client.post("/api/lang/cards", json={"frente": "hello there"})
     today = lang_client.get("/api/lang/today").json()

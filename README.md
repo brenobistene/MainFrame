@@ -94,6 +94,17 @@ Caderno de leitura e estudo:
 - Cross-link picker pra amarrar items entre si e a projetos
 - Métrica de densidade de leitura (minutos / dia)
 
+### Lang Lab
+
+Aquisição de idiomas (inglês primeiro) por frases com áudio + repetição espaçada (FSRS, o algoritmo do Anki moderno):
+
+- Cards de frase com TTS automático (edge-tts) que toca ao abrir; cards de produção (PT→EN) treinam construir a frase
+- Fontes: cola uma lição/transcrição/letra e minera frases em lote
+- Frentes de escrita (feedback de IA explicando o porquê de cada erro) e fala (shadowing com gravação efêmera + checagem por reconhecimento de voz)
+- Sessões de estudo entram no banner global; fila, métricas e análise diária comparativa
+- Agendamento 100% configurável estilo Anki (learning steps, retenção desejada, fuzzing)
+- IA tutora opcional (Gemini/OpenAI-compat, free tier; chave local via `.env`, módulo funciona 100% sem ela)
+
 ### Sessões globais
 
 Banner flutuante quando uma sessão (quest / tarefa / rotina) está ativa. Apenas **uma sessão por vez** em todo o sistema (validado no backend com HTTP 409 em conflito). Edição manual retroativa, finalização cross-midnight, refetch automático em delete/edit.
@@ -179,6 +190,6 @@ Sem essas variáveis, o app funciona normalmente sem integração externa.
 
 ## Status
 
-Projeto pessoal em iteração ativa. Versão atual: **v0.8.3**. Breaking changes podem acontecer a qualquer momento — não use em ambiente onde você não seja o próprio usuário.
+Projeto pessoal em iteração ativa. Versão atual: **v0.9.0** (Lang Lab). Breaking changes podem acontecer a qualquer momento — não use em ambiente onde você não seja o próprio usuário.
 
 Issues e PRs estão abertos, mas não há compromisso de responder rápido.

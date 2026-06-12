@@ -105,8 +105,8 @@ export function LangMainPage() {
       setAnalise(await analyzeLangToday())
     } catch (err) {
       reportApiError('LangMain.analise', err)
-      const msg = err instanceof Error ? err.message : ''
-      setAnaliseErro(msg.includes('502') ? 'IA falhou (rate limit?) · tente de novo' : 'análise indisponível')
+      const status = (err as { status?: number } | null)?.status
+      setAnaliseErro(status === 502 ? 'IA falhou (rate limit?) · tente de novo' : 'análise indisponível')
     } finally {
       setAnalisando(false)
     }
@@ -121,8 +121,10 @@ export function LangMainPage() {
       setFrente(''); setVerso('')
       setFeedback('card criado · áudio gerado')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setFeedback(msg.includes('409') ? 'card com essa frase já existe' : 'falha ao criar card')
+      // jsonFetch joga Error com `detail` do backend + err.status — checar
+      // a mensagem por '409' nunca casava (QA 2026-06-12).
+      const status = (err as { status?: number } | null)?.status
+      setFeedback(status === 409 ? 'card com essa frase já existe' : 'falha ao criar card')
     }
   }
 

@@ -35,7 +35,13 @@ export function useLangInvalidator() {
 }
 
 export function useLangToday() {
-  return useQuery({ queryKey: langKeys.today(), queryFn: fetchLangToday })
+  // refetchInterval: badge da sidebar e card do Exec não podem congelar o
+  // valor da manhã o dia inteiro (QA 2026-06-12) — due muda com o relógio.
+  return useQuery({
+    queryKey: langKeys.today(),
+    queryFn: fetchLangToday,
+    refetchInterval: 60_000,
+  })
 }
 
 export function useLangSettings() {

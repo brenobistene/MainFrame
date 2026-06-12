@@ -61,9 +61,27 @@ export function LangFalaPage() {
   const mediaRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const recogRef = useRef<SpeechRecognitionLike | null>(null)
+  const currentCardIdRef = useRef<number | null>(null)
 
   const card = cards[idx] ?? null
   const speechSupported = getSpeechRecognition() !== null
+  currentCardIdRef.current = card?.id ?? null
+
+  // Sair da página NO MEIO da gravação não pode deixar o microfone aberto
+  // gravando indefinidamente (QA 2026-06-12). Idem reconhecimento e áudio.
+  useEffect(() => () => {
+    try {
+      const rec = mediaRef.current
+      if (rec && rec.state !== 'inactive') {
+        rec.stream?.getTracks().forEach(t => t.stop())
+        rec.stop()
+      }
+    } catch { /* já parado */ }
+    try { recogRef.current?.stop() } catch { /* já parado */ }
+    audioRef.current?.pause()
+    try { window.speechSynthesis.cancel() } catch { /* indisponível */ }
+  }, [])
 
   useEffect(() => {
     fetchLangCards({ limit: 200 })
@@ -134,10 +152,17 @@ export function LangFalaPage() {
     setErro(null)
     setHeard(null)
     const rec = new Ctor()
+    recogRef.current = rec
     rec.lang = 'en-US'
     rec.interimResults = false
     rec.maxAlternatives = 1
-    rec.onresult = ev => setHeard(ev.results[0][0].transcript)
+    // Resultado tardio (chegou depois de PRÓXIMA) não pode pintar o card
+    // errado de verde/vermelho (QA 2026-06-12) — só aceita se o card
+    // ainda for o mesmo.
+    const capturedId = card.id
+    rec.onresult = ev => {
+      if (currentCardIdRef.current === capturedId) setHeard(ev.results[0][0].transcript)
+    }
     rec.onerror = ev => {
       setListening(false)
       setErro(ev.error === 'not-allowed'

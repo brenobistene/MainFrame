@@ -82,8 +82,13 @@ export function LangFontesPage() {
       variant: 'danger',
     })
     if (!ok) return
-    await deleteLangSource(s.id).catch(err => reportApiError('Fontes.excluir', err))
-    setSources(list => list.filter(x => x.id !== s.id))
+    try {
+      await deleteLangSource(s.id)
+      setSources(list => list.filter(x => x.id !== s.id))
+    } catch (err) {
+      reportApiError('Fontes.excluir', err)
+      setMsg('falha ao excluir a fonte')
+    }
   }
 
   return (

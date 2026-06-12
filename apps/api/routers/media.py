@@ -36,9 +36,13 @@ def serve_lang_media(categoria: str, filename: str):
     if not os.path.isfile(path):
         raise HTTPException(404, detail="arquivo não encontrado")
     media_type = "audio/mpeg" if filename.lower().endswith(".mp3") else "application/octet-stream"
-    return FileResponse(
-        path,
-        media_type=media_type,
-        # TTS é cache-by-hash: mesmo nome = mesmo conteúdo, pode cachear forte.
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    # SÓ o cache/ TTS é content-addressed (nome = hash → mesmo nome, mesmo
+    # conteúdo) e pode cachear forte. uploads/sources têm NOME FIXO
+    # (source_<id>.mp3) — immutable de 1 ano fazia re-upload nunca aparecer
+    # no browser (QA 2026-06-12).
+    cache = (
+        "public, max-age=31536000, immutable"
+        if categoria == "cache"
+        else "no-cache"
     )
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": cache})

@@ -68,7 +68,21 @@ def get_active_session(
                LIMIT 1"""
         ).fetchone()
 
-        if not row and focused_type and focused_id:
+        # Cluster lang PAUSADO não pode sequestrar o banner de quem está
+        # focado em outra entidade (quest/task pausada some e o focused é
+        # clobberado — QA 2026-06-12). Se o primário devolveu lang pausado
+        # e o caller está focado em OUTRA coisa, tenta o fallback focado;
+        # achou → ele vence. Lang RODANDO continua vencendo tudo.
+        lang_paused_overridable = (
+            row is not None
+            and row["type"] == "lang"
+            and row["ended_at"] is not None
+            and focused_type
+            and focused_type != "lang"
+        )
+        primary_row = row
+
+        if (not row or lang_paused_overridable) and focused_type and focused_id:
             if focused_type == "quest":
                 row = conn.execute(
                     """SELECT 'quest' AS type, qs.quest_id AS id, q.title, q.area_slug, qs.started_at, qs.ended_at, qs.id AS sid, NULL AS routine_date, q.estimated_minutes AS estimated_minutes
@@ -108,6 +122,11 @@ def get_active_session(
                        ORDER BY rs.id DESC LIMIT 1""",
                     (focused_id,),
                 ).fetchone()
+
+    # Fallback focado não achou nada → volta o primário (lang pausado é
+    # melhor que banner vazio).
+    if row is None:
+        row = primary_row
 
     if not row:
         return None

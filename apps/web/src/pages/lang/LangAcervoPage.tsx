@@ -101,8 +101,14 @@ export function LangAcervoPage() {
       variant: 'danger',
     })
     if (!ok) return
-    await deleteLangCard(c.id).catch(err => reportApiError('Acervo.excluir', err))
-    setCards(cs => cs.filter(x => x.id !== c.id))
+    // Remove da UI só APÓS o servidor confirmar — DELETE falho sumia o
+    // card da tela mas ele continuava no banco (QA 2026-06-12).
+    try {
+      await deleteLangCard(c.id)
+      setCards(cs => cs.filter(x => x.id !== c.id))
+    } catch (err) {
+      reportApiError('Acervo.excluir', err)
+    }
   }
 
   return (
