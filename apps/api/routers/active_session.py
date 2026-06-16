@@ -47,8 +47,8 @@ def get_active_session(
                SELECT 'lang' AS type, 'lang' AS id, ('Lang Lab: ' || COALESCE(ll.nome, '')) AS title, NULL AS area_slug, lgs.started_at, lgs.ended_at, lgs.id AS sid, NULL AS routine_date, NULL AS estimated_minutes
                FROM lang_session lgs
                LEFT JOIN lang_language ll ON lgs.language_id = ll.id
-               WHERE lgs.finalizada = 0
-                 AND lgs.id = (SELECT MAX(id) FROM lang_session WHERE finalizada = 0)
+               WHERE lgs.finalizada = 0 AND lgs.ended_at IS NULL
+                 AND lgs.id = (SELECT MAX(id) FROM lang_session WHERE finalizada = 0 AND ended_at IS NULL)
                UNION ALL
                SELECT 'mind' AS type, 'mind' AS id, 'Meditar' AS title, NULL AS area_slug, ms.started_at, ms.ended_at, ms.id AS sid, NULL AS routine_date, NULL AS estimated_minutes
                FROM mind_session ms
@@ -68,21 +68,15 @@ def get_active_session(
                LIMIT 1"""
         ).fetchone()
 
-        # Cluster lang PAUSADO não pode sequestrar o banner de quem está
-        # focado em outra entidade (quest/task pausada some e o focused é
-        # clobberado — QA 2026-06-12). Se o primário devolveu lang pausado
-        # e o caller está focado em OUTRA coisa, tenta o fallback focado;
-        # achou → ele vence. Lang RODANDO continua vencendo tudo.
-        lang_paused_overridable = (
-            row is not None
-            and row["type"] == "lang"
-            and row["ended_at"] is not None
-            and focused_type
-            and focused_type != "lang"
-        )
+        # Banner = sessão RODANDO (primário, ended_at IS NULL) OU a entidade
+        # FOCADA pausada (fallback abaixo). Lang segue a MESMA regra das
+        # quests agora: um cluster lang PAUSADO só aparece se for o foco atual.
+        # Sem isso, ao finalizar uma quest o banner "escorregava" pra um
+        # cluster lang pausado e ele ficava fantasma (bug 2026-06-14). Como o
+        # primário só traz lang rodando, não há mais o que sequestrar.
         primary_row = row
 
-        if (not row or lang_paused_overridable) and focused_type and focused_id:
+        if not row and focused_type and focused_id:
             if focused_type == "quest":
                 row = conn.execute(
                     """SELECT 'quest' AS type, qs.quest_id AS id, q.title, q.area_slug, qs.started_at, qs.ended_at, qs.id AS sid, NULL AS routine_date, q.estimated_minutes AS estimated_minutes
@@ -122,9 +116,19 @@ def get_active_session(
                        ORDER BY rs.id DESC LIMIT 1""",
                     (focused_id,),
                 ).fetchone()
+            elif focused_type == "lang":
+                # Lang focado: mostra o cluster ativo (rodando OU pausado) —
+                # é o único caso em que lang pausado aparece no banner, igual
+                # quest pausada. Some de vez só no stop (finalizada=1).
+                row = conn.execute(
+                    """SELECT 'lang' AS type, 'lang' AS id, ('Lang Lab: ' || COALESCE(ll.nome, '')) AS title, NULL AS area_slug, lgs.started_at, lgs.ended_at, lgs.id AS sid, NULL AS routine_date, NULL AS estimated_minutes
+                       FROM lang_session lgs
+                       LEFT JOIN lang_language ll ON lgs.language_id = ll.id
+                       WHERE lgs.finalizada = 0
+                       ORDER BY lgs.id DESC LIMIT 1"""
+                ).fetchone()
 
-    # Fallback focado não achou nada → volta o primário (lang pausado é
-    # melhor que banner vazio).
+    # Fallback focado não achou nada → volta o primário.
     if row is None:
         row = primary_row
 

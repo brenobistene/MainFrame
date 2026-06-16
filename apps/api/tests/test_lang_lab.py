@@ -82,6 +82,24 @@ def test_patch_frente_regenera_tts_e_suspenso_sai_da_fila(lang_client):
     assert all(c["id"] != card["id"] for c in q["cards"])
 
 
+def test_done_today_fila_zerada_ou_finalizar(lang_client):
+    # Card estilo quest no /dia: done_today para o cascateamento de período.
+    # Fila vazia (sem cards) e nada rodando → feito hoje (nada a fazer).
+    assert lang_client.get("/api/lang/today").json()["done_today"] is True
+
+    # Card novo na fila → NÃO feito.
+    lang_client.post("/api/lang/cards", json={"frente": "done today probe"})
+    assert lang_client.get("/api/lang/today").json()["done_today"] is False
+
+    # Sessão rodando → NÃO feito (mesmo critério de uma quest em execução).
+    lang_client.post("/api/lang/session/start")
+    assert lang_client.get("/api/lang/today").json()["done_today"] is False
+
+    # Finalizar conta como feito hoje, mesmo com card ainda na fila.
+    lang_client.post("/api/lang/session/stop")
+    assert lang_client.get("/api/lang/today").json()["done_today"] is True
+
+
 def test_sessao_cluster_pausada_vs_encerrada_no_banner(lang_client):
     # Start → banner mostra lang LIVE
     r = lang_client.post("/api/lang/session/start")
@@ -91,9 +109,17 @@ def test_sessao_cluster_pausada_vs_encerrada_no_banner(lang_client):
     assert active["is_active"] is True
     assert active["title"].startswith("Lang Lab")
 
-    # Pause → banner CONTINUA mostrando (PAUSED), não some — flag finalizada
+    # Pause SEM foco → NÃO aparece no banner. Lang pausado segue a regra das
+    # quests: só aparece se for o foco atual. Sem isso, ao finalizar uma quest
+    # o banner escorregava pra um cluster lang pausado e ficava fantasma
+    # (bug 2026-06-14 — "Lang Lab fica ativo depois que finalizo uma atividade").
     lang_client.post("/api/lang/session/pause")
-    active = lang_client.get("/api/sessions/active").json()
+    assert lang_client.get("/api/sessions/active").json() is None
+
+    # Pause COM foco lang → aparece PAUSED (pra retomar/encerrar pelo banner).
+    active = lang_client.get(
+        "/api/sessions/active?focused_type=lang&focused_id=lang"
+    ).json()
     assert active is not None and active["type"] == "lang"
     assert active["is_active"] is False
 

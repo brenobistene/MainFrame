@@ -52,10 +52,14 @@ const DividasPage     = lazy(() => import('./pages/finance/DividasPage').then(m 
 const WishlistPage    = lazy(() => import('./pages/finance/WishlistPage').then(m => ({ default: m.WishlistPage })))
 const FreelasPage     = lazy(() => import('./pages/finance/FreelasPage').then(m => ({ default: m.FreelasPage })))
 const CategoriasPage  = lazy(() => import('./pages/finance/CategoriasPage').then(m => ({ default: m.CategoriasPage })))
+// Requisições — lista de compras pessoal. Página standalone (NÃO entra na
+// tab bar do Hub Finance), só agrupada na sidebar FINANCE. Não toca no caixa.
+const RequisicoesPage = lazy(() => import('./pages/finance/RequisicoesPage').then(m => ({ default: m.RequisicoesPage })))
 // Build/Health usam default exports → import sem `.then`.
 const BuildLayout     = lazy(() => import('./pages/BuildLayout'))
 const BuildPage       = lazy(() => import('./pages/BuildPage'))
 const BuildHistoriaPage = lazy(() => import('./pages/BuildHistoriaPage'))
+const BlackMirrorPage = lazy(() => import('./pages/blackmirror/BlackMirrorPage'))
 const HealthLayout    = lazy(() => import('./pages/health/HealthLayout'))
 const BiomonitorPage  = lazy(() => import('./pages/health/BiomonitorPage'))
 const DomainPage      = lazy(() => import('./pages/health/DomainPage'))
@@ -107,10 +111,11 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: 'STRATEGY',
     items: [
-      { path: '/build',       label: '/Build',      abbr: 'BLD' },
-      { path: '/mind',        label: 'Mind',        abbr: 'MND' },
-      { path: '/library',     label: 'Library',     abbr: 'LIB' },
-      { path: '/lang',        label: 'Lang Lab',    abbr: 'LAB' },
+      { path: '/build',        label: '/Build',       abbr: 'BLD' },
+      { path: '/black-mirror', label: 'Black Mirror', abbr: 'BMR' },
+      { path: '/mind',         label: 'Mind',         abbr: 'MND' },
+      { path: '/library',      label: 'Library',      abbr: 'LIB' },
+      { path: '/lang',         label: 'Lang Lab',     abbr: 'LAB' },
     ],
   },
   {
@@ -126,6 +131,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'FINANCE',
     items: [
       { path: '/hub-finance', label: 'Finance', abbr: 'FIN' },
+      { path: '/requisicoes', label: 'Requisições', abbr: 'REQ' },
     ],
   },
   {
@@ -1540,10 +1546,17 @@ export default function App() {
             <Route index element={<BuildPage />} />
             <Route path="historia" element={<BuildHistoriaPage />} />
           </Route>
+          {/* Black Mirror — espelho de dados: leitura diária por IA que
+              confronta intenção × execução. Doc: docs/black-mirror. */}
+          <Route path="/black-mirror" element={<BlackMirrorPage />} />
           {/* Library — módulo de input curado (livros, filmes, podcasts…).
               Doc: docs/library/PLAN.md. Filosofia: destilação > consumo. */}
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/library/temas" element={<LibraryTemasPage />} />
+          {/* Requisições — lista de compras pessoal (grupo Finance na sidebar,
+              mas página própria, sem a tab bar do Hub Finance). */}
+          <Route path="/requisicoes" element={<RequisicoesPage />} />
+
           <Route path="/library/item/:id" element={<LibraryItemPage />} />
           {/* Lang Lab — aquisição de idiomas em 6 frentes (tabs estilo
               Health/Finance): MAIN dashboard, EXEC player SRS, ESCRITA com

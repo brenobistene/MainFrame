@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Black Mirror — preview do espelho</title>
+<style>
+  :root { --ink:#cde0e6; --dim:#5b7178; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; background:#04080a; overflow:hidden; }
+  canvas { display:block; width:100vw; height:100vh; }
+  .overlay {
+    position:fixed; inset:0; pointer-events:none;
+    font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+    color:var(--ink);
+  }
+  .brand { position:absolute; top:30px; left:34px; display:flex; align-items:center; gap:14px; }
+  .brand .dot {
+    width:8px; height:8px; border-radius:50%;
+    background:#cde0e6; box-shadow:0 0 12px 2px rgba(205,224,230,.55); opacity:.9;
+  }
+  .brand h1 { font-size:15px; font-weight:600; letter-spacing:.42em; text-transform:uppercase; }
+  .brand span { font-size:11px; letter-spacing:.34em; text-transform:uppercase; color:var(--dim); margin-left:6px; }
+  .hint {
+    position:absolute; bottom:28px; left:0; right:0; text-align:center;
+    font-size:11px; letter-spacing:.4em; text-transform:uppercase; color:var(--dim); opacity:.65;
+  }
+  .meta {
+    position:absolute; top:32px; right:34px; text-align:right;
+    font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--dim); line-height:1.9;
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="overlay">
+  <div class="brand"><i class="dot"></i><h1>Black&nbsp;Mirror</h1><span>espelho de dados</span></div>
+  <div class="meta">preview · glow + streaks<br/>pulso mid-tempo</div>
+  <div class="hint">o espelho reflete você</div>
+</div>
+
+<!-- ───────────────────────── shaders ───────────────────────── -->
+<script type="x-shader/x-vertex" id="vs">
+attribute vec2 p; varying vec2 v_uv;
+void main(){ v_uv = 0.5*(p+1.0); gl_Position = vec4(p,0.0,1.0); }
+</script>
+
+<!-- SCENE: the cold crystalline vortex (seamless — periodic noise on the angular axis) -->
+<script type="x-shader/x-fragment" id="fs_scene">
+precision highp float;
+uniform vec2  u_res;
+uniform float u_time;
+uniform float u_pulse;
+
+const float NARMS = 3.0;   // spiral arms; also the angular wrap period
+
+float h(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
+
+// value noise that TILES along x with integer period `per` -> no seam at atan's
+// branch cut. x is the angular axis; y (radial) is left free.
+float pnoise(vec2 p, float per){
+  vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+  float x0=mod(i.x, per), x1=mod(i.x+1.0, per);
+  float a=h(vec2(x0,i.y)),       b=h(vec2(x1,i.y));
+  float c=h(vec2(x0,i.y+1.0)),   d=h(vec2(x1,i.y+1.0));
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+// period doubles with the coordinate each octave so the wrap stays aligned.
+float pfbm(vec2 p, float per){ float s=0.0,a=0.5; for(int i=0;i<5;i++){ s+=a*pnoise(p,per); p*=2.0; per*=2.0; a*=0.5; } return s; }
+float prfbm(vec2 p, float per){ float s=0.0,a=0.5; for(int i=0;i<6;i++){ float n=pnoise(p,per); n=1.0-abs(2.0*n-1.0); n*=n; s+=a*n; p*=2.0; per*=2.0; a*=0.55; } return s; }
+
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_res)/u_res.y;
+  float r = length(uv)+1e-4;
+  float theta = atan(uv.y,uv.x) * 0.1591549431;   // /(2*PI) -> (-0.5,0.5], jumps 1.0 at seam
+  float t = u_time;
+  theta += t*0.012;                          // slow tunnel spin
+
+  // PERSPECTIVE DEPTH: the center is the vanishing point. 1/r foreshortens, so
+  // the crystal walls compress toward the core and rush past as we fly inward.
+  // (+0.14 caps the depth at the very center.)
+  float depth = 1.0/(r + 0.14);
+  float fall  = depth - t*0.35;              // camera flying into the tunnel (slower)
+
+  // base coord: x periodic with period NARMS (seamless); y is the depth axis
+  vec2 base = vec2(theta*NARMS + 0.45*depth, fall);
+
+  // turbulence: evolve the domain warp over time so the white facets churn in
+  // place (like Evolution on AE's Turbulent Noise). Offsets are uniform, so the
+  // angular seam stays tileable.
+  float ev = t*0.10;                          // turbulence rate (halved)
+  vec2 e1 = ev*vec2( 0.70, 0.55);
+  vec2 e2 = ev*vec2(-0.50, 0.80);
+
+  vec2 q = vec2(pfbm(base + e1, NARMS), pfbm(base + vec2(5.2,1.3) + e2, NARMS));
+  vec2 w = vec2(pfbm(base*2.0 + 2.0*q + e2 + vec2(8.0,2.0), NARMS*2.0),
+                pfbm(base*2.0 + 2.0*q + e1 + vec2(1.0,9.0), NARMS*2.0));
+
+  float cryst = prfbm(base*3.0 + 2.7*w + ev*vec2(0.30,-0.22), NARMS*3.0); cryst = pow(cryst,1.9);
+  float glint = smoothstep(0.62,0.95, prfbm(base*5.0 + 3.3*w + ev*vec2(-0.26,0.34), NARMS*5.0));
+  float core  = smoothstep(0.85,0.0,r);
+  float pools = pfbm(base*vec2(1.0,0.7) + 0.04*t, NARMS);
+  float light = core*(0.30+0.70*pools);
+
+  // depth shading: far walls (toward the vanishing point) sink into shadow;
+  // near walls (outer, closer to camera) catch the light -> reads as 3D depth.
+  float near = smoothstep(0.06, 0.85, r);    // 0 at far center, 1 near the edge
+  cryst *= mix(0.55, 1.0, near);
+  glint *= near;
+
+  float v = cryst*1.31 + light*1.05 + glint*0.5;
+
+  vec3 deep=vec3(0.008,0.022,0.027), mid=vec3(0.024,0.066,0.078), hi=vec3(0.760,0.880,0.920);
+  vec3 col = mix(deep,mid, smoothstep(0.0,0.65,v));
+  col = mix(col, hi, smoothstep(0.72,1.30,v)*0.95);
+  // core glow starts near-zero and blinks with the beat
+  col += hi*core*core*(0.02 + 0.14*u_pulse);
+
+  col *= smoothstep(1.30,0.18,r);           // edges fall to black
+  gl_FragColor = vec4(col,1.0);
+}
+</script>
+
+<!-- BRIGHT PASS: isolate the white highlights for glow -->
+<script type="x-shader/x-fragment" id="fs_bright">
+precision highp float;
+uniform sampler2D u_tex; varying vec2 v_uv;
+void main(){
+  vec3 c = texture2D(u_tex, v_uv).rgb;
+  float l = dot(c, vec3(0.299,0.587,0.114));
+  float k = smoothstep(0.50, 0.78, l);      // soft knee on the whites
+  gl_FragColor = vec4(c*k, 1.0);
+}
+</script>
+
+<!-- BLUR: separable gaussian (run H then V) -->
+<script type="x-shader/x-fragment" id="fs_blur">
+precision highp float;
+uniform sampler2D u_tex; uniform vec2 u_dir; varying vec2 v_uv;
+void main(){
+  vec3 c = texture2D(u_tex, v_uv).rgb * 0.2270270270;
+  c += (texture2D(u_tex, v_uv + u_dir*1.3846153846).rgb + texture2D(u_tex, v_uv - u_dir*1.3846153846).rgb) * 0.3162162162;
+  c += (texture2D(u_tex, v_uv + u_dir*3.2307692308).rgb + texture2D(u_tex, v_uv - u_dir*3.2307692308).rgb) * 0.0702702703;
+  gl_FragColor = vec4(c,1.0);
+}
+</script>
+
+<!-- STREAKS: anamorphic horizontal + star rays that leave trails -->
+<script type="x-shader/x-fragment" id="fs_streak">
+precision highp float;
+uniform sampler2D u_tex; uniform vec2 u_texel; varying vec2 v_uv;
+const int SAMPLES = 30;
+vec3 ray(vec2 dir, float decay, float step){
+  vec3 acc=vec3(0.0); float w=1.0, tot=0.0;
+  for(int i=1;i<=SAMPLES;i++){
+    float fi=float(i); vec2 off=dir*fi*step;
+    acc += texture2D(u_tex, v_uv+off).rgb * w;
+    acc += texture2D(u_tex, v_uv-off).rgb * w;
+    tot += 2.0*w; w *= decay;
+  }
+  return acc/tot;
+}
+void main(){
+  vec2 tx = u_texel;
+  vec3 s = vec3(0.0);
+  s += ray(vec2(tx.x,0.0),        0.95, 8.0) * 1.20;  // anamorphic horizontal (long, forward)
+  s += ray(vec2(0.0,tx.y),        0.91, 7.0) * 0.55;  // vertical
+  s += ray(vec2(tx.x,tx.y)*0.707, 0.91, 7.0) * 0.50;  // diagonal /
+  s += ray(vec2(tx.x,-tx.y)*0.707,0.91, 7.0) * 0.50;  // diagonal \
+  gl_FragColor = vec4(s,1.0);
+}
+</script>
+
+<!-- COMPOSITE: scene + bloom + streaks, pulsed, tonemapped, grained -->
+<script type="x-shader/x-fragment" id="fs_comp">
+precision highp float;
+uniform sampler2D u_scene, u_bloom, u_streak;
+uniform float u_bloomI, u_streakI, u_fogI, u_pulse, u_time, u_crt;
+varying vec2 v_uv;
+float hash(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
+float vnoise(vec2 p){
+  vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+  float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+}
+float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<4;i++){ s+=a*vnoise(p); p*=2.0; a*=0.5; } return s; }
+void main(){
+  // ── CRT curvature (barrel) + overscan so it stays FULLSCREEN (no black bars) ─
+  vec2 cc = v_uv*2.0 - 1.0;
+  cc *= 1.0 + 0.06*u_crt*dot(cc,cc);              // barrel bulge
+  cc *= 1.0/(1.0 + 0.12*u_crt);                   // overscan -> fills the frame
+  vec2 uv = cc*0.5 + 0.5;
+
+  // ── chromatic aberration on the scene (grows at the edges) ──────────────
+  vec2 dir = uv - 0.5;
+  float ca = (0.0016 + 0.004*dot(dir,dir)) * u_crt;
+  vec3 scene;
+  scene.r = texture2D(u_scene, uv + dir*ca).r;
+  scene.g = texture2D(u_scene, uv).g;
+  scene.b = texture2D(u_scene, uv - dir*ca).b;
+
+  vec3 bloom  = texture2D(u_bloom,  uv).rgb;
+  vec3 streak = texture2D(u_streak, uv).rgb;
+
+  vec3 glow = bloom*u_bloomI + streak*vec3(0.74,0.88,1.0)*u_streakI;
+
+  // drifting cold mist — only lit where the glow shines THROUGH it
+  float mist = fbm(uv*vec2(5.0,4.0) + vec2(u_time*0.03, u_time*0.018));
+  mist = smoothstep(0.25, 0.95, mist);
+  float glowAmt = dot(glow, vec3(0.333));
+  vec3 fog = vec3(0.55,0.78,1.0) * mist * glowAmt * u_fogI;
+
+  vec3 col = scene + (glow + fog) * u_pulse;
+  col = col/(col+0.60)*1.30;                                   // filmic tonemap
+
+  // ── CRT: scanlines + aperture grille + scan flicker ─────────────────────
+  float scan    = 1.0 - 0.16*u_crt*(0.5 + 0.5*sin(gl_FragCoord.y*2.0));
+  vec3  grille  = 1.0 - 0.10*u_crt*(0.5 + 0.5*vec3(
+                    sin(gl_FragCoord.x*2.0944),
+                    sin(gl_FragCoord.x*2.0944 + 2.0944),
+                    sin(gl_FragCoord.x*2.0944 + 4.1888)));
+  float flicker = 1.0 - 0.025*u_crt*sin(u_time*48.0);
+  col *= scan * flicker;
+  col *= grille;
+
+  // CRT vignette + bezel mask
+  float vig = smoothstep(1.30, 0.35, length(dir)*1.4);
+  col *= mix(1.0, vig, 0.55*u_crt);
+
+  float g = hash(gl_FragCoord.xy + fract(u_time))*0.05 - 0.025;
+  col += g;                                                    // film grain
+  gl_FragColor = vec4(col,1.0);
+}
+</script>
+
+<script>
+// ─────────────────────────── knobs ───────────────────────────
+const BPM        = 84;     // slower pulse
+const HALF_TIME  = true;   // pulse on the half-note -> slow, hypnotic
+const PULSE_BASE = 0.0;    // glow OFF between beats — starts zeroed, always
+const PULSE_AMP  = 0.7;    // a bit stronger blink
+const PULSE_DECAY= 3.5;    // slower swell (lower = lingers longer)
+const BLOOM_I    = 0.9;    // compact glow (radius set in the blur pass)
+const STREAK_I   = 1.2;    // long rays brought forward
+const FOG_I      = 1.3;    // mist the glow shines through
+const CRT_I      = 1.0;    // CRT-tech dose (curvature + aberration + scanlines + grille)
+const BLOOM_DIV  = 2;      // bloom/streak buffers at 1/2 res
+// ──────────────────────────────────────────────────────────────
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl', { antialias:false, alpha:false });
+if (!gl){ document.body.innerHTML='<p style="color:#cde0e6;font-family:monospace;padding:40px">WebGL indisponível.</p>'; }
+
+function compile(type, src){
+  const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+function program(vsId, fsId){
+  const p=gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, document.getElementById(vsId).textContent));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, document.getElementById(fsId).textContent));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+  return p;
+}
+const P = {
+  scene:  program('vs','fs_scene'),
+  bright: program('vs','fs_bright'),
+  blur:   program('vs','fs_blur'),
+  streak: program('vs','fs_streak'),
+  comp:   program('vs','fs_comp'),
+};
+
+// fullscreen triangle
+const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 3,-1, -1,3]),gl.STATIC_DRAW);
+function bindQuad(prog){ const l=gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0); }
+
+// render targets
+function makeRT(w,h){
+  const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const fbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  return {tex,fbo,w,h};
+}
+let RT={};
+function alloc(){
+  for(const k in RT){ gl.deleteTexture(RT[k].tex); gl.deleteFramebuffer(RT[k].fbo); }
+  const W=canvas.width, H=canvas.height, bw=Math.max(1,W/BLOOM_DIV|0), bh=Math.max(1,H/BLOOM_DIV|0);
+  RT = {
+    scene: makeRT(W,H),
+    bright:makeRT(bw,bh),
+    pingA: makeRT(bw,bh),
+    pingB: makeRT(bw,bh),
+    streak:makeRT(bw,bh),
+  };
+}
+function resize(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  canvas.width =Math.floor(innerWidth*dpr);
+  canvas.height=Math.floor(innerHeight*dpr);
+  alloc();
+}
+addEventListener('resize',resize); resize();
+
+function pass(prog, target){ // target=null -> screen
+  gl.useProgram(prog); bindQuad(prog);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target?target.fbo:null);
+  gl.viewport(0,0, target?target.w:canvas.width, target?target.h:canvas.height);
+}
+function tex(prog, name, t, unit){
+  gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.uniform1i(gl.getUniformLocation(prog,name),unit);
+}
+
+let start=performance.now(), elapsed=0, running=true;
+document.addEventListener('visibilitychange',()=>{ running=!document.hidden; if(running){ start=performance.now()-elapsed*1000; requestAnimationFrame(frame);} });
+
+function frame(now){
+  if(!running) return;
+  elapsed=(now-start)/1000;
+
+  // beat pulse — kick envelope, slow on the half-note
+  const rate=(BPM/60)*(HALF_TIME?0.5:1.0);
+  const ph=(elapsed*rate)%1.0;
+  const env=Math.exp(-PULSE_DECAY*ph);
+  const pulse=PULSE_BASE+PULSE_AMP*env;
+
+  // 1) scene -> RT.scene
+  pass(P.scene, RT.scene);
+  gl.uniform2f(gl.getUniformLocation(P.scene,'u_res'), RT.scene.w, RT.scene.h);
+  gl.uniform1f(gl.getUniformLocation(P.scene,'u_time'), elapsed);
+  gl.uniform1f(gl.getUniformLocation(P.scene,'u_pulse'), pulse);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+
+  // 2) bright -> RT.bright
+  pass(P.bright, RT.bright); tex(P.bright,'u_tex',RT.scene.tex,0); gl.drawArrays(gl.TRIANGLES,0,3);
+
+  // 3) blur ping-pong (2 iterations H/V) bright->pingA->pingB...
+  let src=RT.bright;
+  const tH=1/RT.bright.w, tV=1/RT.bright.h;
+  for(let i=0;i<1;i++){                       // 1 pass + small scale -> tight, compact glow
+    pass(P.blur, RT.pingA); tex(P.blur,'u_tex',src.tex,0);
+    gl.uniform2f(gl.getUniformLocation(P.blur,'u_dir'), tH*0.42, 0); gl.drawArrays(gl.TRIANGLES,0,3);
+    pass(P.blur, RT.pingB); tex(P.blur,'u_tex',RT.pingA.tex,0);
+    gl.uniform2f(gl.getUniformLocation(P.blur,'u_dir'), 0, tV*0.42); gl.drawArrays(gl.TRIANGLES,0,3);
+    src=RT.pingB;
+  }
+  const bloomTex=src.tex;
+
+  // 4) streaks from bright -> RT.streak
+  pass(P.streak, RT.streak); tex(P.streak,'u_tex',RT.bright.tex,0);
+  gl.uniform2f(gl.getUniformLocation(P.streak,'u_texel'), 1/RT.bright.w, 1/RT.bright.h);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+
+  // 5) composite -> screen
+  pass(P.comp, null);
+  tex(P.comp,'u_scene', RT.scene.tex,0);
+  tex(P.comp,'u_bloom', bloomTex,1);
+  tex(P.comp,'u_streak',RT.streak.tex,2);
+  gl.uniform1f(gl.getUniformLocation(P.comp,'u_bloomI'), BLOOM_I);
+  gl.uniform1f(gl.getUniformLocation(P.comp,'u_streakI'), STREAK_I);
+  gl.uniform1f(gl.getUniformLocation(P.comp,'u_fogI'), FOG_I);
+  gl.uniform1f(gl.getUniformLocation(P.comp,'u_crt'), CRT_I);
+  gl.uniform1f(gl.getUniformLocation(P.comp,'u_pulse'), pulse);
+  gl.uniform1f(gl.getUniformLocation(P.comp,'u_time'), elapsed);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

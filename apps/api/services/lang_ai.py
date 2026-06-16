@@ -16,28 +16,13 @@ prompts: observação factual, nunca professoral/cobrança (PLAN §6).
 from __future__ import annotations
 
 import json
-import os
 from typing import Optional
 
-import httpx
-
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
-
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_OPENAI_COMPAT_URL = "https://api.groq.com/openai/v1"
-
-
-class LangAiNotConfigured(Exception):
-    """ai_provider='none' ou chave ausente — UI esconde superfícies de IA."""
-
-
-class LangAiError(Exception):
-    """Falha de chamada (rede, rate limit, resposta inválida)."""
+from services import ai_client
+# Nomes mantidos pra compat com quem importa de services.lang_ai (routers/lang,
+# routers/export). O transporte agora vive em services/ai_client.py.
+from services.ai_client import AiError as LangAiError  # noqa: F401
+from services.ai_client import AiNotConfigured as LangAiNotConfigured  # noqa: F401
 
 
 # Persona compartilhada — tutor pra brasileiro com compreensão
@@ -54,57 +39,12 @@ _PERSONA = (
 
 
 def get_config(settings: dict) -> dict:
-    provider = settings.get("ai_provider") or "none"
-    if provider == "none":
-        raise LangAiNotConfigured("ai_provider está 'none'")
-    api_key = os.environ.get("LANG_AI_API_KEY", "").strip()
-    if not api_key:
-        raise LangAiNotConfigured("LANG_AI_API_KEY ausente no apps/api/.env")
-    return {
-        "provider": provider,
-        "model": settings.get("ai_model") or "gemini-flash-latest",
-        "base_url": settings.get("ai_base_url") or DEFAULT_OPENAI_COMPAT_URL,
-        "api_key": api_key,
-    }
+    return ai_client.resolve_config(settings)
 
 
 async def _call(cfg: dict, system: str, user: str) -> str:
-    """Uma rodada chat → texto. Erros viram LangAiError."""
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            if cfg["provider"] == "gemini":
-                r = await client.post(
-                    GEMINI_URL.format(model=cfg["model"]),
-                    params={"key": cfg["api_key"]},
-                    json={
-                        "system_instruction": {"parts": [{"text": system}]},
-                        "contents": [{"role": "user", "parts": [{"text": user}]}],
-                    },
-                )
-                r.raise_for_status()
-                data = r.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"]
-            # openai-compat (Groq/OpenAI/OpenRouter/Ollama)
-            r = await client.post(
-                f"{cfg['base_url'].rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {cfg['api_key']}"},
-                json={
-                    "model": cfg["model"],
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                },
-            )
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
-    except httpx.HTTPStatusError as e:
-        raise LangAiError(
-            f"provedor respondeu {e.response.status_code}"
-            + (" (rate limit — tente em instantes)" if e.response.status_code == 429 else "")
-        ) from e
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
-        raise LangAiError(f"falha na chamada de IA: {e}") from e
+    """Uma rodada chat → texto. Delega pro transporte compartilhado."""
+    return await ai_client.chat(cfg, system, user)
 
 
 async def ask(settings: dict, pergunta: str, contexto: Optional[str] = None) -> str:

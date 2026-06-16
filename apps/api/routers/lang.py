@@ -840,14 +840,26 @@ def lang_today(language_id: Optional[int] = Query(None)):
                     dias_sem = days
             except ValueError:
                 pass
+        novos = min(new_quota_left, new_available)
+        # "Feito hoje" pro card estilo quest no /dia: fila zerada OU uma sessão
+        # finalizada hoje, e nada rodando agora. Para o cascateamento de período.
+        running = conn.execute(
+            "SELECT 1 FROM lang_session WHERE finalizada = 0 AND ended_at IS NULL LIMIT 1"
+        ).fetchone() is not None
+        finalizada_hoje = conn.execute(
+            "SELECT 1 FROM lang_session WHERE finalizada = 1 AND started_at >= ? LIMIT 1",
+            (day_start,),
+        ).fetchone() is not None
+        done_today = (not running) and ((due == 0 and novos == 0) or finalizada_hoje)
     return TodayOut(
         language_id=lang_id,
         due=due,
-        novos_disponiveis=min(new_quota_left, new_available),
+        novos_disponiveis=novos,
         reviews_hoje=reviews_hoje,
         tempo_hoje_min=tempo_seg // 60,
         dias_sem_estudo=dias_sem,
         daily_goal_min=int(settings["daily_goal_min"]),
+        done_today=done_today,
     )
 
 

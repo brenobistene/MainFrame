@@ -11,14 +11,12 @@
  *  - Health aparece como "task pra fazer" simples — click abre RegisterModal.
  */
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Activity, AlertTriangle, CheckCircle2, Languages, Play } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 import { useRituals } from '../lib/build-queries'
 import {
   useHealthDomains, useHealthPending,
 } from '../lib/health-queries'
-import { useLangSettings, useLangToday } from '../lib/lang-queries'
 import type {
   BuildRitualCadencia, HealthDomain, HealthPendingItem,
 } from '../types'
@@ -88,13 +86,6 @@ export function DiaPendenciasBlock() {
     return pending.filter(p => p.domain_slug !== 'mind' && p.domain_slug !== 'exercicio')
   }, [pending])
 
-  // Lang Lab — aviso de fila do dia (igual ritual: lembrete + play).
-  // Respeita lang_settings.exec_card_visivel; observação, não nag.
-  const { data: langToday } = useLangToday()
-  const { data: langSettings } = useLangSettings()
-  const langFila = (langToday?.due ?? 0) + (langToday?.novos_disponiveis ?? 0)
-  const showLang = (langSettings?.exec_card_visivel ?? true) && langFila > 0
-
   if (ritualsLoading || domainsLoading || pendingLoading) return null
 
   // Pra cada pendência health, resolvemos o domain object completo
@@ -102,7 +93,7 @@ export function DiaPendenciasBlock() {
     return domains.find(d => d.slug === slug)
   }
 
-  const totalPendencias = ritualsHoje.length + pendingFiltered.length + (showLang ? 1 : 0)
+  const totalPendencias = ritualsHoje.length + pendingFiltered.length
 
   // Modal renderizado fora do return condicional — sem isso, quando o
   // user salva a ÚLTIMA pendência via auto-save (refeição clicando SIM),
@@ -152,15 +143,6 @@ export function DiaPendenciasBlock() {
       {ritualsHoje.map(r => (
         <RitualRow key={r.cadencia} ritual={r} />
       ))}
-
-      {/* Lang Lab — fila do dia com play direto pro player. */}
-      {showLang && langToday && (
-        <LangStudyRow
-          due={langToday.due}
-          novos={langToday.novos_disponiveis}
-          tempoHoje={langToday.tempo_hoje_min}
-        />
-      )}
 
       {/* Health pendências (sem player, click abre o modal correto pra
           template do domínio). Mind e Exercício foram removidos — agora
@@ -226,76 +208,6 @@ function RitualRow({ ritual }: { ritual: { cadencia: BuildRitualCadencia; dias_a
           {subText}
         </span>
       </div>
-    </div>
-  )
-}
-
-/** Aviso do Lang Lab — fatos do dia ("12 reviews · 3 novos"), sem fração
- *  de meta (anti-quota, PLAN §2.12). PLAY navega pro player; a sessão
- *  entra no banner de lá (com bloqueio se outra estiver rodando). */
-function LangStudyRow({ due, novos, tempoHoje }: { due: number; novos: number; tempoHoje: number }) {
-  const navigate = useNavigate()
-  const partes = [
-    due > 0 ? `${due} reviews` : null,
-    novos > 0 ? `${novos} novos` : null,
-    tempoHoje > 0 ? `${tempoHoje} min hoje` : null,
-  ].filter(Boolean)
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'auto 1fr auto',
-        gap: 10,
-        alignItems: 'center',
-        padding: '8px 12px',
-        background: 'rgba(8, 12, 18, 0.55)',
-        border: '1px solid var(--color-border)',
-      }}
-    >
-      <span style={{ color: 'var(--color-ice)', display: 'flex' }}>
-        <Languages size={14} strokeWidth={1.8} />
-      </span>
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 13, fontWeight: 600,
-            color: 'var(--color-text-primary)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}
-        >
-          Lang Lab
-        </span>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9, fontWeight: 700,
-            letterSpacing: '0.22em', textTransform: 'uppercase',
-            color: COLOR_TEXT_MUTED,
-          }}
-        >
-          {partes.join(' · ')}
-        </span>
-      </div>
-      <button
-        type="button"
-        onClick={() => navigate('/lang/exec')}
-        title="Estudar agora"
-        style={{
-          background: 'rgba(143, 191, 211, 0.10)',
-          border: '1px solid var(--color-ice)',
-          color: 'var(--color-ice-light)',
-          cursor: 'pointer',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 9, fontWeight: 700,
-          letterSpacing: '0.22em', textTransform: 'uppercase',
-          padding: '5px 12px',
-          display: 'inline-flex', alignItems: 'center', gap: 5,
-        }}
-      >
-        <Play size={11} strokeWidth={2} />
-        Estudar
-      </button>
     </div>
   )
 }

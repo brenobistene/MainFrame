@@ -191,6 +191,10 @@ class TodayOut(BaseModel):
     tempo_hoje_min: int
     dias_sem_estudo: Optional[int] = None  # None = estudou hoje/dentro do threshold
     daily_goal_min: int
+    # "Feito hoje" pro planejador do /dia (card estilo quest): fila zerada OU
+    # sessão finalizada hoje, e nenhuma sessão rodando agora. Para o
+    # cascateamento de período e mostra FEITO.
+    done_today: bool = False
 
 
 class VoiceOut(BaseModel):

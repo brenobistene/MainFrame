@@ -87,27 +87,35 @@ export function LangExecPage() {
   // Som morre com a página: navegar/ENCERRAR não pode deixar áudio tocando
   // nem utterance pendente (QA 2026-06-12).
   useEffect(() => () => {
-    audioRef.current?.pause()
+    const a = audioRef.current
+    if (a) { a.pause(); a.src = '' }  // libera o recurso de mídia ao sair
     try { window.speechSynthesis.cancel() } catch { /* indisponível */ }
   }, [])
 
   const playAudio = useCallback((c: LangCard | null) => {
     if (!c) return
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
-    }
-    if (c.audio_url) {
-      const a = new Audio(`${BASE}${c.audio_url}`)
-      audioRef.current = a
+    // Reusa UM Audio element (troca .src) em vez de `new Audio()` por card.
+    // Criar um elemento + handlers a cada card num review longo (centenas)
+    // ia degradando o renderer e o app "caía depois de um tempo" mesmo em
+    // outra página, porque o processo da aba é o mesmo (2026-06-14).
+    if (!audioRef.current) {
+      const a = new Audio()
       a.onplay = () => setAudioPlaying(true)
       a.onpause = () => setAudioPlaying(false)
       a.onended = () => setAudioPlaying(false)
+      audioRef.current = a
+    }
+    const a = audioRef.current
+    a.pause()
+    if (c.audio_url) {
+      a.src = `${BASE}${c.audio_url}`
+      a.currentTime = 0
       a.play().catch((err: unknown) => {
         if (err instanceof DOMException && err.name === 'NotAllowedError') setNeedsGesture(true)
         else trySpeech(c.frente)
       })
     } else {
+      setAudioPlaying(false)
       trySpeech(c.frente)
     }
   }, [])

@@ -316,6 +316,9 @@ export interface LangToday {
    *  (ou nunca estudou — recém-chegado não é cobrado). */
   dias_sem_estudo: number | null
   daily_goal_min: number
+  /** Feito hoje (card estilo quest no /dia): fila zerada OU sessão finalizada
+   *  hoje, e nada rodando. Para o cascateamento de período. */
+  done_today: boolean
 }
 
 export interface LangVoice {
@@ -1856,3 +1859,81 @@ export type LibrarySagaUpdate = Partial<{
   cor: string | null
   ordem: number
 }>
+
+// ─── Requisições (lista de compras pessoal) ────────────────────────────────
+// NÃO toca no Finance: lembrete + estimativa. Item com cadência reabre
+// sozinho quando o ritmo vence (estilo ritual); o histórico de compras
+// alimenta a média de preço real e o filtro por mês.
+export type RequisicaoCadencia =
+  | 'avulso' | 'quinzenal' | 'mensal' | 'bimestral' | 'trimestral'
+
+export interface RequisicaoItem {
+  id: number
+  nome: string
+  categoria: string | null
+  cadencia: RequisicaoCadencia
+  preco_estimado: number | null
+  last_bought: string | null
+  arquivado: boolean
+  ordem: number
+  criado_em: string | null
+  atualizado_em: string | null
+  // Computados pelo backend:
+  aberta: boolean              // precisa comprar agora
+  atrasado_dias: number | null // dias além da cadência (null se em dia/novo/avulso)
+  proximo_em_dias: number | null // dias até reabrir (quando em dia)
+  preco_medio: number | null   // média do que pagou; cai pra estimativa
+  compras_count: number
+}
+
+export interface RequisicaoItemCreate {
+  nome: string
+  categoria?: string | null
+  cadencia?: RequisicaoCadencia
+  preco_estimado?: number | null
+}
+
+export type RequisicaoItemUpdate = Partial<{
+  nome: string
+  categoria: string | null
+  cadencia: RequisicaoCadencia
+  preco_estimado: number | null
+  arquivado: boolean
+}>
+
+export interface RequisicaoComprarBody {
+  bought_at?: string | null
+  valor_pago?: number | null
+}
+
+export interface RequisicaoReorderItem {
+  id: number
+  ordem: number
+}
+
+export interface RequisicaoPurchase {
+  id: number
+  item_id: number
+  nome: string
+  categoria: string | null
+  cadencia: RequisicaoCadencia
+  bought_at: string
+  valor_pago: number | null
+}
+
+// ─── Black Mirror — espelho de dados ───────────────────────────────────────
+// Leitura diária por IA que confronta intenção declarada × execução real.
+// `meu_passo` é o if-then escrito pelo usuário (a IA não preenche).
+export interface BlackMirrorReflection {
+  id: number | null
+  date: string
+  generated: boolean
+  reflexo: string | null
+  tensao: string | null
+  padrao: string | null
+  pergunta: string | null
+  meu_passo: string | null
+  model: string | null
+  criado_em: string | null
+  atualizado_em: string | null
+}

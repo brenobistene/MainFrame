@@ -982,6 +982,38 @@ def init_db() -> None:
             ON library_link(target_type, target_id);
         CREATE INDEX IF NOT EXISTS idx_library_link_item
             ON library_link(item_id);
+
+        -- ─── Requisições (lista de compras pessoal) ──────────────────
+        -- NÃO toca no Finance: é lembrete + estimativa, nunca transação.
+        -- Item tem cadência e reabre sozinho quando o ritmo vence (estilo
+        -- ritual). O histórico de compras alimenta a média de preço real
+        -- e o filtro por mês.
+        CREATE TABLE IF NOT EXISTS shopping_item (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome           TEXT NOT NULL,
+            categoria      TEXT,
+            cadencia       TEXT NOT NULL DEFAULT 'mensal',  -- avulso|quinzenal|mensal|bimestral|trimestral
+            preco_estimado REAL,
+            last_bought    TEXT,                            -- YYYY-MM-DD última compra
+            arquivado      INTEGER NOT NULL DEFAULT 0,
+            ordem          INTEGER NOT NULL DEFAULT 0,       -- ordem manual (drag-and-drop)
+            criado_em      TEXT DEFAULT (datetime('now')),
+            atualizado_em  TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_shopping_item_ativo
+            ON shopping_item(arquivado, cadencia);
+
+        CREATE TABLE IF NOT EXISTS shopping_purchase (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id     INTEGER NOT NULL REFERENCES shopping_item(id) ON DELETE CASCADE,
+            bought_at   TEXT NOT NULL,                       -- YYYY-MM-DD
+            valor_pago  REAL,
+            criado_em   TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_shopping_purchase_item
+            ON shopping_purchase(item_id, bought_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_shopping_purchase_when
+            ON shopping_purchase(bought_at DESC);
         """)
 
         # ─── Lang Lab — aquisição de idiomas (docs/lang-lab/PLAN.md) ─────
@@ -1140,6 +1172,28 @@ def init_db() -> None:
             enable_fuzzing          INTEGER NOT NULL DEFAULT 1,
             atualizado_em           TEXT DEFAULT (datetime('now'))
         );
+
+        -- ─── Black Mirror — espelho de dados ──────────────────────────────
+        -- Leitura diária gerada por IA que cruza a INTENÇÃO declarada (/Build:
+        -- propósito/visão/metas) com a EXECUÇÃO real (sessões/finance/health/
+        -- quests) e confronta a contradição. UPSERT por dia (UNIQUE date).
+        -- `meu_passo` é o plano if-then escrito pelo USUÁRIO (a IA não preenche
+        -- — ela provoca, a ação é dele). `snapshot_json` guarda o input
+        -- agregado pra auditoria. Config de IA reusa lang_settings (mesma
+        -- chave LANG_AI_API_KEY). Doc/decisões: docs/black-mirror.
+        CREATE TABLE IF NOT EXISTS blackmirror_reflection (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            date          TEXT NOT NULL UNIQUE,   -- YYYY-MM-DD (dia local)
+            reflexo       TEXT,
+            tensao        TEXT,
+            padrao        TEXT,
+            pergunta      TEXT,
+            meu_passo     TEXT,
+            snapshot_json TEXT,
+            model         TEXT,
+            criado_em     TEXT DEFAULT (datetime('now')),
+            atualizado_em TEXT DEFAULT (datetime('now'))
+        );
         """)
 
         # Lang Lab — colunas de agendamento Anki-like adicionadas depois do
@@ -1148,6 +1202,9 @@ def init_db() -> None:
         _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN relearning_steps_min TEXT NOT NULL DEFAULT '10'")
         _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN maximum_interval_days INTEGER NOT NULL DEFAULT 36500")
         _try_add_column(conn, "ALTER TABLE lang_settings ADD COLUMN enable_fuzzing INTEGER NOT NULL DEFAULT 1")
+        # Requisições — ordem manual (drag-and-drop) em DBs que já bootaram
+        # com shopping_item antes da coluna existir.
+        _try_add_column(conn, "ALTER TABLE shopping_item ADD COLUMN ordem INTEGER NOT NULL DEFAULT 0")
 
         # Seeds Lang Lab — preset "método Vergara" (PLAN §2, decisão 10).
         # English com voz Aria (escolha do usuário); demais línguas e vozes

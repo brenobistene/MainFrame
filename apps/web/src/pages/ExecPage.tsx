@@ -6,10 +6,11 @@ import type { ActiveSession, Area, BuildRitual, Deliverable, Project, Quest, Rou
 import {
   fetchDeliverables, updateTask, deleteTask, reportApiError,
   fetchMindSession, fetchHealthItemSession, fetchRitualCluster, pauseRitualCluster,
+  startLangSession, pauseLangSession, resumeLangSession, stopLangSession,
 } from '../api'
 import { useTasks, useRoutines, useRoutinesForDate, useAppInvalidator } from '../lib/app-queries'
 import { useCreateHealthRecord, useUpdateHealthRecord } from '../lib/health-queries'
-import { useLangSettings, useLangToday } from '../lib/lang-queries'
+import { useLangSessionCluster, useLangSettings, useLangToday } from '../lib/lang-queries'
 import {
   useDiaPendencias,
   useInvalidateDiaPendencias,
@@ -1053,7 +1054,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       isLang: true,
       due: langToday?.due ?? 0,
       novos: langToday?.novos_disponiveis ?? 0,
-      done: langFilaCount === 0,
+      done: !!langToday?.done_today,
     }] : []),
   ]
   const plannedItems = fullPool.filter(item => plannedItemIds.includes(item.id))
@@ -1125,6 +1126,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
         const p = mergedPendencias.find(x => x.pendencia_id === id)
         if (p) return { kind: 'pendencia' as const, p }
       }
+      if (id === 'lang') return { kind: 'lang' as const }
       return null
     }
     const itemIsDone = (id: string): boolean => {
@@ -1135,6 +1137,8 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
       if (it.kind === 'routine') return doneRoutineIds.has(id)
       // Ritual: backend marca ultima_execucao quando concluído no dia.
       if (it.kind === 'ritual') return it.rit.ultima_execucao?.slice(0, 10) === todayIso
+      // Lang Lab: done_today = fila zerada OU finalizado hoje (backend).
+      if (it.kind === 'lang') return !!langToday?.done_today
       // Pendência: mergedPendencias.done já considera snapshot local +
       // backend, então isso cobre todos os casos de done (incluindo ghost).
       return it.p.done
@@ -1195,7 +1199,7 @@ export function ExecView({ projects, quests, areas, activeSession, onSessionUpda
     // Confiamos em: (a) tick de nowMin a cada minuto, (b) mudanças nas arrays
     // de dados — qualquer um cobre o caso. itemIsActive usa o closure atual de
     // activeSession, que é refrescado em todo render mesmo sem estar nos deps.
-  }, [nowMin, dayPeriods, quests, allTasks, routines, rituals, mergedPendencias, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded])
+  }, [nowMin, dayPeriods, quests, allTasks, routines, rituals, mergedPendencias, doneRoutineIds, routinesLoaded, doneRoutineIdsLoaded, allTasksLoaded, langToday])
 
   const productiveMinRemaining = (() => {
     let blockRanges: BlockRange[] = []
@@ -1770,7 +1774,7 @@ function PeriodSection({
       isLang: true,
       due: periodLangToday.due,
       novos: periodLangToday.novos_disponiveis,
-      done: (periodLangToday.due + periodLangToday.novos_disponiveis) === 0,
+      done: !!periodLangToday.done_today,
     }] : []),
   ]
   // Renderiza NA ORDEM do dayPlan (e não na ordem do pool) pra respeitar a
@@ -1899,6 +1903,7 @@ function PeriodSection({
                   key={item.id}
                   item={item}
                   onRemoveFromPlan={() => onRemoveFromPlan(item.id)}
+                  onSessionUpdate={onSessionUpdate}
                 />
               )
             }
@@ -2591,7 +2596,7 @@ function PlannerDrawer({
                   isLang: true,
                   due: drawerLangToday.due,
                   novos: drawerLangToday.novos_disponiveis,
-                  done: (drawerLangToday.due + drawerLangToday.novos_disponiveis) === 0,
+                  done: !!drawerLangToday.done_today,
                 }] : []),
               ]
               // Renderiza NA ORDEM do dayPlan pra refletir reordenação por drag.
@@ -3144,6 +3149,7 @@ function OverdueTasksBanner({ tasks, onToToday, onReschedule, onDiscard }: {
 // ─── AvailableCard ─────────────────────────────────────────────────────────
 
 function itemIsDone(item: any): boolean {
+  if (item?.isLang) return !!item.done
   if (item?.isTask) return !!item.done
   if (item?.isRoutine) return !!item.done
   // Ritual: `item.done` setado no allItems quando ultima_execucao===hoje.
@@ -3177,83 +3183,189 @@ function itemIsDone(item: any): boolean {
 /** Lang Lab planejado num período — alocação simples (padrão ritual):
  *  o player completo, com bloqueio de sessão e banner, vive em /lang/exec.
  *  Mostra os fatos da fila e ESTUDAR navega pra lá. */
+/**
+ * LangPlannedRow — Lang Lab como item de período, com a MESMA cara de uma
+ * quest/ritual: thumbnail + PLAY/PAUSE/RETOMAR/FINALIZAR + timer ao vivo.
+ * PLAY (e RETOMAR) inicia/retoma a sessão, chama o banner (hq-session-changed)
+ * e leva pro player em /lang/exec. FINALIZAR encerra (fila zerada OU finalizar
+ * = feito hoje, no backend → para o cascateamento de período).
+ */
 function LangPlannedRow({
   item,
   onRemoveFromPlan,
+  onSessionUpdate,
 }: {
   item: any
   onRemoveFromPlan: () => void
+  onSessionUpdate: () => void
 }) {
   const navigate = useNavigate()
-  const isDone = !!item.done
+  const accent = 'var(--color-ice)'
+  const goalMin = item.estimated_minutes ?? 0
+  const durLabel = goalMin > 0
+    ? (goalMin >= 60 ? `${Math.floor(goalMin / 60)}H${goalMin % 60 ? ` ${goalMin % 60}M` : ''}` : `${goalMin}M`)
+    : '—'
+  const clusterQ = useLangSessionCluster()
+  const cluster: DiaSessionClusterLike = clusterQ.data ?? {
+    has_active: false, is_running: false, started_at: null, ended_at: null, elapsed_seconds: 0, rows: [],
+  }
+  // isDone = done_today do backend (fila zerada OU finalizado) E sem cluster
+  // ativo — paridade com ritual: ao retomar, volta a mostrar os controles.
+  const isDone = !!item.done && !cluster.has_active
+  const borderColor = isDone ? 'rgba(255, 255, 255, 0.06)' : 'rgba(143, 191, 211, 0.22)'
+  const [busy, setBusy] = useState(false)
+
   const sub = isDone
     ? 'FILA LIMPA POR HOJE'
-    : [
+    : ([
         item.due > 0 ? `${item.due} REVIEWS` : null,
         item.novos > 0 ? `${item.novos} NOVOS` : null,
-      ].filter(Boolean).join(' · ')
+      ].filter(Boolean).join(' · ') || 'A REQUISITAR')
+
+  function refresh() {
+    clusterQ.refetch()
+    onSessionUpdate()
+    window.dispatchEvent(new CustomEvent('hq-session-changed'))
+  }
+  async function doPlay() {
+    // PLAY/RETOMAR = ir estudar: inicia (ou retoma) + banner + player.
+    setBusy(true)
+    try {
+      if (cluster.has_active && !cluster.is_running) await resumeLangSession()
+      else await startLangSession()
+      refresh()
+      navigate('/lang/exec')
+    } catch (err: any) {
+      if (err?.conflictTitle) {
+        alertDialog({ title: 'Sessão em execução', message: `"${err.conflictTitle}" está em execução. Pause antes.`, variant: 'warning' })
+      } else {
+        reportApiError('LangPlannedRow.play', err)
+        alertDialog({ title: 'Erro', message: 'Erro ao iniciar a sessão do Lang Lab.', variant: 'danger' })
+      }
+    } finally { setBusy(false) }
+  }
+  async function doPause() {
+    setBusy(true)
+    try { await pauseLangSession(); refresh() } catch (e) { reportApiError('LangPlannedRow.pause', e) } finally { setBusy(false) }
+  }
+  async function doFinalize() {
+    setBusy(true)
+    try { await stopLangSession(); refresh() } catch (e) { reportApiError('LangPlannedRow.stop', e) } finally { setBusy(false) }
+  }
+
+  // Timer ao vivo (mesma conta do RitualPlannedRow).
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!cluster.is_running) return
+    const t = setInterval(() => setTick(x => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [cluster.is_running])
+  let liveElapsedSec = cluster.elapsed_seconds
+  if (cluster.is_running) {
+    const lastOpen = cluster.rows.find(r => r.ended_at === null)
+    if (lastOpen) {
+      try {
+        const start = new Date(lastOpen.started_at.replace('Z', '+00:00')).getTime()
+        const closedSec = cluster.rows.filter(r => r.ended_at !== null).reduce((acc, r) => {
+          try {
+            const s = new Date(r.started_at.replace('Z', '+00:00')).getTime()
+            const e = new Date(r.ended_at!.replace('Z', '+00:00')).getTime()
+            return acc + Math.max(0, Math.floor((e - s) / 1000))
+          } catch { return acc }
+        }, 0)
+        liveElapsedSec = closedSec + Math.max(0, Math.floor((Date.now() - start) / 1000))
+      } catch {}
+    }
+  }
+  void tick
+  function fmtElapsed(sec: number): string {
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
+  }
+
+  const btnBase: React.CSSProperties = {
+    cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+    padding: '5px 10px', letterSpacing: '0.18em', textTransform: 'uppercase',
+    clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%)',
+    display: 'inline-flex', alignItems: 'center', gap: 4, opacity: busy ? 0.6 : 1,
+  }
+
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'auto 1fr auto auto',
-        gap: 10,
-        alignItems: 'center',
-        padding: '8px 12px',
-        background: 'rgba(8, 12, 18, 0.55)',
-        border: '1px solid rgba(143, 191, 211, 0.22)',
-        opacity: isDone ? 0.55 : 1,
-      }}
-    >
-      <span style={{ color: 'var(--color-ice)', display: 'flex' }}>
-        <Languages size={14} strokeWidth={1.8} />
-      </span>
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span style={{
-          fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
-          color: 'var(--color-text-primary)',
-          textDecoration: isDone ? 'line-through' : 'none',
-        }}>
-          Lang Lab
-        </span>
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
-          letterSpacing: '0.22em', textTransform: 'uppercase',
-          color: 'var(--color-text-muted)',
-        }}>
-          {sub}
-        </span>
+    <div style={{ display: 'flex', alignItems: 'stretch', gap: 6, opacity: isDone ? 0.55 : 1 }}>
+      {/* THUMBNAIL */}
+      <div style={{
+        width: 64, flexShrink: 0,
+        background: 'linear-gradient(135deg, rgba(143, 191, 211, 0.18), rgba(143, 191, 211, 0.05) 60%, transparent)',
+        border: `1px solid ${borderColor}`,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+        clipPath: 'polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px)',
+      }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: accent, letterSpacing: '0.12em', lineHeight: 1, textShadow: '0 0 6px var(--color-ice-glow)' }}>LANG</div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: '0.08em', lineHeight: 1 }}>{durLabel}</div>
+        <Languages size={12} strokeWidth={1.8} color={accent} style={{ marginTop: 2 }} aria-hidden="true" />
       </div>
-      {!isDone && (
-        <button
-          type="button"
-          onClick={() => navigate('/lang/exec')}
-          title="Estudar agora"
-          style={{
-            background: 'rgba(143, 191, 211, 0.10)',
-            border: '1px solid var(--color-ice)',
-            color: 'var(--color-ice-light)',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9, fontWeight: 700,
-            letterSpacing: '0.22em', textTransform: 'uppercase',
-            padding: '5px 12px',
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-          }}
-        >
-          <Play size={11} strokeWidth={2} />
-          Estudar
-        </button>
-      )}
-      <button
-        type="button"
-        className="hq-icon-btn"
-        onClick={onRemoveFromPlan}
-        title="Remover do plano"
-        aria-label="Remover do plano"
-      >
-        <X size={13} strokeWidth={1.8} />
-      </button>
+
+      {/* MAIN CARD */}
+      <div style={{
+        flex: 1, minWidth: 0, background: 'rgba(8, 12, 18, 0.55)', border: `1px solid ${borderColor}`,
+        clipPath: 'polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%)',
+        padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+          <div style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text-primary)', fontWeight: 600, fontSize: 13, letterSpacing: '0.03em', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: isDone ? 'line-through' : 'none' }}>
+            Lang Lab
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 700, marginTop: 4, color: isDone ? 'var(--color-success)' : accent }}>
+            {sub}
+          </div>
+        </div>
+
+        {/* Controles — mesma lógica de estado de uma quest/ritual */}
+        <div style={{ display: 'inline-flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          {cluster.has_active && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: cluster.is_running ? accent : 'var(--color-text-muted)', letterSpacing: '0.04em', minWidth: 56, textAlign: 'right', textShadow: cluster.is_running ? '0 0 8px var(--color-ice-glow)' : 'none' }}>
+              {fmtElapsed(liveElapsedSec)}
+            </span>
+          )}
+          {!cluster.has_active && !isDone && (
+            <button type="button" disabled={busy} onClick={doPlay} title="iniciar e ir estudar"
+              style={{ ...btnBase, background: 'rgba(143, 191, 211, 0.10)', border: '1px solid rgba(143, 191, 211, 0.45)', color: 'var(--color-ice-light)', boxShadow: '0 0 10px rgba(143, 191, 211, 0.15)' }}>
+              <Play size={9} strokeWidth={2} fill="currentColor" /> PLAY
+            </button>
+          )}
+          {!cluster.has_active && isDone && (
+            <>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--color-success)', letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 700 }}>FEITO</span>
+              <button type="button" disabled={busy} onClick={doPlay} title="estudar de novo"
+                style={{ ...btnBase, background: 'rgba(8, 12, 18, 0.55)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}>
+                <Play size={9} strokeWidth={2} fill="currentColor" /> ESTUDAR
+              </button>
+            </>
+          )}
+          {cluster.has_active && cluster.is_running && (
+            <button type="button" disabled={busy} onClick={doPause} title="pausar"
+              style={{ ...btnBase, background: 'rgba(192, 138, 58, 0.10)', border: '1px solid rgba(192, 138, 58, 0.55)', color: 'var(--color-warning)' }}>
+              <Pause size={9} strokeWidth={2.4} fill="currentColor" /> PAUSE
+            </button>
+          )}
+          {cluster.has_active && !cluster.is_running && (
+            <button type="button" disabled={busy} onClick={doPlay} title="retomar e ir estudar"
+              style={{ ...btnBase, background: 'rgba(143, 191, 211, 0.10)', border: '1px solid rgba(143, 191, 211, 0.45)', color: 'var(--color-ice-light)' }}>
+              <Play size={9} strokeWidth={2} fill="currentColor" /> RETOMAR
+            </button>
+          )}
+          {cluster.has_active && (
+            <button type="button" disabled={busy} onClick={doFinalize} title="finalizar sessão"
+              style={{ ...btnBase, background: 'rgba(94, 122, 82, 0.14)', border: '1px solid var(--color-success)', color: 'var(--color-success-light)' }}>
+              <Check size={9} strokeWidth={2.5} /> FINALIZAR
+            </button>
+          )}
+          <button type="button" className="hq-icon-btn" onClick={onRemoveFromPlan} title="Remover do plano" aria-label="Remover do plano">
+            <X size={13} strokeWidth={1.8} />
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

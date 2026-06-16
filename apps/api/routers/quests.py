@@ -21,6 +21,35 @@ class SessionEdit(BaseModel):
 router = APIRouter()
 
 
+def _sync_deliverable_done(conn, deliv_id: Optional[str]) -> None:
+    """Recalcula o `done` do entregável a partir das suas quests.
+
+    Regra (fonte única da verdade pra ticagem automática): entregável com pelo
+    menos uma quest vira `done` quando TODAS as quests estão fechadas (done ou
+    cancelled); volta a aberto se alguma estiver ativa. Entregável SEM quests
+    NÃO é tocado — aí o `done` é manual (toggle no painel).
+
+    Chamada em create/update/delete de quest pra manter o entregável e suas
+    quests sempre consistentes, independente de qual ponta mudou.
+    """
+    if not deliv_id:
+        return
+    counts = conn.execute(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END) AS closed
+           FROM quests WHERE deliverable_id = ?""",
+        (deliv_id,),
+    ).fetchone()
+    total = counts["total"] or 0
+    if total == 0:
+        return  # sem quests → done é manual, não mexe
+    closed = counts["closed"] or 0
+    conn.execute(
+        "UPDATE deliverables SET done = ? WHERE id = ?",
+        (1 if closed == total else 0, deliv_id),
+    )
+
+
 # ─── Quests CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("/api/quests", response_model=list[QuestOut])
@@ -124,6 +153,10 @@ def create_quest(body: QuestCreate):
              body.priority, body.estimated_minutes,
              body.next_action, body.description, body.deliverable_id, now, now),
         )
+        # Nova quest (normalmente pendente) reabre o entregável se ele estava
+        # marcado como feito — sem isso o entregável ficava "feito" com uma
+        # quest aberta dentro até o usuário desticar na mão.
+        _sync_deliverable_done(conn, body.deliverable_id)
         conn.commit()
         row = conn.execute(
             """SELECT id, project_id, title, area_slug, status, priority, deadline,
@@ -214,19 +247,7 @@ def update_quest(quest_id: str, body: QuestUpdate):
         if new_deliv_id:
             affected_delivs.add(new_deliv_id)
         for did in affected_delivs:
-            counts = conn.execute(
-                """SELECT COUNT(*) AS total,
-                          SUM(CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END) AS closed
-                   FROM quests WHERE deliverable_id = ?""",
-                (did,),
-            ).fetchone()
-            total = counts["total"] or 0
-            closed = counts["closed"] or 0
-            should_be_done = 1 if (total > 0 and closed == total) else 0
-            conn.execute(
-                "UPDATE deliverables SET done = ? WHERE id = ?",
-                (should_be_done, did),
-            )
+            _sync_deliverable_done(conn, did)
 
         conn.commit()
 
@@ -261,7 +282,14 @@ def update_quest(quest_id: str, body: QuestUpdate):
 @router.delete("/api/quests/{quest_id}", status_code=204)
 def delete_quest(quest_id: str):
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT deliverable_id FROM quests WHERE id = ?", (quest_id,)
+        ).fetchone()
+        deliv_id = row["deliverable_id"] if row else None
         conn.execute("DELETE FROM quests WHERE id = ?", (quest_id,))
+        # Deletar a última quest aberta pode fechar o entregável (as restantes
+        # ficam todas done/cancelled). Sem isso ele continuava aberto até F5.
+        _sync_deliverable_done(conn, deliv_id)
         conn.commit()
     return None
 

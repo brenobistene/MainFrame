@@ -39,6 +39,7 @@ import type {
   LangLanguage, LangCard, LangQueue, LangSettings, LangSettingsUpdate,
   LangToday, LangVoice, LangAiStatus, LangAsk, LangPiece, LangMetricsSummary,
   LangAnalysis, LangSource,
+  BlackMirrorReflection,
 } from './types'
 
 // URL base do backend. Default aponta pro backend local padrão; pode ser
@@ -2558,3 +2559,67 @@ export interface LangSessionRangeRow {
 
 export const fetchLangSessionsRange = (from: string, to: string) =>
   get<LangSessionRangeRow[]>(`/api/lang-sessions?from=${from}&to=${to}`)
+
+// ─── Requisições (lista de compras pessoal) ────────────────────────────────
+import type {
+  RequisicaoComprarBody,
+  RequisicaoItem,
+  RequisicaoItemCreate,
+  RequisicaoItemUpdate,
+  RequisicaoPurchase,
+  RequisicaoReorderItem,
+} from './types'
+
+export const fetchRequisicaoItens = (categoria?: string) =>
+  get<RequisicaoItem[]>(
+    categoria
+      ? `/api/requisicoes/itens?categoria=${encodeURIComponent(categoria)}`
+      : '/api/requisicoes/itens',
+  )
+
+export const fetchRequisicaoCompras = (mes?: string) =>
+  get<RequisicaoPurchase[]>(mes ? `/api/requisicoes/compras?mes=${mes}` : '/api/requisicoes/compras')
+
+export const fetchRequisicaoCategorias = () => get<string[]>('/api/requisicoes/categorias')
+
+export const createRequisicaoItem = (body: RequisicaoItemCreate) =>
+  jsonFetch<RequisicaoItem>('/api/requisicoes/itens', { method: 'POST', body: JSON.stringify(body) })
+
+export const updateRequisicaoItem = (id: number, patch: RequisicaoItemUpdate) =>
+  jsonFetch<RequisicaoItem>(`/api/requisicoes/itens/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+
+export const deleteRequisicaoItem = (id: number) =>
+  jsonFetch<void>(`/api/requisicoes/itens/${id}`, { method: 'DELETE' })
+
+export const comprarRequisicao = (id: number, body: RequisicaoComprarBody) =>
+  jsonFetch<RequisicaoItem>(`/api/requisicoes/itens/${id}/comprar`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const desfazerCompraRequisicao = (purchaseId: number) =>
+  jsonFetch<RequisicaoItem>(`/api/requisicoes/compras/${purchaseId}`, { method: 'DELETE' })
+
+export const reorderRequisicaoItens = (payload: RequisicaoReorderItem[]) =>
+  jsonFetch<void>('/api/requisicoes/itens/reorder', { method: 'POST', body: JSON.stringify(payload) })
+
+// ─── Black Mirror — espelho de dados ───────────────────────────────────────
+
+/** Leitura de hoje (generated:false se ainda não gerada — GET nunca chama IA). */
+export const fetchBlackMirrorToday = () =>
+  get<BlackMirrorReflection>('/api/black-mirror/today')
+
+/** (Re)gera a leitura de hoje via IA. UPSERT preserva o `meu_passo`. */
+export const generateBlackMirror = () =>
+  jsonFetch<BlackMirrorReflection>('/api/black-mirror/generate', { method: 'POST' })
+
+/** Salva o if-then do usuário (a IA não preenche). */
+export const saveBlackMirrorPasso = (meu_passo: string | null) =>
+  jsonFetch<BlackMirrorReflection>('/api/black-mirror/today/meu-passo', {
+    method: 'PATCH',
+    body: JSON.stringify({ meu_passo }),
+  })
+
+/** Reflexões passadas (mais recentes primeiro). */
+export const fetchBlackMirrorHistory = (limit = 30) =>
+  get<BlackMirrorReflection[]>(`/api/black-mirror/history?limit=${limit}`)

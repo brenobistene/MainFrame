@@ -8,6 +8,7 @@ import {
   createLangCard,
   fetchLangCards,
   fetchLangQueue,
+  fetchLangSession,
   fetchLangSettings,
   fetchLangToday,
   reviewLangCard,
@@ -37,15 +38,26 @@ export function useLangInvalidator() {
 export function useLangToday() {
   // refetchInterval: badge da sidebar e card do Exec não podem congelar o
   // valor da manhã o dia inteiro (QA 2026-06-12) — due muda com o relógio.
+  // Este é o ÚNICO consumo lang que roda em TODA página (badge sempre
+  // montada); explícito que NÃO roda em aba oculta e a 120s pra manter a
+  // carga de fundo mínima (2026-06-14).
   return useQuery({
     queryKey: langKeys.today(),
     queryFn: fetchLangToday,
-    refetchInterval: 60_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
   })
 }
 
 export function useLangSettings() {
   return useQuery({ queryKey: langKeys.settings(), queryFn: fetchLangSettings })
+}
+
+export function useLangSessionCluster() {
+  // Cluster da sessão pro card estilo quest no /dia (play/pause/finalizar +
+  // timer). refetch manual após start/pause/stop; o evento hq-session-changed
+  // sincroniza o banner global.
+  return useQuery({ queryKey: [...langKeys.all, 'session-cluster'], queryFn: fetchLangSession })
 }
 
 export function useUpdateLangSettings() {

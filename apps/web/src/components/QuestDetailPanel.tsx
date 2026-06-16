@@ -394,7 +394,10 @@ export function QuestDetailPanel({
       setDeliverables(ds => ds.map(d => {
         if (!affected.has(d.id)) return d
         const sibs = newSubtasks.filter(q => q.deliverable_id === d.id)
-        const allClosed = sibs.length > 0 && sibs.every(q => q.status === 'done' || q.status === 'cancelled')
+        // Entregável sem quests = done manual → não mexe (espelha o backend,
+        // que também deixa o done intocado quando não há quests).
+        if (sibs.length === 0) return d
+        const allClosed = sibs.every(q => q.status === 'done' || q.status === 'cancelled')
         return { ...d, done: allClosed }
       }))
     }
@@ -412,7 +415,13 @@ export function QuestDetailPanel({
       estimated_minutes: estimatedMinutes,
     })
       .then(q => {
-        fetchQuestsByProject(project.id).then(setSubtasks).catch(err => reportApiError('QuestDetailPanel', err))
+        // Nova quest entra pendente → o entregável não pode estar 100% fechado.
+        // Destica na hora (otimista) e refaz os fetches — o backend já
+        // sincronizou o `done` no create_quest, então a leitura volta correta.
+        setDeliverables(prev => prev.map(d => d.id === delivId ? { ...d, done: false } : d))
+        Promise.all([fetchQuestsByProject(project.id), fetchDeliverables(project.id)])
+          .then(([qs, ds]) => { setSubtasks(qs); setDeliverables(ds) })
+          .catch(err => reportApiError('QuestDetailPanel', err))
         setNewQuestByDeliv(prev => ({ ...prev, [delivId]: '' }))
         setNewQuestEstByDeliv(prev => ({ ...prev, [delivId]: '' }))
         if (onQuestCreate) onQuestCreate(q)
@@ -436,9 +445,23 @@ export function QuestDetailPanel({
       danger: true,
     })
     if (!ok) return
+    const removed = subtasks.find(st => st.id === id)
+    const delivId = removed?.deliverable_id ?? null
     deleteQuest(id)
       .then(() => {
-        setSubtasks(s => s.filter(st => st.id !== id))
+        const remaining = subtasks.filter(st => st.id !== id)
+        setSubtasks(remaining)
+        // Deletar a última quest aberta pode fechar o entregável. Recalcula
+        // otimista (só quando ainda restam quests — vazio = done manual) e
+        // refaz o fetch pra reconciliar com o backend (sincronizado no delete).
+        if (delivId) {
+          const sibs = remaining.filter(q => q.deliverable_id === delivId)
+          if (sibs.length > 0) {
+            const allClosed = sibs.every(q => q.status === 'done' || q.status === 'cancelled')
+            setDeliverables(ds => ds.map(d => d.id === delivId ? { ...d, done: allClosed } : d))
+          }
+          fetchDeliverables(project.id).then(setDeliverables).catch(err => reportApiError('QuestDetailPanel', err))
+        }
         if (onQuestDelete) onQuestDelete(id)
         appInv.quests(); appInv.deliverablesByProject(project.id); tabSync.emit('quests')
       })
@@ -470,12 +493,38 @@ export function QuestDetailPanel({
   function toggleDeliverableDone(id: string) {
     const deliv = deliverables.find(d => d.id === id)
     if (!deliv) return
-    updateDeliverable(id, { done: !deliv.done })
+    const childQuests = subtasks.filter(q => q.deliverable_id === id)
+
+    // Entregável COM quests: `done` é derivado das quests. Clicar conclui ou
+    // reabre todas — assim o checkbox e as quests ficam sempre consistentes,
+    // em vez de um `done` solto que o próximo update de quest sobrescreveria.
+    if (childQuests.length > 0) {
+      const markDone = !deliv.done
+      const newStatus = markDone ? 'done' : 'pending'
+      const toChange = childQuests.filter(q =>
+        markDone
+          ? q.status !== 'done' && q.status !== 'cancelled'
+          : q.status === 'done',
+      )
+      if (toChange.length > 0) {
+        const changedIds = new Set(toChange.map(q => q.id))
+        setSubtasks(prev => prev.map(q => changedIds.has(q.id) ? { ...q, status: newStatus } : q))
+        toChange.forEach(q => onQuestUpdate(q.id, { status: newStatus }))
+      }
+      setDeliverables(prev => prev.map(d => d.id === id ? { ...d, done: markDone } : d))
+      appInv.quests(); appInv.deliverablesByProject(project.id); tabSync.emit('quests')
+      return
+    }
+
+    // Entregável SEM quests: toggle manual persistido direto (otimista + rollback).
+    const next = !deliv.done
+    setDeliverables(prev => prev.map(d => d.id === id ? { ...d, done: next } : d))
+    updateDeliverable(id, { done: next })
       .then(updated => {
         setDeliverables(prev => prev.map(d => d.id === id ? updated : d))
         appInv.deliverablesByProject(project.id); tabSync.emit('quests')
       })
-      .catch(err => reportApiError('QuestDetailPanel', err))
+      .catch(() => setDeliverables(prev => prev.map(d => d.id === id ? { ...d, done: deliv.done } : d)))
   }
 
   function patchDeliverable(id: string, patch: Partial<Deliverable>) {

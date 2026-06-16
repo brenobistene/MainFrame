@@ -22,6 +22,7 @@ from db import init_db
 from routers import (
     active_session,
     areas,
+    black_mirror,
     build,
     calendar,
     compromissos,
@@ -39,6 +40,7 @@ from routers import (
     project_pages,
     projects,
     quests,
+    requisicoes,
     routines,
     status,
     tasks,
@@ -95,7 +97,9 @@ app.include_router(micro_tasks.router)
 app.include_router(calendar.router)
 app.include_router(finance.router)
 app.include_router(wishlist.router)  # Hub Finance · Wishlist (/api/finance/wishlist/*)
+app.include_router(requisicoes.router)  # Requisições · lista de compras (/api/requisicoes/*)
 app.include_router(build.router)
+app.include_router(black_mirror.router)  # Black Mirror — espelho de dados (/api/black-mirror/*)
 app.include_router(health.router)  # Hub Health (/api/health/*)
 app.include_router(library.router)  # Library (/api/library/*)
 app.include_router(lang.router)  # Lang Lab (/api/lang/*)
